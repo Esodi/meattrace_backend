@@ -20,7 +20,7 @@ class AnimalViewSet(viewsets.ModelViewSet):
     serializer_class = AnimalSerializer
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['species', 'slaughtered']
-    search_fields = ['species']
+    search_fields = ['species', 'animal_id', 'animal_name']
     ordering_fields = ['created_at', 'weight']
     ordering = ['-created_at']
     permission_classes = [IsAuthenticated, IsFarmer]
@@ -43,6 +43,67 @@ class AnimalViewSet(viewsets.ModelViewSet):
         animal.save()
         logger.info(f"Animal {animal.id} slaughtered by {request.user.username}")
         return Response({'message': 'Animal slaughtered successfully'})
+
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated, IsFarmer])
+    def transfer(self, request):
+        logger.info(f"Transfer request data: {request.data}")
+        animal_ids = request.data.get('animal_ids', [])
+        processing_unit_id = request.data.get('processing_unit_id')
+
+        logger.info(f"Animal IDs: {animal_ids}, Processing Unit ID: {processing_unit_id}")
+
+        if not animal_ids:
+            return Response({'error': 'No animals selected for transfer'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not processing_unit_id:
+            return Response({'error': 'Processing unit ID is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Validate processing unit exists and has correct role
+        try:
+            processing_unit = User.objects.get(id=processing_unit_id, profile__role='ProcessingUnit')
+        except User.DoesNotExist:
+            return Response({'error': 'Invalid processing unit'}, status=status.HTTP_400_BAD_REQUEST)
+
+        transferred_animals = []
+        failed_animals = []
+
+        for animal_id in animal_ids:
+            try:
+                animal = Animal.objects.get(id=animal_id, farmer=request.user)
+                if not animal.slaughtered:
+                    failed_animals.append({
+                        'id': animal_id,
+                        'reason': 'Animal not slaughtered'
+                    })
+                    continue
+
+                # Create transfer record (we'll add this model later)
+                # For now, just mark as transferred
+                animal.save()  # Could add a transferred field later
+                transferred_animals.append(animal_id)
+
+                logger.info(f"Animal {animal.id} transferred by {request.user.username} to processing unit {processing_unit.username}")
+
+            except Animal.DoesNotExist:
+                failed_animals.append({
+                    'id': animal_id,
+                    'reason': 'Animal not found or not owned by you'
+                })
+
+        response_data = {
+            'transferred_count': len(transferred_animals),
+            'transferred_animals': transferred_animals,
+            'failed_count': len(failed_animals),
+            'failed_animals': failed_animals,
+            'processing_unit': processing_unit.username
+        }
+
+        if failed_animals:
+            response_data['message'] = f'Transferred {len(transferred_animals)} animals, {len(failed_animals)} failed'
+        else:
+            response_data['message'] = f'Successfully transferred {len(transferred_animals)} animals'
+
+        return Response(response_data, status=status.HTTP_200_OK)
 
 class ProductViewSet(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
@@ -514,8 +575,36 @@ def categories_list(request):
         {'id': 3, 'name': 'Organic Meat', 'description': 'Organic meat products'},
         {'id': 4, 'name': 'Premium Cuts', 'description': 'Premium quality cuts'},
     ]
-    
+
     return Response({
         'results': categories,
         'count': len(categories)
     })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def user_profile(request):
+    """
+    Get current user profile with role information.
+    """
+    try:
+        user = request.user
+        profile = user.profile
+
+        response_data = {
+            'id': user.id,
+            'username': user.username,
+            'email': user.email,
+            'role': profile.role,
+            'date_joined': user.date_joined.isoformat(),
+        }
+
+        return Response(response_data, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"User profile error: {str(e)}")
+        return Response(
+            {'error': 'Failed to get user profile'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )

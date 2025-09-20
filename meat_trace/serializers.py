@@ -4,11 +4,13 @@ from django.contrib.auth.models import User
 from .models import Animal, Product, Receipt, UserProfile, ProductCategory, ProcessingStage, ProductTimelineEvent, Inventory, Order, OrderItem
 
 class AnimalSerializer(serializers.ModelSerializer):
-    farmer = serializers.StringRelatedField(read_only=True)
+    farmer = serializers.PrimaryKeyRelatedField(read_only=True)
+    farmer_username = serializers.StringRelatedField(source='farmer', read_only=True)
 
     class Meta:
         model = Animal
         fields = '__all__'
+        read_only_fields = ['animal_id']  # Auto-generated, not editable by users
 
     def validate_slaughtered_at(self, value):
         if value and value < self.instance.created_at if self.instance else value < timezone.now():

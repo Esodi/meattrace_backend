@@ -6,6 +6,7 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 import qrcode
 import os
+import uuid
 from django.conf import settings
 
 # Create your models here.
@@ -48,14 +49,26 @@ class Animal(models.Model):
     created_at = models.DateTimeField(default=timezone.now)
     slaughtered = models.BooleanField(default=False)
     slaughtered_at = models.DateTimeField(null=True, blank=True)
-    # Add fields that the Flutter app is sending
-    animal_id = models.CharField(max_length=50, unique=True, blank=True, null=True, help_text="Unique animal identifier")
+    # Auto-generated unique identifier (primary key for internal use)
+    animal_id = models.CharField(max_length=50, unique=True, editable=False, default='', help_text="Auto-generated unique animal identifier")
+    # User-friendly optional name/tag
+    animal_name = models.CharField(max_length=100, blank=True, null=True, help_text="Optional custom animal name or tag")
     breed = models.CharField(max_length=100, blank=True, null=True, help_text="Animal breed")
     farm_name = models.CharField(max_length=100, blank=True, null=True, help_text="Farm name")
     health_status = models.CharField(max_length=50, blank=True, null=True, help_text="Animal health status (e.g., Healthy, Sick, Under Treatment)")
 
+    def save(self, *args, **kwargs):
+        if not self.animal_id:
+            self.animal_id = self._generate_animal_id()
+        super().save(*args, **kwargs)
+
+    def _generate_animal_id(self):
+        """Generate a unique animal ID using UUID"""
+        return f"ANIMAL_{uuid.uuid4().hex[:12].upper()}"
+
     def __str__(self):
-        return f"{self.species} - {self.farmer.username} ({self.id})"
+        display_name = self.animal_name or self.animal_id
+        return f"{display_name} ({self.species}) - {self.farmer.username}"
 
 class ProductCategory(models.Model):
     name = models.CharField(max_length=100, unique=True)
