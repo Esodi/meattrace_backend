@@ -49,6 +49,12 @@ class Animal(models.Model):
     created_at = models.DateTimeField(default=timezone.now)
     slaughtered = models.BooleanField(default=False)
     slaughtered_at = models.DateTimeField(null=True, blank=True)
+    # Transfer fields
+    transferred_to = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='transferred_animals')
+    transferred_at = models.DateTimeField(null=True, blank=True)
+    # Receive fields
+    received_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='received_animals')
+    received_at = models.DateTimeField(null=True, blank=True)
     # Auto-generated unique identifier (primary key for internal use)
     animal_id = models.CharField(max_length=50, unique=True, editable=False, default='', help_text="Auto-generated unique animal identifier")
     # User-friendly optional name/tag

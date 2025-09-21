@@ -133,7 +133,7 @@ MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 # Site URL for QR code generation
-SITE_URL = 'http://localhost:8000'  # Change this in production
+SITE_URL = 'http://192.168.161.17:8000'  # Change this in production
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
@@ -198,7 +198,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:8080",  # Flutter web
     "http://127.0.0.1:8080",
     "http://10.0.2.2:8000",  # Android emulator
-    "http://192.168.1.1:8000",  # Common local network
+    "http://192.168.161.17:8000",  # Common local network
 ]
 
 CORS_ALLOW_ALL_ORIGINS = True  # For development

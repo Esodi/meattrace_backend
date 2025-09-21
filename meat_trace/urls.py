@@ -6,7 +6,7 @@ from .views import (
     ProductCategoryViewSet, ProcessingStageViewSet, ProductTimelineEventViewSet, InventoryViewSet,
     OrderViewSet, OrderItemViewSet,
     register_user, upload_file, health_check, server_info,
-    meat_trace_list, categories_list, user_profile
+    meat_trace_list, categories_list, user_profile, processing_units_list
 )
 
 app_name = 'meat_trace'
@@ -33,4 +33,5 @@ urlpatterns = [
     path('api/v1/meattrace/', meat_trace_list, name='meat_trace_list'),
     path('api/v1/categories/', categories_list, name='categories_list'),
     path('api/v1/profile/', user_profile, name='user_profile'),
+    path('api/v1/processing-units/', processing_units_list, name='processing_units_list'),
 ]

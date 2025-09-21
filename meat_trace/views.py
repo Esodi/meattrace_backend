@@ -5,7 +5,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django.db import models
-from django.db.models import Prefetch
+from django.db.models import Prefetch, Q
 from django.utils import timezone
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -23,10 +23,27 @@ class AnimalViewSet(viewsets.ModelViewSet):
     search_fields = ['species', 'animal_id', 'animal_name']
     ordering_fields = ['created_at', 'weight']
     ordering = ['-created_at']
-    permission_classes = [IsAuthenticated, IsFarmer]
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return Animal.objects.all()  # Return all animals for testing
+        user = self.request.user
+        user_profile = user.profile
+
+        if user_profile.role == 'Farmer':
+            # Farmers see only their own animals that haven't been transferred
+            return Animal.objects.filter(
+                farmer=user,
+                transferred_to__isnull=True
+            ).select_related('farmer')
+        elif user_profile.role == 'ProcessingUnit':
+            # Processing units see animals transferred to them or received by them
+            return Animal.objects.filter(
+                models.Q(transferred_to=user) | models.Q(received_by=user),
+                slaughtered=True
+            ).select_related('farmer')
+        else:
+            # Other roles (like Shop) might need different filtering
+            return Animal.objects.none()
 
     def perform_create(self, serializer):
         serializer.save(farmer=self.request.user)
@@ -77,9 +94,10 @@ class AnimalViewSet(viewsets.ModelViewSet):
                     })
                     continue
 
-                # Create transfer record (we'll add this model later)
-                # For now, just mark as transferred
-                animal.save()  # Could add a transferred field later
+                # Mark animal as transferred
+                animal.transferred_to = processing_unit
+                animal.transferred_at = timezone.now()
+                animal.save()
                 transferred_animals.append(animal_id)
 
                 logger.info(f"Animal {animal.id} transferred by {request.user.username} to processing unit {processing_unit.username}")
@@ -102,6 +120,66 @@ class AnimalViewSet(viewsets.ModelViewSet):
             response_data['message'] = f'Transferred {len(transferred_animals)} animals, {len(failed_animals)} failed'
         else:
             response_data['message'] = f'Successfully transferred {len(transferred_animals)} animals'
+
+        return Response(response_data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated, IsProcessingUnit])
+    def transferred_animals(self, request):
+        """Get animals transferred to this processing unit"""
+        transferred_animals = Animal.objects.filter(
+            transferred_to=request.user,
+            slaughtered=True
+        ).select_related('farmer')
+
+        serializer = self.get_serializer(transferred_animals, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated, IsProcessingUnit])
+    def receive_animals(self, request):
+        """Receive transferred animals"""
+        animal_ids = request.data.get('animal_ids', [])
+
+        if not animal_ids:
+            return Response({'error': 'No animals selected for receipt'}, status=status.HTTP_400_BAD_REQUEST)
+
+        received_animals = []
+        failed_animals = []
+
+        for animal_id in animal_ids:
+            try:
+                animal = Animal.objects.get(
+                    id=animal_id,
+                    transferred_to=request.user,
+                    slaughtered=True
+                )
+
+                # Mark animal as received
+                animal.transferred_to = None
+                animal.received_by = request.user
+                animal.received_at = timezone.now()
+                animal.save()
+
+                received_animals.append(animal_id)
+
+                logger.info(f"Animal {animal.id} received by processing unit {request.user.username}")
+
+            except Animal.DoesNotExist:
+                failed_animals.append({
+                    'id': animal_id,
+                    'reason': 'Animal not found or not transferred to you'
+                })
+
+        response_data = {
+            'received_count': len(received_animals),
+            'received_animals': received_animals,
+            'failed_count': len(failed_animals),
+            'failed_animals': failed_animals,
+        }
+
+        if failed_animals:
+            response_data['message'] = f'Received {len(received_animals)} animals, {len(failed_animals)} failed'
+        else:
+            response_data['message'] = f'Successfully received {len(received_animals)} animals'
 
         return Response(response_data, status=status.HTTP_200_OK)
 
@@ -606,5 +684,40 @@ def user_profile(request):
         logger.error(f"User profile error: {str(e)}")
         return Response(
             {'error': 'Failed to get user profile'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def processing_units_list(request):
+    """
+    Get list of all processing units for transfer selection.
+    """
+    try:
+        processing_units = User.objects.filter(
+            profile__role='ProcessingUnit'
+        ).select_related('profile').values(
+            'id', 'username', 'email', 'profile__role'
+        )
+
+        response_data = []
+        for pu in processing_units:
+            response_data.append({
+                'id': pu['id'],
+                'username': pu['username'],
+                'email': pu['email'],
+                'role': pu['profile__role']
+            })
+
+        return Response({
+            'results': response_data,
+            'count': len(response_data)
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Processing units list error: {str(e)}")
+        return Response(
+            {'error': 'Failed to get processing units list'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
