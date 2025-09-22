@@ -37,9 +37,12 @@ class AnimalViewSet(viewsets.ModelViewSet):
             ).select_related('farmer')
         elif user_profile.role == 'ProcessingUnit':
             # Processing units see animals transferred to them or received by them
+            # Exclude animals that have already been used to create products
             return Animal.objects.filter(
                 models.Q(transferred_to=user) | models.Q(received_by=user),
                 slaughtered=True
+            ).exclude(
+                products__isnull=False
             ).select_related('farmer')
         else:
             # Other roles (like Shop) might need different filtering
