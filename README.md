@@ -43,11 +43,11 @@ The API will be available at `http://127.0.0.1:8000/`.
 
 ### Endpoints
 
-- `GET /api/v1/meattrace/` - List all meat traces (with pagination, filtering, search)
-- `POST /api/v1/meattrace/` - Create a new meat trace
-- `GET /api/v1/meattrace/{id}/` - Retrieve a specific meat trace
-- `PUT /api/v1/meattrace/{id}/` - Update a specific meat trace
-- `DELETE /api/v1/meattrace/{id}/` - Delete a specific meat trace
+- `GET /api/v2/meattrace/` - List all meat traces (with pagination, filtering, search)
+- `POST /api/v2/meattrace/` - Create a new meat trace
+- `GET /api/v2/meattrace/{id}/` - Retrieve a specific meat trace
+- `PUT /api/v2/meattrace/{id}/` - Update a specific meat trace
+- `DELETE /api/v2/meattrace/{id}/` - Delete a specific meat trace
 
 ### Filtering and Search
 
@@ -59,7 +59,7 @@ The API will be available at `http://127.0.0.1:8000/`.
 
 #### Create a Meat Trace
 ```bash
-curl -X POST http://127.0.0.1:8000/api/v1/meattrace/ \
+curl -X POST http://127.0.0.1:8000/api/v2/meattrace/ \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Beef Steak",
@@ -71,12 +71,12 @@ curl -X POST http://127.0.0.1:8000/api/v1/meattrace/ \
 
 #### List Meat Traces
 ```bash
-curl http://127.0.0.1:8000/api/v1/meattrace/
+curl http://127.0.0.1:8000/api/v2/meattrace/
 ```
 
 #### Update a Meat Trace
 ```bash
-curl -X PUT http://127.0.0.1:8000/api/v1/meattrace/1/ \
+curl -X PUT http://127.0.0.1:8000/api/v2/meattrace/1/ \
   -H "Content-Type: application/json" \
   -d '{"status": "processed"}'
 ```

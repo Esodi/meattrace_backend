@@ -49,6 +49,10 @@ class ProductSerializer(serializers.ModelSerializer):
     )
     timeline = ProductTimelineEventSerializer(source='timeline_events', many=True, read_only=True)
 
+    # Transfer related fields
+    transferred_to_username = serializers.StringRelatedField(source='transferred_to', read_only=True)
+    received_by_username = serializers.StringRelatedField(source='received_by', read_only=True)
+
     class Meta:
         model = Product
         fields = '__all__'

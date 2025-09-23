@@ -137,6 +137,18 @@ class AnimalViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(transferred_animals, many=True)
         return Response(serializer.data)
 
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated, IsFarmer])
+    def my_transferred_animals(self, request):
+        """Get animals transferred by this farmer"""
+        transferred_animals = Animal.objects.filter(
+            farmer=request.user,
+            transferred_to__isnull=False,
+            slaughtered=True
+        ).select_related('transferred_to')
+
+        serializer = self.get_serializer(transferred_animals, many=True)
+        return Response(serializer.data)
+
     @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated, IsProcessingUnit])
     def receive_animals(self, request):
         """Receive transferred animals"""
@@ -190,13 +202,29 @@ class ProductViewSet(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['product_type', 'animal']
-    search_fields = ['product_type']
+    search_fields = ['product_type', 'name', 'batch_number']
     ordering_fields = ['created_at', 'quantity']
     ordering = ['-created_at']
     permission_classes = [AllowAny]  # Temporarily allow access for testing
 
     def get_queryset(self):
-        return Product.objects.select_related('animal').all()  # Return all products for testing
+        user = self.request.user
+        user_profile = user.profile
+
+        if user_profile.role == 'ProcessingUnit':
+            # Processing units see their own products that haven't been transferred
+            return Product.objects.filter(
+                processing_unit=user,
+                transferred_to__isnull=True
+            ).select_related('animal')
+        elif user_profile.role == 'Shop':
+            # Shops see products transferred to them or received by them
+            return Product.objects.filter(
+                models.Q(transferred_to=user) | models.Q(received_by=user)
+            ).select_related('animal')
+        else:
+            # Other roles (like Farmer) might need different filtering
+            return Product.objects.none()
 
     def perform_create(self, serializer):
         animal = serializer.validated_data['animal']
@@ -204,6 +232,127 @@ class ProductViewSet(viewsets.ModelViewSet):
             raise serializers.ValidationError("Cannot create product from non-slaughtered animal")
         serializer.save(processing_unit=self.request.user)
         logger.info(f"Product created by {self.request.user.username} from animal {animal.id}")
+
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated, IsProcessingUnit])
+    def transfer(self, request):
+        """Transfer products to a shop"""
+        logger.info(f"Product transfer request data: {request.data}")
+        product_ids = request.data.get('product_ids', [])
+        shop_id = request.data.get('shop_id')
+
+        logger.info(f"Product IDs: {product_ids}, Shop ID: {shop_id}")
+
+        if not product_ids:
+            return Response({'error': 'No products selected for transfer'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not shop_id:
+            return Response({'error': 'Shop ID is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Validate shop exists and has correct role
+        try:
+            shop = User.objects.get(id=shop_id, profile__role='Shop')
+        except User.DoesNotExist:
+            return Response({'error': 'Invalid shop'}, status=status.HTTP_400_BAD_REQUEST)
+
+        transferred_products = []
+        failed_products = []
+
+        for product_id in product_ids:
+            try:
+                product = Product.objects.get(id=product_id, processing_unit=request.user)
+                if product.transferred_to is not None:
+                    failed_products.append({
+                        'id': product_id,
+                        'reason': 'Product already transferred'
+                    })
+                    continue
+
+                # Mark product as transferred
+                product.transferred_to = shop
+                product.transferred_at = timezone.now()
+                product.save()
+                transferred_products.append(product_id)
+
+                logger.info(f"Product {product.id} transferred by {request.user.username} to shop {shop.username}")
+
+            except Product.DoesNotExist:
+                failed_products.append({
+                    'id': product_id,
+                    'reason': 'Product not found or not owned by you'
+                })
+
+        response_data = {
+            'transferred_count': len(transferred_products),
+            'transferred_products': transferred_products,
+            'failed_count': len(failed_products),
+            'failed_products': failed_products,
+            'shop': shop.username
+        }
+
+        if failed_products:
+            response_data['message'] = f'Transferred {len(transferred_products)} products, {len(failed_products)} failed'
+        else:
+            response_data['message'] = f'Successfully transferred {len(transferred_products)} products'
+
+        return Response(response_data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated, IsShop])
+    def transferred_products(self, request):
+        """Get products transferred to this shop"""
+        transferred_products = Product.objects.filter(
+            transferred_to=request.user
+        ).select_related('animal', 'processing_unit')
+
+        serializer = self.get_serializer(transferred_products, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated, IsShop])
+    def receive_products(self, request):
+        """Receive transferred products"""
+        product_ids = request.data.get('product_ids', [])
+
+        if not product_ids:
+            return Response({'error': 'No products selected for receipt'}, status=status.HTTP_400_BAD_REQUEST)
+
+        received_products = []
+        failed_products = []
+
+        for product_id in product_ids:
+            try:
+                product = Product.objects.get(
+                    id=product_id,
+                    transferred_to=request.user
+                )
+
+                # Mark product as received
+                product.transferred_to = None
+                product.received_by = request.user
+                product.received_at = timezone.now()
+                product.save()
+
+                received_products.append(product_id)
+
+                logger.info(f"Product {product.id} received by shop {request.user.username}")
+
+            except Product.DoesNotExist:
+                failed_products.append({
+                    'id': product_id,
+                    'reason': 'Product not found or not transferred to you'
+                })
+
+        response_data = {
+            'received_count': len(received_products),
+            'received_products': received_products,
+            'failed_count': len(failed_products),
+            'failed_products': failed_products,
+        }
+
+        if failed_products:
+            response_data['message'] = f'Received {len(received_products)} products, {len(failed_products)} failed'
+        else:
+            response_data['message'] = f'Successfully received {len(received_products)} products'
+
+        return Response(response_data, status=status.HTTP_200_OK)
 
 class ReceiptViewSet(viewsets.ModelViewSet):
     serializer_class = ReceiptSerializer
@@ -581,15 +730,15 @@ def server_info(request):
         'version': '1.0.0',
         'django_version': '5.2.6',
         'endpoints': [
-            '/api/v1/animals/',
-            '/api/v1/products/',
-            '/api/v1/receipts/',
-            '/api/v1/token/',
-            '/api/v1/token/refresh/',
-            '/api/v1/register/',
-            '/api/v1/upload/',
-            '/api/v1/health/',
-            '/api/v1/info/',
+            '/api/v2/animals/',
+            '/api/v2/products/',
+            '/api/v2/receipts/',
+            '/api/v2/token/',
+            '/api/v2/token/refresh/',
+            '/api/v2/register/',
+            '/api/v2/upload/',
+            '/api/v2/health/',
+            '/api/v2/info/',
         ]
     })
 
@@ -722,5 +871,144 @@ def processing_units_list(request):
         logger.error(f"Processing units list error: {str(e)}")
         return Response(
             {'error': 'Failed to get processing units list'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def shops_list(request):
+    """
+    Get list of all shops for product transfer selection.
+    """
+    try:
+        shops = User.objects.filter(
+            profile__role='Shop'
+        ).select_related('profile').values(
+            'id', 'username', 'email', 'profile__role'
+        )
+
+        response_data = []
+        for shop in shops:
+            response_data.append({
+                'id': shop['id'],
+                'username': shop['username'],
+                'email': shop['email'],
+                'role': shop['profile__role']
+            })
+
+        return Response({
+            'results': response_data,
+            'count': len(response_data)
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Shops list error: {str(e)}")
+        return Response(
+            {'error': 'Failed to get shops list'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated, IsProcessingUnit])
+def production_stats(request):
+    """
+    Get production statistics for the current processing unit.
+    """
+    try:
+        user = request.user
+        now = timezone.now()
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        week_start = today_start - timezone.timedelta(days=7)
+
+        # Total products created by this processing unit
+        total_products = Product.objects.filter(processing_unit=user).count()
+
+        # Products created today
+        products_today = Product.objects.filter(
+            processing_unit=user,
+            created_at__gte=today_start
+        ).count()
+
+        # Products created this week
+        products_this_week = Product.objects.filter(
+            processing_unit=user,
+            created_at__gte=week_start
+        ).count()
+
+        # Total animals received by this processing unit
+        total_animals_received = Animal.objects.filter(
+            received_by=user
+        ).count()
+
+        # Animals received today
+        animals_received_today = Animal.objects.filter(
+            received_by=user,
+            received_at__gte=today_start
+        ).count()
+
+        # Animals received this week
+        animals_received_this_week = Animal.objects.filter(
+            received_by=user,
+            received_at__gte=week_start
+        ).count()
+
+        # Processing throughput (products per day this week)
+        days_this_week = max(1, (now - week_start).days)
+        throughput_per_day = products_this_week / days_this_week
+
+        # Equipment uptime (simulated - in real app this would come from equipment monitoring)
+        # For now, we'll simulate based on processing activity
+        equipment_uptime = 95.5  # percentage
+
+        # Inventory levels (processing units might have raw materials inventory)
+        # For now, we'll show pending animals to process
+        pending_animals = Animal.objects.filter(
+            received_by=user,
+            products__isnull=True  # Animals that haven't been turned into products yet
+        ).count()
+
+        # Products transferred stats
+        total_products_transferred = Product.objects.filter(
+            processing_unit=user,
+            transferred_to__isnull=False
+        ).count()
+
+        products_transferred_today = Product.objects.filter(
+            processing_unit=user,
+            transferred_to__isnull=False,
+            transferred_at__gte=today_start
+        ).count()
+
+        # Transfer success rate (transferred products / total products created)
+        transfer_success_rate = (total_products_transferred / total_products * 100) if total_products > 0 else 0.0
+
+        # Operational status
+        operational_status = "operational"  # Could be: operational, maintenance, offline
+
+        response_data = {
+            'total_products_created': total_products,
+            'products_created_today': products_today,
+            'products_created_this_week': products_this_week,
+            'total_animals_received': total_animals_received,
+            'animals_received_today': animals_received_today,
+            'animals_received_this_week': animals_received_this_week,
+            'processing_throughput_per_day': round(throughput_per_day, 2),
+            'equipment_uptime_percentage': equipment_uptime,
+            'pending_animals_to_process': pending_animals,
+            'operational_status': operational_status,
+            'total_products_transferred': total_products_transferred,
+            'products_transferred_today': products_transferred_today,
+            'transfer_success_rate': round(transfer_success_rate, 1),
+            'last_updated': now.isoformat()
+        }
+
+        return Response(response_data, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Production stats error: {str(e)}")
+        return Response(
+            {'error': 'Failed to get production stats'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )

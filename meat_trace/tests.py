@@ -111,12 +111,12 @@ class AnimalAPITest(APITestCase):
         self.animal = Animal.objects.create(animal_id='A001', name='Bessie', species='cow', weight_kg=500.0, breed='Holstein', farm_name='Green Farm')
 
     def test_get_animals(self):
-        response = self.client.get('/api/v1/animals/')
+        response = self.client.get('/api/v2/animals/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
     def test_create_animal(self):
         data = {'animal_id': 'A002', 'name': 'Daisy', 'species': 'cow', 'weight_kg': 450.0, 'breed': 'Jersey', 'farm_name': 'Blue Farm'}
-        response = self.client.post('/api/v1/animals/', data)
+        response = self.client.post('/api/v2/animals/', data)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
 class ProductAPITest(APITestCase):
@@ -127,17 +127,17 @@ class ProductAPITest(APITestCase):
         self.category = ProductCategory.objects.create(name='Meat')
 
     def test_get_products(self):
-        response = self.client.get('/api/v1/products/')
+        response = self.client.get('/api/v2/products/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
     def test_create_product(self):
         data = {'sku': 'P001', 'name': 'Beef Steak', 'animal_id': self.animal.id, 'category_id': self.category.id, 'price': 25.99, 'weight_kg': 1.5, 'processing_unit': 'Unit A', 'processing_date': timezone.now().date(), 'batch_number': 'B001', 'qr_code': 'QR001'}
-        response = self.client.post('/api/v1/products/', data)
+        response = self.client.post('/api/v2/products/', data)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
     def test_get_product_detail(self):
         product = Product.objects.create(sku='P001', name='Beef Steak', animal=self.animal, category=self.category, price=25.99, weight_kg=1.5, processing_unit='Unit A', processing_date=timezone.now().date(), batch_number='B001', qr_code='QR001')
-        response = self.client.get(f'/api/v1/products/{product.id}/')
+        response = self.client.get(f'/api/v2/products/{product.id}/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
 class ProductCategoryAPITest(APITestCase):
@@ -146,12 +146,12 @@ class ProductCategoryAPITest(APITestCase):
         self.client.force_authenticate(user=self.user)
 
     def test_get_categories(self):
-        response = self.client.get('/api/v1/product_categories/')
+        response = self.client.get('/api/v2/product_categories/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
     def test_create_category(self):
         data = {'name': 'Dairy', 'description': 'Milk products'}
-        response = self.client.post('/api/v1/product_categories/', data)
+        response = self.client.post('/api/v2/product_categories/', data)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
 class ShopReceiptAPITest(APITestCase):
@@ -164,5 +164,5 @@ class ShopReceiptAPITest(APITestCase):
 
     def test_create_receipt(self):
         data = {'shop_name': 'Super Market', 'product_ids': [self.product.id], 'total_amount': 25.99}
-        response = self.client.post('/api/v1/shop_receipts/', data)
+        response = self.client.post('/api/v2/shop_receipts/', data)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)

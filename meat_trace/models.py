@@ -150,6 +150,13 @@ class Product(models.Model):
     # QR code field for traceability
     qr_code = models.CharField(max_length=500, blank=True, null=True)
 
+    # Transfer fields (similar to Animal model)
+    transferred_to = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='transferred_products')
+    transferred_at = models.DateTimeField(null=True, blank=True)
+    # Receive fields
+    received_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='received_products')
+    received_at = models.DateTimeField(null=True, blank=True)
+
     def __str__(self):
         return f"{self.name} ({self.product_type}) - Batch {self.batch_number}"
 
@@ -240,7 +247,7 @@ def generate_product_qr_code(sender, instance, created, **kwargs):
     if created and not instance.qr_code:
         try:
             # Generate the URL for the product API endpoint
-            url = f"{getattr(settings, 'SITE_URL', 'http://localhost:8000')}/api/v1/products/{instance.id}/"
+            url = f"{getattr(settings, 'SITE_URL', 'http://localhost:8000')}/api/v2/products/{instance.id}/"
 
             # Create QR code
             qr = qrcode.QRCode(
