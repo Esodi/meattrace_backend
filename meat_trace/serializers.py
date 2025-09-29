@@ -102,7 +102,10 @@ class OrderItemSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = OrderItem
-        fields = '__all__'
+        fields = ['id', 'order', 'product', 'quantity', 'unit_price', 'subtotal', 'product_id']
+        extra_kwargs = {
+            'order': {'required': False}  # Not required when creating via order
+        }
 
     def validate_quantity(self, value):
         if value <= 0:
@@ -111,12 +114,13 @@ class OrderItemSerializer(serializers.ModelSerializer):
 
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True, read_only=True)
-    customer = serializers.StringRelatedField(read_only=True)
-    shop = serializers.StringRelatedField(read_only=True)
+    items_data = OrderItemSerializer(many=True, write_only=True, required=False)
+    customer = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), required=False)
+    shop = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), required=False)
 
     class Meta:
         model = Order
-        fields = '__all__'
+        fields = ['id', 'customer', 'shop', 'status', 'total_amount', 'created_at', 'updated_at', 'delivery_address', 'notes', 'items', 'items_data']
 
     def validate_total_amount(self, value):
         if value < 0:
@@ -124,10 +128,58 @@ class OrderSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
-        # Set customer from request user if not provided
-        if 'customer' not in validated_data:
-            validated_data['customer'] = self.context['request'].user
-        return super().create(validated_data)
+        # Extract items data before creating order
+        items_data = validated_data.pop('items_data', [])
+
+        # Only set customer and shop from request user if authenticated and not provided
+        request = self.context.get('request')
+        if request and request.user and request.user.is_authenticated:
+            if 'customer' not in validated_data:
+                validated_data['customer'] = request.user
+            if 'shop' not in validated_data:
+                validated_data['shop'] = request.user
+
+        # Create the order
+        order = super().create(validated_data)
+
+        # Create order items
+        for item_data in items_data:
+            OrderItem.objects.create(order=order, **item_data)
+
+        # Update inventory if order is confirmed
+        if order.status == 'confirmed':
+            self._update_inventory_on_confirmation(order)
+
+        return order
+
+    def _update_inventory_on_confirmation(self, order):
+        """Update inventory when order is confirmed"""
+        from django.utils import timezone
+        import logging
+        logger = logging.getLogger(__name__)
+
+        logger.info(f"Order {order.id} confirmed, updating inventory in serializer")
+
+        for order_item in order.items.all():
+            try:
+                # Get or create inventory for this shop and product
+                inventory, created = Inventory.objects.get_or_create(
+                    shop=order.shop,
+                    product=order_item.product,
+                    defaults={'quantity': 0}
+                )
+
+                # Subtract ordered quantity from inventory
+                old_quantity = inventory.quantity
+                inventory.quantity = max(0, inventory.quantity - order_item.quantity)
+                inventory.last_updated = timezone.now()
+                inventory.save()
+
+                logger.info(f"Updated inventory for product {order_item.product.name}: {old_quantity} -> {inventory.quantity}")
+
+            except Exception as e:
+                logger.error(f"Failed to update inventory for order item {order_item.id}: {str(e)}")
+                # Continue with other items even if one fails
 
 class ReceiptSerializer(serializers.ModelSerializer):
     product = ProductSerializer(read_only=True)

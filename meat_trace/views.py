@@ -308,7 +308,7 @@ class ProductViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated, IsShop])
     def receive_products(self, request):
-        """Receive transferred products"""
+        """Receive transferred products and automatically add to inventory"""
         product_ids = request.data.get('product_ids', [])
 
         if not product_ids:
@@ -330,14 +330,27 @@ class ProductViewSet(viewsets.ModelViewSet):
                 product.received_at = timezone.now()
                 product.save()
 
+                # Create receipt to automatically update inventory
+                receipt = Receipt.objects.create(
+                    shop=request.user,
+                    product=product,
+                    received_quantity=product.quantity,
+                    received_at=timezone.now()
+                )
+
                 received_products.append(product_id)
 
-                logger.info(f"Product {product.id} received by shop {request.user.username}")
+                logger.info(f"Product {product.id} received by shop {request.user.username} and added to inventory")
 
             except Product.DoesNotExist:
                 failed_products.append({
                     'id': product_id,
                     'reason': 'Product not found or not transferred to you'
+                })
+            except Exception as e:
+                failed_products.append({
+                    'id': product_id,
+                    'reason': f'Failed to process receipt: {str(e)}'
                 })
 
         response_data = {
@@ -350,7 +363,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         if failed_products:
             response_data['message'] = f'Received {len(received_products)} products, {len(failed_products)} failed'
         else:
-            response_data['message'] = f'Successfully received {len(received_products)} products'
+            response_data['message'] = f'Successfully received {len(received_products)} products and added to inventory'
 
         return Response(response_data, status=status.HTTP_200_OK)
 
@@ -418,7 +431,9 @@ class InventoryViewSet(viewsets.ModelViewSet):
     permission_classes = [AllowAny]  # Temporarily allow access for testing
 
     def get_queryset(self):
-        return Inventory.objects.select_related('product', 'shop').all()
+        return Inventory.objects.select_related('product', 'shop').filter(
+            product__received_by__profile__role='Shop'
+        )
 
     def perform_create(self, serializer):
         serializer.save(shop=self.request.user)
@@ -489,12 +504,13 @@ class OrderViewSet(viewsets.ModelViewSet):
     ordering_fields = ['created_at', 'total_amount', 'updated_at']
     ordering = ['-created_at']
     permission_classes = [AllowAny]  # Temporarily allow access for testing
+    authentication_classes = []  # Disable authentication for this viewset
 
     def get_queryset(self):
         return Order.objects.select_related('customer', 'shop').prefetch_related('items').all()
 
     def perform_create(self, serializer):
-        serializer.save(customer=self.request.user)
+        serializer.save()
         logger.info(f"Order created by {self.request.user.username}")
 
     @action(detail=True, methods=['patch'], permission_classes=[IsAuthenticated])
