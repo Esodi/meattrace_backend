@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.utils import timezone
 from django.contrib.auth.models import User
-from .models import Animal, Product, Receipt, UserProfile, ProductCategory, ProcessingStage, ProductTimelineEvent, Inventory, Order, OrderItem
+from .models import Animal, Product, Receipt, UserProfile, ProductCategory, ProcessingStage, ProductTimelineEvent, Inventory, Order, OrderItem, CarcassMeasurement
 
 class AnimalSerializer(serializers.ModelSerializer):
     farmer = serializers.PrimaryKeyRelatedField(read_only=True)
@@ -15,6 +15,82 @@ class AnimalSerializer(serializers.ModelSerializer):
     def validate_slaughtered_at(self, value):
         if value and value < self.instance.created_at if self.instance else value < timezone.now():
             raise serializers.ValidationError("Slaughter date cannot be before creation date.")
+class CarcassMeasurementSerializer(serializers.ModelSerializer):
+    animal = AnimalSerializer(read_only=True)
+    animal_id = serializers.IntegerField(write_only=True)
+
+    class Meta:
+        model = CarcassMeasurement
+        fields = '__all__'
+
+    def create(self, validated_data):
+        animal_id = validated_data.pop('animal_id')
+        animal = Animal.objects.get(id=animal_id)
+        validated_data['animal'] = animal
+        return super().create(validated_data)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['animal_id'] = instance.animal.id
+        return data
+
+    def validate_animal_id(self, value):
+        """Validate that carcass measurement doesn't already exist for this animal"""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Validating animal_id: {value}")
+
+        # Get the animal instance
+        try:
+            animal = Animal.objects.get(id=value)
+        except Animal.DoesNotExist:
+            raise serializers.ValidationError("Animal not found.")
+
+        if CarcassMeasurement.objects.filter(animal=animal).exists():
+            logger.warning(f"Carcass measurement already exists for animal {value}")
+            raise serializers.ValidationError("Carcass measurement already exists for this animal.")
+        logger.info(f"Animal validation passed for animal {value}")
+        return value
+
+    def validate_measurements(self, value):
+        """Validate the measurements JSON structure"""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Validating measurements: {value}")
+
+        if not isinstance(value, dict):
+            logger.warning("Measurements is not a dictionary")
+            raise serializers.ValidationError("Measurements must be a dictionary.")
+
+        for key, measurement in value.items():
+            logger.info(f"Validating measurement '{key}': {measurement}")
+            if not isinstance(measurement, dict):
+                logger.warning(f"Measurement '{key}' is not a dictionary")
+                raise serializers.ValidationError(f"Measurement '{key}' must be a dictionary with 'value' and 'unit' keys.")
+
+            if 'value' not in measurement:
+                logger.warning(f"Measurement '{key}' missing 'value' field")
+                raise serializers.ValidationError(f"Measurement '{key}' must have a 'value' field.")
+
+            if 'unit' not in measurement:
+                logger.warning(f"Measurement '{key}' missing 'unit' field")
+                raise serializers.ValidationError(f"Measurement '{key}' must have a 'unit' field.")
+
+            # Validate value is a number
+            try:
+                float(measurement['value'])
+            except (ValueError, TypeError):
+                logger.warning(f"Measurement '{key}' value is not a number: {measurement['value']}")
+                raise serializers.ValidationError(f"Measurement '{key}' value must be a number.")
+
+            # Validate unit is valid
+            if measurement['unit'] not in ['kg', 'lbs', 'g']:
+                logger.warning(f"Measurement '{key}' invalid unit: {measurement['unit']}")
+                raise serializers.ValidationError(f"Measurement '{key}' unit must be one of: kg, lbs, g.")
+
+        logger.info("Measurements validation passed")
+        return value
+
         return value
 
 class ProductCategorySerializer(serializers.ModelSerializer):

@@ -75,6 +75,36 @@ class Animal(models.Model):
     def __str__(self):
         display_name = self.animal_name or self.animal_id
         return f"{display_name} ({self.species}) - {self.farmer.username}"
+class CarcassMeasurement(models.Model):
+    UNIT_CHOICES = [
+        ('kg', 'Kilograms'),
+        ('lbs', 'Pounds'),
+        ('g', 'Grams'),
+    ]
+
+    animal = models.OneToOneField(Animal, on_delete=models.CASCADE, related_name='carcass_measurement')
+    measurements = models.JSONField(help_text="JSON object containing measurement data: {'head_weight': {'value': 5.2, 'unit': 'kg'}, 'torso_weight': {'value': 45.8, 'unit': 'kg'}}")
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Carcass measurements for {self.animal.animal_id}"
+
+    def get_measurement(self, key):
+        """Get a specific measurement by key"""
+        return self.measurements.get(key)
+
+    def set_measurement(self, key, value, unit='kg'):
+        """Set a specific measurement"""
+        if not self.measurements:
+            self.measurements = {}
+        self.measurements[key] = {'value': value, 'unit': unit}
+        self.save()
+
+    def get_all_measurements(self):
+        """Get all measurements as a list of dicts"""
+        return [{'name': k, 'value': v['value'], 'unit': v['unit']} for k, v in self.measurements.items()]
+
 
 class ProductCategory(models.Model):
     name = models.CharField(max_length=100, unique=True)
