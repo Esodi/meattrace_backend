@@ -52,8 +52,8 @@ class Command(BaseCommand):
             )
 
     def regenerate_qr_code(self, product):
-        # Generate the URL for the product API endpoint
-        url = f"{settings.SITE_URL or 'http://localhost:8000'}/api/product-info/{product.id}"
+        # Generate the URL for the product info HTML page
+        url = f"{settings.SITE_URL or 'http://localhost:8000'}/api/v2/product-info/view/{product.id}/"
 
         # Create QR code
         qr = qrcode.QRCode(
@@ -74,7 +74,7 @@ class Command(BaseCommand):
 
         # Remove old QR code file if exists
         if product.qr_code:
-            old_path = os.path.join(settings.MEDIA_ROOT, product.qr_code.name)
+            old_path = os.path.join(settings.MEDIA_ROOT, product.qr_code)
             if os.path.exists(old_path):
                 os.remove(old_path)
 

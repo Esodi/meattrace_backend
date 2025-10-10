@@ -279,8 +279,8 @@ def generate_product_qr_code(sender, instance, created, **kwargs):
     """Generate QR code for new products"""
     if created and not instance.qr_code:
         try:
-            # Generate the URL for the product API endpoint
-            url = f"{getattr(settings, 'SITE_URL', 'http://localhost:8000')}/api/product-info/{instance.id}"
+            # Generate the URL for the product info HTML page
+            url = f"{getattr(settings, 'SITE_URL', 'http://localhost:8000')}/api/v2/product-info/view/{instance.id}/"
 
             # Create QR code
             qr = qrcode.QRCode(

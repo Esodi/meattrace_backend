@@ -3,8 +3,8 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 from rest_framework.test import APITestCase
 from rest_framework import status
-from .models import Animal, ProductCategory, Product, ShopReceipt
-from .serializers import AnimalSerializer, ProductSerializer, ProductCategorySerializer, ShopReceiptSerializer
+from .models import Animal, ProductCategory, Product
+from .serializers import AnimalSerializer, ProductSerializer, ProductCategorySerializer
 
 class AnimalModelTest(TestCase):
     def test_animal_creation(self):

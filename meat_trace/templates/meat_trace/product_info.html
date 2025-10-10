@@ -294,7 +294,7 @@
                     <table>
                         {% for key, value in event.details.items %}
                         <tr>
-                            <td>{{ key|title|replace:"_"," " }}</td>
+                            <td>{{ key|title }}</td>
                             <td>{{ value }}</td>
                         </tr>
                         {% endfor %}
@@ -418,7 +418,7 @@
             <tbody>
                 {% for measurement in carcass_measurement.get_all_measurements %}
                 <tr>
-                    <td>{{ measurement.name|title|replace:"_"," " }}</td>
+                    <td>{{ measurement.name|title }}</td>
                     <td>{{ measurement.value }}</td>
                     <td>{{ measurement.unit }}</td>
                 </tr>

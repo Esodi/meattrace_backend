@@ -41,5 +41,8 @@ urlpatterns = [
     path('api/v2/yield-trends/', yield_trends, name='yield_trends'),
     path('api/v2/yield-trends/comparative/', comparative_yield_trends, name='comparative_yield_trends'),
     path('api/v2/processing-pipeline/', processing_pipeline, name='processing_pipeline'),
-    path('api/product-info/<str:product_id>/', product_info, name='product_info'),
+    # HTML view for product info
+    path('api/v2/product-info/view/<str:product_id>/', product_info, name='product_info_html'),
+    # API endpoint for product info
+    path('api/v2/product-info/<str:product_id>/', product_info, name='product_info_api'),
 ]

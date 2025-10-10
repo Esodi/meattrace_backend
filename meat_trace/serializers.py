@@ -118,7 +118,8 @@ class ProductSerializer(serializers.ModelSerializer):
     animal_id = serializers.PrimaryKeyRelatedField(
         queryset=Animal.objects.all(), source='animal', write_only=True
     )
-    processing_unit = serializers.StringRelatedField(read_only=True)
+    processing_unit = serializers.PrimaryKeyRelatedField(queryset=User.objects.filter(profile__role='ProcessingUnit'), required=False)
+    processing_unit_name = serializers.StringRelatedField(source='processing_unit', read_only=True)
     category = ProductCategorySerializer(read_only=True)
     category_id = serializers.PrimaryKeyRelatedField(
         queryset=ProductCategory.objects.all(), source='category', write_only=True, required=False

@@ -70,6 +70,7 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+                'meat_trace.context_processors.site_url',
             ],
         },
     },
@@ -133,7 +134,8 @@ MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 # Site URL for QR code generation
-SITE_URL = 'https://dev.shambabora.co.tz'
+# SITE_URL = 'https://dev.shambabora.co.tz'
+SITE_URL = 'http://192.168.44.223:8000'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field

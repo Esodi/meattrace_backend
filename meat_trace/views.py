@@ -324,6 +324,281 @@ class ProductViewSet(viewsets.ModelViewSet):
         serializer.save(processing_unit=self.request.user)
         logger.info(f"Product created by {self.request.user.username} from animal {animal.id}")
 
+    def retrieve(self, request, *args, **kwargs):
+        """
+        Retrieve a product and return HTML page instead of JSON.
+        """
+        product = self.get_object()
+
+        # Fetch related data
+        animal = product.animal
+        carcass_measurement = CarcassMeasurement.objects.filter(animal=animal).first()
+
+        # Timeline events
+        timeline_events = ProductTimelineEvent.objects.filter(
+            product=product
+        ).select_related('stage').order_by('timestamp')
+
+        # Inventory information
+        inventory_items = Inventory.objects.filter(
+            product=product
+        ).select_related('shop')
+
+        # Receipts (when product was received by shops)
+        receipts = Receipt.objects.filter(
+            product=product
+        ).select_related('shop')
+
+        # Orders that include this product
+        order_items = OrderItem.objects.filter(
+            product=product
+        ).select_related('order', 'order__customer', 'order__shop')
+
+        # Create chronological timeline
+        timeline = []
+
+        # Animal registration
+        if animal:
+            timeline.append({
+                'stage': 'Animal Registration',
+                'timestamp': animal.created_at,
+                'location': f"Farm: {animal.farm_name or 'Unknown'}",
+                'action': f"Animal registered - {animal.species} ({animal.animal_name or animal.animal_id})",
+                'details': {
+                    'species': animal.species,
+                    'age': f"{animal.age} months",
+                    'weight': f"{animal.weight} kg",
+                    'breed': animal.breed or 'Not specified',
+                    'health_status': animal.health_status or 'Not recorded',
+                    'farmer': animal.farmer.username,
+                }
+            })
+
+            # Animal transfer
+            if animal.transferred_at:
+                timeline.append({
+                    'stage': 'Animal Transfer',
+                    'timestamp': animal.transferred_at,
+                    'location': f"To: {animal.transferred_to.username if animal.transferred_to else 'Unknown'}",
+                    'action': f"Animal transferred to processing unit",
+                    'details': {
+                        'from': animal.farmer.username,
+                        'to': animal.transferred_to.username if animal.transferred_to else 'Unknown',
+                    }
+                })
+
+            # Animal received
+            if animal.received_at:
+                timeline.append({
+                    'stage': 'Animal Received',
+                    'timestamp': animal.received_at,
+                    'location': f"By: {animal.received_by.username if animal.received_by else 'Unknown'}",
+                    'action': f"Animal received by processing unit",
+                    'details': {
+                        'received_by': animal.received_by.username if animal.received_by else 'Unknown',
+                    }
+                })
+
+            # Slaughter
+            if animal.slaughtered_at:
+                timeline.append({
+                    'stage': 'Slaughter',
+                    'timestamp': animal.slaughtered_at,
+                    'location': f"Processing Unit: {animal.received_by.username if animal.received_by else 'Unknown'}",
+                    'action': f"Animal slaughtered",
+                    'details': {}
+                })
+
+        # Carcass measurement
+        if carcass_measurement:
+            timeline.append({
+                'stage': 'Carcass Measurement',
+                'timestamp': carcass_measurement.created_at,
+                'location': f"Processing Unit: {animal.received_by.username if animal.received_by else 'Unknown'}",
+                'action': f"Carcass measurements recorded",
+                'details': carcass_measurement.get_all_measurements()
+            })
+
+        # Product creation
+        timeline.append({
+            'stage': 'Product Creation',
+            'timestamp': product.created_at,
+            'location': f"Processing Unit: {product.processing_unit.username}",
+            'action': f"Product created - {product.name} (Batch: {product.batch_number})",
+            'details': {
+                'product_type': product.product_type,
+                'quantity': f"{product.quantity} {product.weight_unit}",
+                'weight': f"{product.weight} {product.weight_unit}" if product.weight else 'Not recorded',
+                'price': f"${product.price}" if product.price else 'Not set',
+                'category': product.category.name if product.category else 'Not categorized',
+                'manufacturer': product.manufacturer or 'Not specified',
+                'description': product.description or 'No description',
+            }
+        })
+
+        # Add timeline events from ProductTimelineEvent model
+        for event in timeline_events:
+            timeline.append({
+                'stage': event.stage.name if event.stage else 'Processing',
+                'timestamp': event.timestamp,
+                'location': event.location,
+                'action': event.action,
+                'details': {}
+            })
+
+        # Product transfer
+        if product.transferred_at:
+            timeline.append({
+                'stage': 'Product Transfer',
+                'timestamp': product.transferred_at,
+                'location': f"To: {product.transferred_to.username if product.transferred_to else 'Unknown'}",
+                'action': f"Product transferred to shop",
+                'details': {
+                    'from': product.processing_unit.username,
+                    'to': product.transferred_to.username if product.transferred_to else 'Unknown',
+                }
+            })
+
+        # Product received
+        if product.received_at:
+            timeline.append({
+                'stage': 'Product Received',
+                'timestamp': product.received_at,
+                'location': f"By: {product.received_by.username if product.received_by else 'Unknown'}",
+                'action': f"Product received by shop",
+                'details': {
+                    'received_by': product.received_by.username if product.received_by else 'Unknown',
+                }
+            })
+
+        # Inventory additions
+        for receipt in receipts:
+            timeline.append({
+                'stage': 'Inventory',
+                'timestamp': receipt.received_at,
+                'location': f"Shop: {receipt.shop.username}",
+                'action': f"Added to inventory - {receipt.received_quantity} units",
+                'details': {
+                    'quantity_added': receipt.received_quantity,
+                    'shop': receipt.shop.username,
+                }
+            })
+
+        # Sales (orders)
+        for order_item in order_items:
+            order = order_item.order
+            timeline.append({
+                'stage': 'Sale',
+                'timestamp': order.created_at,
+                'location': f"Shop: {order.shop.username}",
+                'action': f"Sold to {order.customer.username} - {order_item.quantity} units",
+                'details': {
+                    'customer': order.customer.username,
+                    'quantity': order_item.quantity,
+                    'unit_price': f"${order_item.unit_price}",
+                    'subtotal': f"${order_item.subtotal}",
+                    'order_status': order.status,
+                    'delivery_address': order.delivery_address or 'Not specified',
+                }
+            })
+
+        # Sort timeline by timestamp
+        timeline.sort(key=lambda x: x['timestamp'])
+
+        # Prepare context data
+        context = {
+            'product': product,
+            'animal': animal,
+            'carcass_measurement': carcass_measurement,
+            'timeline': timeline,
+            'inventory_items': inventory_items,
+            'receipts': receipts,
+            'orders': [item.order for item in order_items],
+            'order_items': order_items,
+            'qr_code_url': product.qr_code,
+        }
+
+        return render(request, 'meat_trace/product_info.html', context)
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsProcessingUnit], url_path='regenerate_qr')
+    def regenerate_qr(self, request, pk=None):
+        """Regenerate QR code for a product"""
+        try:
+            # Debug information
+            logger.info(f"User ID: {request.user.id}")
+            logger.info(f"User Role: {request.user.profile.role}")
+            logger.info(f"Product ID: {pk}")
+
+            # Try to get the product
+            try:
+                product = Product.objects.get(pk=pk)
+                logger.info(f"Product found, processing unit: {product.processing_unit}")
+            except Product.DoesNotExist:
+                logger.info("Product not found")
+                return Response(
+                    {'error': 'Product not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Check if the product belongs to this processing unit
+            logger.info(f"Product processing_unit: {product.processing_unit}")
+            logger.info(f"Request user: {request.user}")
+            
+            if product.processing_unit_id != request.user.id:
+                logger.info("Product does not belong to this user")
+                return Response(
+                    {'error': 'You can only regenerate QR codes for your own products'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            # Generate a new QR code
+            url = f"{getattr(settings, 'SITE_URL', 'http://localhost:8000')}/api/v2/product-info/view/{product.id}/"
+
+            qr = qrcode.QRCode(
+                version=1,
+                error_correction=qrcode.constants.ERROR_CORRECT_L,
+                box_size=10,
+                border=4,
+            )
+            qr.add_data(url)
+            qr.make(fit=True)
+
+            # Create the image
+            img = qr.make_image(fill_color="black", back_color="white")
+
+            # Ensure the qr_codes directory exists
+            qr_dir = os.path.join(settings.MEDIA_ROOT, 'qr_codes')
+            os.makedirs(qr_dir, exist_ok=True)
+
+            # Delete the old QR code file if it exists
+            if product.qr_code:
+                old_filepath = os.path.join(settings.MEDIA_ROOT, product.qr_code)
+                if os.path.exists(old_filepath):
+                    os.remove(old_filepath)
+
+            # Save the new image
+            filename = f"qr_{product.id}_{timezone.now().strftime('%Y%m%d%H%M%S')}.png"
+            filepath = os.path.join(qr_dir, filename)
+            img.save(filepath)
+
+            # Update the product with the new QR code path
+            product.qr_code = f"qr_codes/{filename}"
+            product.save(update_fields=['qr_code'])
+
+            logger.info(f"QR code regenerated for product {product.id} by {request.user.username}")
+
+            return Response({
+                'message': 'QR code regenerated successfully',
+                'qr_code_url': product.qr_code
+            })
+
+        except Exception as e:
+            logger.error(f"Failed to regenerate QR code for product {pk}: {str(e)}")
+            return Response(
+                {'error': 'Failed to regenerate QR code'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
     @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated, IsProcessingUnit])
     def transfer(self, request):
         """Transfer products to a shop"""
@@ -661,6 +936,11 @@ def register_user(request):
     logger.info(f"Request headers: {dict(request.headers)}")
     logger.info(f"Request content type: {request.content_type}")
     logger.info(f"Request data: {request.data}")
+    logger.info(f"Authorization header present: {'Authorization' in request.headers}")
+    if 'Authorization' in request.headers:
+        logger.info(f"Authorization header value: {request.headers['Authorization']}")
+    logger.info(f"User authenticated: {request.user.is_authenticated}")
+    logger.info(f"User: {request.user}")
     logger.info("===================================")
     
     try:
