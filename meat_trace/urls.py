@@ -7,7 +7,7 @@ from .views import (
     OrderViewSet, OrderItemViewSet,
     register_user, upload_file, health_check, server_info,
     meat_trace_list, categories_list, user_profile, processing_units_list, shops_list, production_stats,
-    yield_trends, comparative_yield_trends, processing_pipeline
+    yield_trends, comparative_yield_trends, processing_pipeline, product_info
 )
 
 app_name = 'meat_trace'
@@ -41,4 +41,5 @@ urlpatterns = [
     path('api/v2/yield-trends/', yield_trends, name='yield_trends'),
     path('api/v2/yield-trends/comparative/', comparative_yield_trends, name='comparative_yield_trends'),
     path('api/v2/processing-pipeline/', processing_pipeline, name='processing_pipeline'),
+    path('api/product-info/<str:product_id>/', product_info, name='product_info'),
 ]

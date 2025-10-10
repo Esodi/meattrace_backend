@@ -53,7 +53,7 @@ class Command(BaseCommand):
 
     def regenerate_qr_code(self, product):
         # Generate the URL for the product API endpoint
-        url = f"{settings.SITE_URL or 'http://localhost:8000'}/api/v2/products/{product.id}/"
+        url = f"{settings.SITE_URL or 'http://localhost:8000'}/api/product-info/{product.id}"
 
         # Create QR code
         qr = qrcode.QRCode(

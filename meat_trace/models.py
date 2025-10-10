@@ -247,6 +247,9 @@ class Order(models.Model):
     delivery_address = models.TextField(blank=True, null=True)
     notes = models.TextField(blank=True, null=True)
 
+    # QR code field for processing orders
+    qr_code = models.CharField(max_length=500, blank=True, null=True)
+
     def __str__(self):
         return f"Order {self.id} - {self.customer.username} - {self.status}"
 
@@ -277,7 +280,7 @@ def generate_product_qr_code(sender, instance, created, **kwargs):
     if created and not instance.qr_code:
         try:
             # Generate the URL for the product API endpoint
-            url = f"{getattr(settings, 'SITE_URL', 'http://localhost:8000')}/api/v2/products/{instance.id}/"
+            url = f"{getattr(settings, 'SITE_URL', 'http://localhost:8000')}/api/product-info/{instance.id}"
 
             # Create QR code
             qr = qrcode.QRCode(
@@ -310,3 +313,77 @@ def generate_product_qr_code(sender, instance, created, **kwargs):
             import logging
             logger = logging.getLogger(__name__)
             logger.error(f"Failed to generate QR code for product {instance.id}: {str(e)}")
+
+
+@receiver(post_save, sender=Order)
+def generate_order_qr_code(sender, instance, created, **kwargs):
+    """Generate QR code for processing orders (orders where shop is a processing unit)"""
+    if created and not instance.qr_code:
+        try:
+            # Only generate QR codes for orders where the shop is a processing unit
+            if instance.shop.profile.role == 'ProcessingUnit':
+                # Create detailed JSON data for the QR code
+                qr_data = {
+                    'type': 'processing_order',
+                    'order_id': instance.id,
+                    'processor_id': instance.shop.id,
+                    'processor_name': instance.shop.username,
+                    'customer_id': instance.customer.id,
+                    'customer_name': instance.customer.username,
+                    'status': instance.status,
+                    'total_amount': float(instance.total_amount),
+                    'processing_timestamp': instance.created_at.isoformat(),
+                    'updated_at': instance.updated_at.isoformat(),
+                    'products': []
+                }
+
+                # Add product details
+                for item in instance.items.all():
+                    product_data = {
+                        'product_id': item.product.id,
+                        'name': item.product.name,
+                        'batch_number': item.product.batch_number,
+                        'quantity': float(item.quantity),
+                        'unit_price': float(item.unit_price),
+                        'subtotal': float(item.subtotal),
+                        'animal_id': item.product.animal.animal_id,
+                        'animal_species': item.product.animal.species,
+                        'farmer_name': item.product.animal.farmer.username,
+                    }
+                    qr_data['products'].append(product_data)
+
+                # Convert to JSON string
+                import json
+                qr_content = json.dumps(qr_data, indent=2)
+
+                # Create QR code
+                qr = qrcode.QRCode(
+                    version=1,
+                    error_correction=qrcode.constants.ERROR_CORRECT_L,
+                    box_size=10,
+                    border=4,
+                )
+                qr.add_data(qr_content)
+                qr.make(fit=True)
+
+                # Create the image
+                img = qr.make_image(fill_color="black", back_color="white")
+
+                # Ensure the qr_codes directory exists
+                qr_dir = os.path.join(settings.MEDIA_ROOT, 'qr_codes')
+                os.makedirs(qr_dir, exist_ok=True)
+
+                # Save the image
+                filename = f"order_qr_{instance.id}.png"
+                filepath = os.path.join(qr_dir, filename)
+                img.save(filepath)
+
+                # Update the instance with the relative path
+                instance.qr_code = f"qr_codes/{filename}"
+                instance.save(update_fields=['qr_code'])
+
+        except Exception as e:
+            # Log the error but don't fail the order creation
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to generate QR code for order {instance.id}: {str(e)}")

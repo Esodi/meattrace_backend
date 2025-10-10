@@ -196,7 +196,7 @@ class OrderSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Order
-        fields = ['id', 'customer', 'shop', 'status', 'total_amount', 'created_at', 'updated_at', 'delivery_address', 'notes', 'items', 'items_data']
+        fields = ['id', 'customer', 'shop', 'status', 'total_amount', 'created_at', 'updated_at', 'delivery_address', 'notes', 'qr_code', 'items', 'items_data']
 
     def validate_total_amount(self, value):
         if value < 0:
