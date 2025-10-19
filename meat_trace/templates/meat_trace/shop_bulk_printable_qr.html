@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shop QR Codes - {{ shop_name }}</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 0.5in;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: white;
+            color: #333;
+            line-height: 1.4;
+        }
+
+        .header {
+            text-align: center;
+            border-bottom: 2px solid #333;
+            padding-bottom: 15px;
+            margin-bottom: 20px;
+        }
+
+        .header h1 {
+            margin: 0;
+            font-size: 24px;
+            color: #333;
+        }
+
+        .header p {
+            margin: 5px 0;
+            font-size: 14px;
+            color: #666;
+        }
+
+        .products-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+        }
+
+        .product-card {
+            border: 2px solid #333;
+            border-radius: 10px;
+            padding: 15px;
+            background: #f9f9f9;
+            break-inside: avoid;
+        }
+
+        .qr-section {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .qr-code {
+            margin-right: 15px;
+        }
+
+        .qr-code img {
+            width: {% if size == 'small' %}100px{% elif size == 'medium' %}120px{% else %}150px{% endif %};
+            height: {% if size == 'small' %}100px{% elif size == 'medium' %}120px{% else %}150px{% endif %};
+            border: 2px solid #333;
+            border-radius: 5px;
+        }
+
+        .product-info h3 {
+            margin: 0 0 10px 0;
+            font-size: 16px;
+            color: #333;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 4px 10px;
+            font-size: 12px;
+        }
+
+        .info-label {
+            font-weight: bold;
+            color: #555;
+        }
+
+        .info-value {
+            color: #333;
+        }
+
+        .shop-stamp {
+            background: #e8f5e8;
+            border: 1px solid #4caf50;
+            border-radius: 5px;
+            padding: 8px;
+            margin-top: 10px;
+            text-align: center;
+            font-size: 11px;
+            color: #2e7d32;
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            padding-top: 15px;
+            border-top: 1px solid #ccc;
+            font-size: 12px;
+            color: #666;
+        }
+
+        /* Single layout */
+        {% if layout == 'single' %}
+        .products-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .product-card {
+            max-width: 600px;
+            margin: 0 auto 20px auto;
+        }
+
+        .qr-code img {
+            width: {% if size == 'small' %}150px{% elif size == 'medium' %}200px{% else %}250px{% endif %};
+            height: {% if size == 'small' %}150px{% elif size == 'medium' %}200px{% else %}250px{% endif %};
+        }
+
+        .product-info h3 {
+            font-size: 18px;
+        }
+
+        .info-grid {
+            font-size: 14px;
+        }
+        {% endif %}
+
+        /* Print-specific styles */
+        @media print {
+            body {
+                padding: 0;
+            }
+
+            .product-card {
+                break-inside: avoid;
+                page-break-inside: avoid;
+            }
+
+            .products-grid {
+                gap: 15px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Meat Trace QR Codes</h1>
+        <p>Shop: {{ shop_name }}</p>
+        <p>Printed by: {{ printed_by }} | Printed at: {{ printed_at|date:"M d, Y H:i" }}</p>
+    </div>
+
+    <div class="products-grid">
+        {% for product in products %}
+        <div class="product-card">
+            <div class="qr-section">
+                <div class="qr-code">
+                    {% if product.qr_code %}
+                    <img src="/media/{{ product.qr_code }}" alt="QR Code for {{ product.name }}">
+                    {% else %}
+                    <div style="width: 120px; height: 120px; border: 2px solid #ccc; display: flex; align-items: center; justify-content: center; background: #f5f5f5;">
+                        <span style="color: #999; font-size: 10px;">QR Code<br>Not Available</span>
+                    </div>
+                    {% endif %}
+                </div>
+
+                <div class="product-info">
+                    <h3>{{ product.name }}</h3>
+                    <div class="info-grid">
+                        <span class="info-label">Batch:</span>
+                        <span class="info-value">{{ product.batch_number }}</span>
+
+                        <span class="info-label">Type:</span>
+                        <span class="info-value">{{ product.product_type|title }}</span>
+
+                        <span class="info-label">Quantity:</span>
+                        <span class="info-value">{{ product.quantity }} {{ product.weight_unit }}</span>
+
+                        {% if product.weight %}
+                        <span class="info-label">Weight:</span>
+                        <span class="info-value">{{ product.weight }} {{ product.weight_unit }}</span>
+                        {% endif %}
+
+                        {% if product.animal %}
+                        <span class="info-label">Animal ID:</span>
+                        <span class="info-value">{{ product.animal.animal_id }}</span>
+                        {% endif %}
+
+                        {% if product.processing_unit %}
+                        <span class="info-label">Processor:</span>
+                        <span class="info-value">{{ product.processing_unit.username }}</span>
+                        {% endif %}
+
+                        <span class="info-label">Received:</span>
+                        <span class="info-value">{{ product.received_at|date:"M d, Y" }}</span>
+                    </div>
+
+                    <div class="shop-stamp">
+                        Verified by {{ shop_name }}<br>
+                        Product ID: {{ product.id }}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <div class="footer">
+        <p>Scan QR codes to view complete product traceability information</p>
+        <p>These products have been received and verified by {{ shop_name }}</p>
+        <p>Total products: {{ products|length }}</p>
+    </div>
+</body>
+</html>

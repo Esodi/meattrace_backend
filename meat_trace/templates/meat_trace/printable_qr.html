@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR Code - {{ product.name }}</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 0.5in;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: white;
+            color: #333;
+            line-height: 1.4;
+        }
+
+        .print-container {
+            max-width: 100%;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            border-bottom: 2px solid #333;
+            padding-bottom: 15px;
+            margin-bottom: 20px;
+        }
+
+        .header h1 {
+            margin: 0;
+            font-size: 24px;
+            color: #333;
+        }
+
+        .header p {
+            margin: 5px 0;
+            font-size: 14px;
+            color: #666;
+        }
+
+        .qr-section {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 30px 0;
+            padding: 20px;
+            border: 2px solid #333;
+            border-radius: 10px;
+            background: #f9f9f9;
+        }
+
+        .qr-code {
+            text-align: center;
+            margin-right: 30px;
+        }
+
+        .qr-code img {
+            width: {% if size == 'small' %}150px{% elif size == 'medium' %}200px{% else %}250px{% endif %};
+            height: {% if size == 'small' %}150px{% elif size == 'medium' %}200px{% else %}250px{% endif %};
+            border: 2px solid #333;
+            border-radius: 5px;
+        }
+
+        .product-info {
+            flex: 1;
+            max-width: 400px;
+        }
+
+        .product-info h2 {
+            margin: 0 0 15px 0;
+            font-size: 20px;
+            color: #333;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 8px 15px;
+            font-size: 14px;
+        }
+
+        .info-label {
+            font-weight: bold;
+            color: #555;
+        }
+
+        .info-value {
+            color: #333;
+        }
+
+        .copies-section {
+            text-align: center;
+            margin: 20px 0;
+            font-size: 12px;
+            color: #666;
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            padding-top: 15px;
+            border-top: 1px solid #ccc;
+            font-size: 12px;
+            color: #666;
+        }
+
+        /* Grid layout for multiple copies */
+        {% if layout == 'grid' %}
+        .print-container {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+        }
+
+        .qr-section {
+            margin: 15px 0;
+            padding: 15px;
+        }
+
+        .qr-code img {
+            width: 120px;
+            height: 120px;
+        }
+
+        .product-info {
+            max-width: none;
+        }
+
+        .product-info h2 {
+            font-size: 16px;
+        }
+
+        .info-grid {
+            font-size: 12px;
+        }
+        {% endif %}
+
+        /* Print-specific styles */
+        @media print {
+            body {
+                padding: 0;
+            }
+
+            .print-container {
+                page-break-inside: avoid;
+            }
+
+            .qr-section {
+                break-inside: avoid;
+            }
+
+            .copies-section {
+                display: none;
+            }
+        }
+
+        /* Hide elements for multiple copies */
+        {% if copies > 1 %}
+        .header {
+            display: none;
+        }
+
+        .footer {
+            display: none;
+        }
+        {% endif %}
+    </style>
+</head>
+<body>
+    {% for copy in copies|make_list %}
+    <div class="print-container">
+        {% if copy == 1 %}
+        <div class="header">
+            <h1>Meat Trace QR Code</h1>
+            <p>Product: {{ product.name }} | Batch: {{ product.batch_number }}</p>
+            <p>Processing Unit: {{ processing_unit }}</p>
+        </div>
+        {% endif %}
+
+        <div class="qr-section">
+            <div class="qr-code">
+                {% if qr_code_url %}
+                <img src="/media/{{ qr_code_url }}" alt="Product QR Code">
+                {% else %}
+                <div style="width: 200px; height: 200px; border: 2px solid #ccc; display: flex; align-items: center; justify-content: center; background: #f5f5f5;">
+                    <span style="color: #999;">QR Code<br>Not Available</span>
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="product-info">
+                <h2>{{ product.name }}</h2>
+                <div class="info-grid">
+                    <span class="info-label">Product Type:</span>
+                    <span class="info-value">{{ product.product_type|title }}</span>
+
+                    <span class="info-label">Batch Number:</span>
+                    <span class="info-value">{{ product.batch_number }}</span>
+
+                    <span class="info-label">Quantity:</span>
+                    <span class="info-value">{{ product.quantity }} {{ product.weight_unit }}</span>
+
+                    {% if product.weight %}
+                    <span class="info-label">Weight:</span>
+                    <span class="info-value">{{ product.weight }} {{ product.weight_unit }}</span>
+                    {% endif %}
+
+                    {% if product.price %}
+                    <span class="info-label">Price:</span>
+                    <span class="info-value">${{ product.price }}</span>
+                    {% endif %}
+
+                    {% if animal %}
+                    <span class="info-label">Source Animal:</span>
+                    <span class="info-value">{{ animal.animal_id }}{% if animal.animal_name %} ({{ animal.animal_name }}){% endif %}</span>
+
+                    <span class="info-label">Species:</span>
+                    <span class="info-value">{{ animal.species|title }}</span>
+
+                    <span class="info-label">Farmer:</span>
+                    <span class="info-value">{{ animal.farmer.username }}</span>
+                    {% endif %}
+
+                    <span class="info-label">Created:</span>
+                    <span class="info-value">{{ product.created_at|date:"M d, Y" }}</span>
+
+                    {% if product.category %}
+                    <span class="info-label">Category:</span>
+                    <span class="info-value">{{ product.category.name }}</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        {% if copy == copies %}
+        <div class="footer">
+            <p>Scan QR code to view complete product traceability information</p>
+            <p>Printed by: {{ printed_by }} | Printed at: {{ printed_at|date:"M d, Y H:i" }}</p>
+        </div>
+        {% endif %}
+    </div>
+
+    {% if not forloop.last %}
+    <div style="page-break-after: always;"></div>
+    {% endif %}
+    {% endfor %}
+
+    {% if copies > 1 %}
+    <div class="copies-section">
+        Total copies: {{ copies }}
+    </div>
+    {% endif %}
+</body>
+</html>

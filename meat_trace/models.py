@@ -11,6 +11,110 @@ from django.conf import settings
 
 # Create your models here.
 
+class ProcessingUnit(models.Model):
+    """Represents a processing unit that can have multiple users with different roles"""
+    name = models.CharField(max_length=200, unique=True)
+    description = models.TextField(blank=True, null=True)
+    location = models.CharField(max_length=200, blank=True, null=True)
+    contact_email = models.EmailField(blank=True, null=True)
+    contact_phone = models.CharField(max_length=20, blank=True, null=True)
+    license_number = models.CharField(max_length=100, blank=True, null=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.name
+
+
+class ProcessingUnitUser(models.Model):
+    """Links users to processing units with specific roles and permissions"""
+    ROLE_CHOICES = [
+        ('owner', 'Owner'),
+        ('manager', 'Manager'),
+        ('supervisor', 'Supervisor'),
+        ('worker', 'Worker'),
+        ('quality_control', 'Quality Control'),
+    ]
+
+    PERMISSION_CHOICES = [
+        ('read', 'Read Only'),
+        ('write', 'Read/Write'),
+        ('admin', 'Full Admin'),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='processing_unit_memberships')
+    processing_unit = models.ForeignKey(ProcessingUnit, on_delete=models.CASCADE, related_name='members')
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='worker')
+    permissions = models.CharField(max_length=20, choices=PERMISSION_CHOICES, default='write')
+    # Granular permissions as JSONField for detailed access control
+    granular_permissions = models.JSONField(default=dict, blank=True, help_text="JSON object defining specific permissions")
+    invited_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='sent_invitations')
+    invited_at = models.DateTimeField(default=timezone.now)
+    joined_at = models.DateTimeField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    # Suspension fields
+    is_suspended = models.BooleanField(default=False, help_text="Whether the user is currently suspended")
+    suspension_reason = models.TextField(blank=True, null=True, help_text="Reason for suspension")
+    suspension_date = models.DateTimeField(null=True, blank=True, help_text="Date when user was suspended")
+    # Activity tracking
+    last_active = models.DateTimeField(null=True, blank=True, help_text="Last time user was active in the system")
+
+    class Meta:
+        unique_together = ['user', 'processing_unit']
+
+    def __str__(self):
+        return f"{self.user.username} - {self.processing_unit.name} ({self.role})"
+
+
+class Shop(models.Model):
+    """Represents a registered shop with business information"""
+    name = models.CharField(max_length=200, unique=True)
+    description = models.TextField(blank=True, null=True)
+    location = models.CharField(max_length=200, blank=True, null=True)
+    contact_email = models.EmailField(blank=True, null=True)
+    contact_phone = models.CharField(max_length=20, blank=True, null=True)
+    business_license = models.CharField(max_length=100, blank=True, null=True)
+    tax_id = models.CharField(max_length=50, blank=True, null=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+    is_active = models.BooleanField(default=True)
+
+    def __str__(self):
+        return self.name
+
+
+class ShopUser(models.Model):
+    """Links users to shops with specific roles and permissions"""
+    ROLE_CHOICES = [
+        ('owner', 'Owner'),
+        ('manager', 'Manager'),
+        ('salesperson', 'Salesperson'),
+        ('cashier', 'Cashier'),
+        ('inventory_clerk', 'Inventory Clerk'),
+    ]
+
+    PERMISSION_CHOICES = [
+        ('read', 'Read Only'),
+        ('write', 'Read/Write'),
+        ('admin', 'Full Admin'),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='shop_memberships')
+    shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name='members')
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='salesperson')
+    permissions = models.CharField(max_length=20, choices=PERMISSION_CHOICES, default='write')
+    invited_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='sent_shop_invitations')
+    invited_at = models.DateTimeField(default=timezone.now)
+    joined_at = models.DateTimeField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        unique_together = ['user', 'shop']
+
+    def __str__(self):
+        return f"{self.user.username} - {self.shop.name} ({self.role})"
+
+
 class UserProfile(models.Model):
     ROLE_CHOICES = [
         ('Farmer', 'Farmer'),
@@ -20,6 +124,32 @@ class UserProfile(models.Model):
 
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='Farmer')
+    # Link to processing unit for users who are part of processing units
+    processing_unit = models.ForeignKey(ProcessingUnit, on_delete=models.SET_NULL, null=True, blank=True, related_name='user_profiles')
+    # Link to shop for users who are part of shops
+    shop = models.ForeignKey(Shop, on_delete=models.SET_NULL, null=True, blank=True, related_name='user_profiles')
+
+    # Enhanced profile fields from design
+    is_profile_complete = models.BooleanField(default=False)
+    profile_completion_step = models.IntegerField(default=1)
+
+    # Additional profile fields
+    avatar = models.ImageField(upload_to='avatars/', null=True, blank=True)
+    phone = models.CharField(max_length=20, blank=True)
+    address = models.TextField(blank=True)
+    bio = models.TextField(blank=True)
+
+    # Preferences
+    preferred_species = models.JSONField(default=list, blank=True)  # For farmers
+    notification_preferences = models.JSONField(default=dict, blank=True)
+
+    # Verification status
+    is_email_verified = models.BooleanField(default=False)
+    is_phone_verified = models.BooleanField(default=False)
+    verification_token = models.CharField(max_length=100, blank=True)
+
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"{self.user.username} - {self.role}"
@@ -33,6 +163,61 @@ def create_user_profile(sender, instance, created, **kwargs):
 def save_user_profile(sender, instance, **kwargs):
     instance.profile.save()
 
+
+class UserAuditLog(models.Model):
+    """Tracks all user management actions, permission changes, and security events"""
+    ACTION_CHOICES = [
+        ('user_invited', 'User Invited'),
+        ('user_joined', 'User Joined'),
+        ('user_suspended', 'User Suspended'),
+        ('user_unsuspended', 'User Unsuspended'),
+        ('user_removed', 'User Removed'),
+        ('role_changed', 'Role Changed'),
+        ('permissions_changed', 'Permissions Changed'),
+        ('granular_permissions_changed', 'Granular Permissions Changed'),
+        ('user_login', 'User Login'),
+        ('user_logout', 'User Logout'),
+        ('password_changed', 'Password Changed'),
+        ('profile_updated', 'Profile Updated'),
+        ('security_event', 'Security Event'),
+    ]
+
+    # The user who performed the action (admin/manager)
+    performed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='audit_actions')
+    # The user who was affected by the action
+    affected_user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='audit_events')
+    # The processing unit context (if applicable)
+    processing_unit = models.ForeignKey(ProcessingUnit, on_delete=models.SET_NULL, null=True, blank=True, related_name='audit_logs')
+    # The shop context (if applicable)
+    shop = models.ForeignKey(Shop, on_delete=models.SET_NULL, null=True, blank=True, related_name='audit_logs')
+
+    action = models.CharField(max_length=50, choices=ACTION_CHOICES)
+    description = models.TextField(help_text="Detailed description of the action performed")
+    # Store old and new values for change tracking
+    old_values = models.JSONField(default=dict, blank=True, help_text="Previous values before the change")
+    new_values = models.JSONField(default=dict, blank=True, help_text="New values after the change")
+    # Additional metadata
+    metadata = models.JSONField(default=dict, blank=True, help_text="Additional context or metadata")
+    # IP address and user agent for security tracking
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.TextField(blank=True, null=True)
+
+    timestamp = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['performed_by', 'timestamp']),
+            models.Index(fields=['affected_user', 'timestamp']),
+            models.Index(fields=['processing_unit', 'timestamp']),
+            models.Index(fields=['shop', 'timestamp']),
+            models.Index(fields=['action', 'timestamp']),
+        ]
+
+    def __str__(self):
+        context = self.processing_unit.name if self.processing_unit else (self.shop.name if self.shop else 'System')
+        return f"{self.action} by {self.performed_by.username if self.performed_by else 'System'} on {self.affected_user.username} in {context} at {self.timestamp}"
+
 class Animal(models.Model):
     SPECIES_CHOICES = [
         ('cow', 'Cow'),
@@ -44,13 +229,13 @@ class Animal(models.Model):
 
     farmer = models.ForeignKey(User, on_delete=models.CASCADE, related_name='animals')
     species = models.CharField(max_length=20, choices=SPECIES_CHOICES, default='cow')
-    age = models.PositiveIntegerField(default=0, help_text="Age in months")
-    weight = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0)], help_text="Weight in kg")
+    age = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0)], help_text="Age in months")
+    live_weight = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0)], null=True, blank=True, help_text="Live weight in kg before slaughter")
     created_at = models.DateTimeField(default=timezone.now)
     slaughtered = models.BooleanField(default=False)
     slaughtered_at = models.DateTimeField(null=True, blank=True)
     # Transfer fields
-    transferred_to = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='transferred_animals')
+    transferred_to = models.ForeignKey(ProcessingUnit, on_delete=models.SET_NULL, null=True, blank=True, related_name='transferred_animals')
     transferred_at = models.DateTimeField(null=True, blank=True)
     # Receive fields
     received_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='received_animals')
@@ -60,8 +245,10 @@ class Animal(models.Model):
     # User-friendly optional name/tag
     animal_name = models.CharField(max_length=100, blank=True, null=True, help_text="Optional custom animal name or tag")
     breed = models.CharField(max_length=100, blank=True, null=True, help_text="Animal breed")
-    farm_name = models.CharField(max_length=100, blank=True, null=True, help_text="Farm name")
+    abbatoir_name = models.CharField(max_length=100, blank=True, null=True, help_text="Abbatoir name")
     health_status = models.CharField(max_length=50, blank=True, null=True, help_text="Animal health status (e.g., Healthy, Sick, Under Treatment)")
+    processed = models.BooleanField(default=False, help_text="Indicates if the animal has been processed into products")
+    photo = models.ImageField(upload_to='animal_photos/', blank=True, null=True, help_text="Animal photo")
 
     def save(self, *args, **kwargs):
         if not self.animal_id:
@@ -71,11 +258,82 @@ class Animal(models.Model):
     def _generate_animal_id(self):
         """Generate a unique animal ID using UUID"""
         return f"ANIMAL_{uuid.uuid4().hex[:12].upper()}"
+    
+    @property
+    def is_split_carcass(self):
+        """Check if this animal is a split carcass based on carcass measurement"""
+        try:
+            return hasattr(self, 'carcass_measurement') and self.carcass_measurement.carcass_type == 'split'
+        except:
+            return False
+    
+    @property
+    def has_slaughter_parts(self):
+        """Check if this animal has individual slaughter parts defined"""
+        return self.slaughter_parts.exists()
 
     def __str__(self):
         display_name = self.animal_name or self.animal_id
         return f"{display_name} ({self.species}) - {self.farmer.username}"
+class SlaughterPart(models.Model):
+    PART_CHOICES = [
+        ('whole_carcass', 'Whole Carcass'),
+        ('left_side', 'Left Side'),
+        ('right_side', 'Right Side'),
+        ('head', 'Head'),
+        ('feet', 'Feet'),
+        ('internal_organs', 'Internal Organs'),
+        ('other', 'Other'),
+    ]
+
+    animal = models.ForeignKey(Animal, on_delete=models.CASCADE, related_name='slaughter_parts')
+    part_type = models.CharField(max_length=20, choices=PART_CHOICES, default='whole_carcass')
+    weight = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(0)], help_text="Weight of this part in kg")
+    weight_unit = models.CharField(max_length=10, choices=[('kg', 'Kilograms'), ('lbs', 'Pounds'), ('g', 'Grams')], default='kg')
+    description = models.TextField(blank=True, null=True, help_text="Additional description of the part")
+    created_at = models.DateTimeField(default=timezone.now)
+
+    # Transfer fields - changed to ProcessingUnit instead of User for consistency with Animal model
+    transferred_to = models.ForeignKey('ProcessingUnit', on_delete=models.SET_NULL, null=True, blank=True, related_name='transferred_parts')
+    transferred_at = models.DateTimeField(null=True, blank=True)
+    # Receive fields
+    received_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='received_parts')
+    received_at = models.DateTimeField(null=True, blank=True)
+
+    # Track if this part has been used in a product
+    used_in_product = models.BooleanField(default=False, help_text="Indicates if this part has been used to create a product")
+    
+    # Track whether part is selected for transfer/receive (for split carcass workflow)
+    is_selected_for_transfer = models.BooleanField(default=False, help_text="Whether this part is selected for the current transfer")
+
+    def __str__(self):
+        return f"{self.part_type} of {self.animal.animal_id} ({self.weight} {self.weight_unit})"
+
+    class Meta:
+        unique_together = ['animal', 'part_type']  # Prevent duplicate parts for same animal
+
+
+class ProductIngredient(models.Model):
+    """Tracks which slaughter parts are used to create each product"""
+    product = models.ForeignKey('Product', on_delete=models.CASCADE, related_name='ingredients')
+    slaughter_part = models.ForeignKey(SlaughterPart, on_delete=models.CASCADE, related_name='product_ingredients')
+    quantity_used = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(0)], help_text="Quantity of this part used in the product")
+    quantity_unit = models.CharField(max_length=10, choices=[('kg', 'Kilograms'), ('lbs', 'Pounds'), ('g', 'Grams')], default='kg')
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        unique_together = ['product', 'slaughter_part']  # Prevent duplicate ingredients for same product
+
+    def __str__(self):
+        return f"{self.slaughter_part.part_type} in {self.product.name} ({self.quantity_used} {self.quantity_unit})"
+
+
 class CarcassMeasurement(models.Model):
+    CARCASS_TYPE_CHOICES = [
+        ('whole', 'Whole Carcass'),
+        ('split', 'Split Carcass'),
+    ]
+
     UNIT_CHOICES = [
         ('kg', 'Kilograms'),
         ('lbs', 'Pounds'),
@@ -83,12 +341,57 @@ class CarcassMeasurement(models.Model):
     ]
 
     animal = models.OneToOneField(Animal, on_delete=models.CASCADE, related_name='carcass_measurement')
-    measurements = models.JSONField(help_text="JSON object containing measurement data: {'head_weight': {'value': 5.2, 'unit': 'kg'}, 'torso_weight': {'value': 45.8, 'unit': 'kg'}}")
+    carcass_type = models.CharField(max_length=20, choices=CARCASS_TYPE_CHOICES, default='whole', help_text="Type of carcass measurement")
+    # Whole carcass fields
+    head_weight = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(0)], null=True, blank=True, help_text="Weight of head")
+    torso_weight = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(0)], null=True, blank=True, help_text="Weight of torso")
+    # Split carcass fields (aligned with frontend naming)
+    front_legs_weight = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(0)], null=True, blank=True, help_text="Weight of front legs")
+    hind_legs_weight = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(0)], null=True, blank=True, help_text="Weight of hind legs")
+    feet_weight = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(0)], null=True, blank=True, help_text="Weight of feet")
+    organs_weight = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(0)], null=True, blank=True, help_text="Weight of organs")
+    weight_unit = models.CharField(max_length=10, choices=UNIT_CHOICES, default='kg', help_text="Unit for weight measurements")
+    measurements = models.JSONField(blank=True, help_text="JSON object containing measurement data: {'head_weight': {'value': 5.2, 'unit': 'kg'}, 'torso_weight': {'value': 45.8, 'unit': 'kg'}}")
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"Carcass measurements for {self.animal.animal_id}"
+
+    @property
+    def calculated_total_weight(self):
+        """Calculate total weight based on carcass type"""
+        if self.carcass_type == 'whole':
+            if self.head_weight is not None and self.torso_weight is not None:
+                return self.head_weight + self.torso_weight
+        elif self.carcass_type == 'split':
+            if (self.front_legs_weight is not None and self.hind_legs_weight is not None and
+                self.feet_weight is not None and self.organs_weight is not None):
+                return (self.front_legs_weight + self.hind_legs_weight +
+                       self.feet_weight + self.organs_weight)
+        return None
+
+    def clean(self):
+        """Validate carcass measurement data"""
+        from django.core.exceptions import ValidationError
+
+        # Validate all weights are positive
+        weight_fields = ['head_weight', 'torso_weight', 'front_legs_weight',
+                        'hind_legs_weight', 'feet_weight', 'organs_weight']
+        for field_name in weight_fields:
+            weight = getattr(self, field_name)
+            if weight is not None and weight <= 0:
+                raise ValidationError(f"{field_name.replace('_', ' ').title()} must be positive.")
+
+        # Validate required fields based on carcass_type
+        if self.carcass_type == 'whole':
+            if self.head_weight is None or self.torso_weight is None:
+                raise ValidationError("For whole carcass, both head_weight and torso_weight are required.")
+        elif self.carcass_type == 'split':
+            required_fields = ['left_side_weight', 'right_side_weight', 'feet_weight', 'internal_organs_weight']
+            for field_name in required_fields:
+                if getattr(self, field_name) is None:
+                    raise ValidationError(f"For split carcass, {field_name.replace('_', ' ')} is required.")
 
     def get_measurement(self, key):
         """Get a specific measurement by key"""
@@ -161,8 +464,9 @@ class Product(models.Model):
         ('g', 'Grams'),
     ]
 
-    processing_unit = models.ForeignKey(User, on_delete=models.CASCADE, related_name='products')
+    processing_unit = models.ForeignKey(ProcessingUnit, on_delete=models.CASCADE, related_name='products')
     animal = models.ForeignKey(Animal, on_delete=models.CASCADE, related_name='products')
+    slaughter_part = models.ForeignKey(SlaughterPart, on_delete=models.SET_NULL, null=True, blank=True, related_name='products', help_text="The specific slaughter part this product was made from")
     product_type = models.CharField(max_length=20, choices=PRODUCT_TYPE_CHOICES, default='meat')
     quantity = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
     created_at = models.DateTimeField(default=timezone.now)
@@ -188,10 +492,11 @@ class Product(models.Model):
     received_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
-        return f"{self.name} ({self.product_type}) - Batch {self.batch_number}"
+        part_info = f" from {self.slaughter_part.get_part_type_display()}" if self.slaughter_part else ""
+        return f"{self.name} ({self.product_type}){part_info} - Batch {self.batch_number}"
 
 class Inventory(models.Model):
-    shop = models.ForeignKey(User, on_delete=models.CASCADE, related_name='inventory')
+    shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name='inventory')
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='inventory')
     quantity = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
     min_stock_level = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)], default=0)
@@ -201,20 +506,20 @@ class Inventory(models.Model):
         unique_together = ['shop', 'product']
 
     def __str__(self):
-        return f"{self.shop.username} - {self.product.name} - {self.quantity}"
+        return f"{self.shop.name} - {self.product.name} - {self.quantity}"
 
     @property
     def is_low_stock(self):
         return self.quantity <= self.min_stock_level
 
 class Receipt(models.Model):
-    shop = models.ForeignKey(User, on_delete=models.CASCADE, related_name='receipts')
+    shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name='receipts')
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='receipts')
     received_quantity = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
     received_at = models.DateTimeField(default=timezone.now)
 
     def __str__(self):
-        return f"Receipt {self.id} - {self.shop.username} - {self.product.product_type}"
+        return f"Receipt {self.id} - {self.shop.name} - {self.product.product_type}"
 
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
@@ -239,7 +544,7 @@ class Order(models.Model):
     ]
 
     customer = models.ForeignKey(User, on_delete=models.CASCADE, related_name='orders')
-    shop = models.ForeignKey(User, on_delete=models.CASCADE, related_name='shop_orders')
+    shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name='orders')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     total_amount = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
     created_at = models.DateTimeField(default=timezone.now)
@@ -251,7 +556,7 @@ class Order(models.Model):
     qr_code = models.CharField(max_length=500, blank=True, null=True)
 
     def __str__(self):
-        return f"Order {self.id} - {self.customer.username} - {self.status}"
+        return f"Order {self.id} - {self.customer.username} - {self.shop.name} - {self.status}"
 
     def update_total_amount(self):
         """Update total amount based on order items"""
@@ -317,12 +622,12 @@ def generate_product_qr_code(sender, instance, created, **kwargs):
 
 @receiver(post_save, sender=Order)
 def generate_order_qr_code(sender, instance, created, **kwargs):
-    """Generate QR code for processing orders (orders where shop is a processing unit)"""
+    """Generate QR code for all orders (processing orders and shop orders)"""
     if created and not instance.qr_code:
         try:
-            # Only generate QR codes for orders where the shop is a processing unit
+            # Generate QR codes for all orders
             if instance.shop.profile.role == 'ProcessingUnit':
-                # Create detailed JSON data for the QR code
+                # Processing unit order QR code
                 qr_data = {
                     'type': 'processing_order',
                     'order_id': instance.id,
@@ -352,38 +657,199 @@ def generate_order_qr_code(sender, instance, created, **kwargs):
                     }
                     qr_data['products'].append(product_data)
 
-                # Convert to JSON string
-                import json
                 qr_content = json.dumps(qr_data, indent=2)
+                qr_filename = f"order_qr_{instance.id}.png"
 
-                # Create QR code
-                qr = qrcode.QRCode(
-                    version=1,
-                    error_correction=qrcode.constants.ERROR_CORRECT_L,
-                    box_size=10,
-                    border=4,
-                )
-                qr.add_data(qr_content)
-                qr.make(fit=True)
+            elif instance.shop.profile.role == 'Shop':
+                # Shop order QR code
+                qr_data = {
+                    'type': 'shop_order',
+                    'order_id': instance.id,
+                    'shop_id': instance.shop.id,
+                    'shop_name': instance.shop.username,
+                    'customer_id': instance.customer.id,
+                    'customer_name': instance.customer.username,
+                    'status': instance.status,
+                    'total_amount': float(instance.total_amount),
+                    'order_timestamp': instance.created_at.isoformat(),
+                    'updated_at': instance.updated_at.isoformat(),
+                    'delivery_address': instance.delivery_address,
+                    'notes': instance.notes,
+                    'products': []
+                }
 
-                # Create the image
-                img = qr.make_image(fill_color="black", back_color="white")
+                # Add product details
+                for item in instance.items.all():
+                    product_data = {
+                        'product_id': item.product.id,
+                        'name': item.product.name,
+                        'batch_number': item.product.batch_number,
+                        'quantity': float(item.quantity),
+                        'unit_price': float(item.unit_price),
+                        'subtotal': float(item.subtotal),
+                        'animal_id': item.product.animal.animal_id if item.product.animal else None,
+                        'animal_species': item.product.animal.species if item.product.animal else None,
+                        'farmer_name': item.product.animal.farmer.username if item.product.animal else None,
+                    }
+                    qr_data['products'].append(product_data)
 
-                # Ensure the qr_codes directory exists
-                qr_dir = os.path.join(settings.MEDIA_ROOT, 'qr_codes')
-                os.makedirs(qr_dir, exist_ok=True)
+                qr_content = json.dumps(qr_data, indent=2)
+                qr_filename = f"shop_order_qr_{instance.id}.png"
 
-                # Save the image
-                filename = f"order_qr_{instance.id}.png"
-                filepath = os.path.join(qr_dir, filename)
-                img.save(filepath)
+            else:
+                # Skip QR generation for other roles
+                return
 
-                # Update the instance with the relative path
-                instance.qr_code = f"qr_codes/{filename}"
-                instance.save(update_fields=['qr_code'])
+            # Create QR code
+            qr = qrcode.QRCode(
+                version=1,
+                error_correction=qrcode.constants.ERROR_CORRECT_L,
+                box_size=10,
+                border=4,
+            )
+            qr.add_data(qr_content)
+            qr.make(fit=True)
+
+            # Create the image
+            img = qr.make_image(fill_color="black", back_color="white")
+
+            # Ensure the qr_codes directory exists
+            qr_dir = os.path.join(settings.MEDIA_ROOT, 'qr_codes')
+            os.makedirs(qr_dir, exist_ok=True)
+
+            # Save the image
+            filepath = os.path.join(qr_dir, qr_filename)
+            img.save(filepath)
+
+            # Update the instance with the relative path
+            instance.qr_code = f"qr_codes/{qr_filename}"
+            instance.save(update_fields=['qr_code'])
 
         except Exception as e:
             # Log the error but don't fail the order creation
             import logging
             logger = logging.getLogger(__name__)
             logger.error(f"Failed to generate QR code for order {instance.id}: {str(e)}")
+
+
+class JoinRequest(models.Model):
+    """Model for handling join requests to processing units and shops"""
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+        ('expired', 'Expired'),
+    ]
+
+    REQUEST_TYPE_CHOICES = [
+        ('processing_unit', 'Processing Unit'),
+        ('shop', 'Shop'),
+    ]
+
+    # Request details
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='join_requests')
+    request_type = models.CharField(max_length=20, choices=REQUEST_TYPE_CHOICES)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+
+    # Target entity
+    processing_unit = models.ForeignKey(ProcessingUnit, null=True, blank=True, on_delete=models.CASCADE)
+    shop = models.ForeignKey(Shop, null=True, blank=True, on_delete=models.CASCADE)
+
+    # Request content
+    requested_role = models.CharField(max_length=50)
+    message = models.TextField(blank=True)
+    qualifications = models.TextField(blank=True)
+
+    # Response
+    reviewed_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='reviewed_requests')
+    response_message = models.TextField(blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+
+    # Metadata
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ['user', 'processing_unit', 'shop']
+
+    def __str__(self):
+        entity_name = self.processing_unit.name if self.processing_unit else self.shop.name
+        return f"{self.user.username} -> {entity_name} ({self.status})"
+
+
+class Notification(models.Model):
+    """Model for system notifications"""
+    NOTIFICATION_TYPE_CHOICES = [
+        ('join_request', 'Join Request'),
+        ('join_approved', 'Join Request Approved'),
+        ('join_rejected', 'Join Request Rejected'),
+        ('invitation', 'User Invitation'),
+        ('role_change', 'Role Changed'),
+        ('profile_update', 'Profile Update Required'),
+        ('verification', 'Account Verification'),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
+    notification_type = models.CharField(max_length=30, choices=NOTIFICATION_TYPE_CHOICES)
+
+    title = models.CharField(max_length=200)
+    message = models.TextField()
+    data = models.JSONField(default=dict, blank=True)  # Additional context data
+
+    is_read = models.BooleanField(default=False)
+    read_at = models.DateTimeField(null=True, blank=True)
+
+    # Action URLs
+    action_url = models.URLField(blank=True)
+    action_text = models.CharField(max_length=50, blank=True)
+
+    created_at = models.DateTimeField(default=timezone.now)
+    expires_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.notification_type} for {self.user.username}: {self.title}"
+
+
+class Activity(models.Model):
+    """Model for tracking farmer activities for the activity feed"""
+    ACTIVITY_TYPE_CHOICES = [
+        ('registration', 'Animal Registration'),
+        ('transfer', 'Animal Transfer'),
+        ('slaughter', 'Animal Slaughter'),
+        ('health_update', 'Health Status Update'),
+        ('weight_update', 'Weight Update'),
+        ('vaccination', 'Vaccination'),
+        ('other', 'Other Activity'),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='activities')
+    activity_type = models.CharField(max_length=30, choices=ACTIVITY_TYPE_CHOICES)
+    
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True, null=True)
+    
+    # Entity references
+    entity_id = models.CharField(max_length=100, blank=True, null=True, help_text="ID of the related entity (animal, batch, etc.)")
+    entity_type = models.CharField(max_length=50, blank=True, null=True, help_text="Type of entity (animal, batch, etc.)")
+    
+    # Additional metadata
+    metadata = models.JSONField(default=dict, blank=True, help_text="Additional activity metadata")
+    target_route = models.CharField(max_length=200, blank=True, null=True, help_text="Route to navigate when activity is clicked")
+    
+    timestamp = models.DateTimeField(default=timezone.now)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ['-timestamp']
+        verbose_name_plural = 'Activities'
+        indexes = [
+            models.Index(fields=['-timestamp', 'user']),
+            models.Index(fields=['activity_type']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.username}: {self.title} ({self.activity_type})"

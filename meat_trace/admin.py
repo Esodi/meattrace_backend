@@ -19,7 +19,7 @@ admin.site.register(User, CustomUserAdmin)
 
 @admin.register(Animal)
 class AnimalAdmin(admin.ModelAdmin):
-    list_display = ('id', 'farmer', 'species', 'age', 'weight', 'created_at', 'slaughtered', 'slaughtered_at')
+    list_display = ('id', 'farmer', 'species', 'age', 'live_weight', 'created_at', 'slaughtered', 'slaughtered_at')
     search_fields = ('farmer__username', 'species')
     list_filter = ('species', 'slaughtered', 'created_at')
 

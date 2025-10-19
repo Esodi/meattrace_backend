@@ -1,0 +1,153 @@
+{% extends "meat_trace/base.html" %}
+{% load static %}
+
+{% block title %}Order Information - {{ order.id }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h2 class="mb-0">
+                        <i class="fas fa-shopping-cart"></i>
+                        Order #{{ order.id }}
+                    </h2>
+                </div>
+                <div class="card-body">
+                    <!-- Order Details -->
+                    <div class="row mb-4">
+                        <div class="col-md-6">
+                            <h4>Order Information</h4>
+                            <table class="table table-borderless">
+                                <tr>
+                                    <td><strong>Order ID:</strong></td>
+                                    <td>{{ order.id }}</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Status:</strong></td>
+                                    <td>
+                                        <span class="badge
+                                            {% if order.status == 'pending' %}bg-warning
+                                            {% elif order.status == 'confirmed' %}bg-info
+                                            {% elif order.status == 'preparing' %}bg-primary
+                                            {% elif order.status == 'ready' %}bg-success
+                                            {% elif order.status == 'delivered' %}bg-success
+                                            {% elif order.status == 'cancelled' %}bg-danger
+                                            {% endif %}">
+                                            {{ order.status|title }}
+                                        </span>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Total Amount:</strong></td>
+                                    <td><strong>\${{ order.total_amount }}</strong></td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Created:</strong></td>
+                                    <td>{{ order.created_at|date:"M d, Y H:i" }}</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Updated:</strong></td>
+                                    <td>{{ order.updated_at|date:"M d, Y H:i" }}</td>
+                                </tr>
+                                {% if order.delivery_address %}
+                                <tr>
+                                    <td><strong>Delivery Address:</strong></td>
+                                    <td>{{ order.delivery_address }}</td>
+                                </tr>
+                                {% endif %}
+                                {% if order.notes %}
+                                <tr>
+                                    <td><strong>Notes:</strong></td>
+                                    <td>{{ order.notes }}</td>
+                                </tr>
+                                {% endif %}
+                            </table>
+                        </div>
+                        <div class="col-md-6">
+                            <h4>Customer & Shop Information</h4>
+                            <table class="table table-borderless">
+                                <tr>
+                                    <td><strong>Customer:</strong></td>
+                                    <td>{{ order.customer.username }}</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Shop:</strong></td>
+                                    <td>{{ order.shop.username }}</td>
+                                </tr>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Order Items -->
+                    <h4>Order Items</h4>
+                    <div class="table-responsive">
+                        <table class="table table-striped">
+                            <thead>
+                                <tr>
+                                    <th>Product ID</th>
+                                    <th>Quantity</th>
+                                    <th>Unit Price</th>
+                                    <th>Subtotal</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item in order_items %}
+                                <tr>
+                                    <td>{{ item.product }}</td>
+                                    <td>{{ item.quantity }}</td>
+                                    <td>\${{ item.unit_price }}</td>
+                                    <td>\${{ item.subtotal }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                            <tfoot>
+                                <tr>
+                                    <th colspan="3" class="text-end">Total:</th>
+                                    <th>\${{ order.total_amount }}</th>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+
+                    <!-- QR Code -->
+                    {% if qr_code_url %}
+                    <div class="row mt-4">
+                        <div class="col-12 text-center">
+                            <h4>Order QR Code</h4>
+                            <img src="{{ qr_code_url }}" alt="Order QR Code" class="img-fluid" style="max-width: 300px;">
+                            <p class="mt-2 text-muted">Scan this QR code to view order details</p>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    <!-- Print Button -->
+                    <div class="row mt-4">
+                        <div class="col-12 text-center">
+                            <button onclick="window.print()" class="btn btn-primary">
+                                <i class="fas fa-print"></i> Print Order
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+@media print {
+    .btn, .card-header {
+        display: none !important;
+    }
+    .card {
+        border: none !important;
+        box-shadow: none !important;
+    }
+    .card-body {
+        padding: 0 !important;
+    }
+}
+</style>
+{% endblock %}

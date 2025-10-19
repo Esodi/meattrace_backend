@@ -14,15 +14,15 @@ class AnimalModelTest(TestCase):
             species='cow',
             weight_kg=500.0,
             breed='Holstein',
-            farm_name='Green Farm'
+            abbatoir_name='Green Farm'
         )
         self.assertEqual(animal.animal_id, 'A001')
         self.assertEqual(str(animal), 'Bessie (A001)')
 
     def test_animal_unique_id(self):
-        Animal.objects.create(animal_id='A001', name='Bessie', species='cow', weight_kg=500.0, breed='Holstein', farm_name='Green Farm')
+        Animal.objects.create(animal_id='A001', name='Bessie', species='cow', weight_kg=500.0, breed='Holstein', abbatoir_name='Green Farm')
         with self.assertRaises(Exception):
-            Animal.objects.create(animal_id='A001', name='Another', species='cow', weight_kg=400.0, breed='Jersey', farm_name='Blue Farm')
+            Animal.objects.create(animal_id='A001', name='Another', species='cow', weight_kg=400.0, breed='Jersey', abbatoir_name='Blue Farm')
 
 class ProductCategoryModelTest(TestCase):
     def test_category_creation(self):
@@ -37,7 +37,7 @@ class ProductCategoryModelTest(TestCase):
 
 class ProductModelTest(TestCase):
     def setUp(self):
-        self.animal = Animal.objects.create(animal_id='A001', name='Bessie', species='cow', weight_kg=500.0, breed='Holstein', farm_name='Green Farm')
+        self.animal = Animal.objects.create(animal_id='A001', name='Bessie', species='cow', weight_kg=500.0, breed='Holstein', abbatoir_name='Green Farm')
         self.category = ProductCategory.objects.create(name='Meat')
 
     def test_product_creation(self):
@@ -64,7 +64,7 @@ class ProductModelTest(TestCase):
 class ShopReceiptModelTest(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username='testuser', password='testpass')
-        self.animal = Animal.objects.create(animal_id='A001', name='Bessie', species='cow', weight_kg=500.0, breed='Holstein', farm_name='Green Farm')
+        self.animal = Animal.objects.create(animal_id='A001', name='Bessie', species='cow', weight_kg=500.0, breed='Holstein', abbatoir_name='Green Farm')
         self.category = ProductCategory.objects.create(name='Meat')
         self.product = Product.objects.create(sku='P001', name='Beef Steak', animal=self.animal, category=self.category, price=25.99, weight_kg=1.5, processing_unit='Unit A', processing_date=timezone.now().date(), batch_number='B001', qr_code='QR001')
 
@@ -76,21 +76,21 @@ class ShopReceiptModelTest(TestCase):
 
 class AnimalSerializerTest(TestCase):
     def setUp(self):
-        self.animal = Animal.objects.create(animal_id='A001', name='Bessie', species='cow', weight_kg=500.0, breed='Holstein', farm_name='Green Farm')
+        self.animal = Animal.objects.create(animal_id='A001', name='Bessie', species='cow', weight_kg=500.0, breed='Holstein', abbatoir_name='Green Farm')
 
     def test_animal_serializer(self):
         serializer = AnimalSerializer(self.animal)
         self.assertEqual(serializer.data['animal_id'], 'A001')
 
     def test_animal_serializer_validation(self):
-        data = {'animal_id': 'A001', 'name': 'Bessie', 'species': 'cow', 'weight_kg': -10, 'breed': 'Holstein', 'farm_name': 'Green Farm'}
+        data = {'animal_id': 'A001', 'name': 'Bessie', 'species': 'cow', 'weight_kg': -10, 'breed': 'Holstein', 'abbatoir_name': 'Green Farm'}
         serializer = AnimalSerializer(data=data)
         self.assertFalse(serializer.is_valid())
         self.assertIn('weight_kg', serializer.errors)
 
 class ProductSerializerTest(TestCase):
     def setUp(self):
-        self.animal = Animal.objects.create(animal_id='A001', name='Bessie', species='cow', weight_kg=500.0, breed='Holstein', farm_name='Green Farm')
+        self.animal = Animal.objects.create(animal_id='A001', name='Bessie', species='cow', weight_kg=500.0, breed='Holstein', abbatoir_name='Green Farm')
         self.category = ProductCategory.objects.create(name='Meat')
 
     def test_product_serializer(self):
@@ -108,14 +108,14 @@ class AnimalAPITest(APITestCase):
     def setUp(self):
         self.user = User.objects.create_user(username='testuser', password='testpass')
         self.client.force_authenticate(user=self.user)
-        self.animal = Animal.objects.create(animal_id='A001', name='Bessie', species='cow', weight_kg=500.0, breed='Holstein', farm_name='Green Farm')
+        self.animal = Animal.objects.create(animal_id='A001', name='Bessie', species='cow', weight_kg=500.0, breed='Holstein', abbatoir_name='Green Farm')
 
     def test_get_animals(self):
         response = self.client.get('/api/v2/animals/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
     def test_create_animal(self):
-        data = {'animal_id': 'A002', 'name': 'Daisy', 'species': 'cow', 'weight_kg': 450.0, 'breed': 'Jersey', 'farm_name': 'Blue Farm'}
+        data = {'animal_id': 'A002', 'name': 'Daisy', 'species': 'cow', 'weight_kg': 450.0, 'breed': 'Jersey', 'abbatoir_name': 'Blue Farm'}
         response = self.client.post('/api/v2/animals/', data)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
@@ -123,7 +123,7 @@ class ProductAPITest(APITestCase):
     def setUp(self):
         self.user = User.objects.create_user(username='testuser', password='testpass')
         self.client.force_authenticate(user=self.user)
-        self.animal = Animal.objects.create(animal_id='A001', name='Bessie', species='cow', weight_kg=500.0, breed='Holstein', farm_name='Green Farm')
+        self.animal = Animal.objects.create(animal_id='A001', name='Bessie', species='cow', weight_kg=500.0, breed='Holstein', abbatoir_name='Green Farm')
         self.category = ProductCategory.objects.create(name='Meat')
 
     def test_get_products(self):
@@ -158,7 +158,7 @@ class ShopReceiptAPITest(APITestCase):
     def setUp(self):
         self.user = User.objects.create_user(username='testuser', password='testpass')
         self.client.force_authenticate(user=self.user)
-        self.animal = Animal.objects.create(animal_id='A001', name='Bessie', species='cow', weight_kg=500.0, breed='Holstein', farm_name='Green Farm')
+        self.animal = Animal.objects.create(animal_id='A001', name='Bessie', species='cow', weight_kg=500.0, breed='Holstein', abbatoir_name='Green Farm')
         self.category = ProductCategory.objects.create(name='Meat')
         self.product = Product.objects.create(sku='P001', name='Beef Steak', animal=self.animal, category=self.category, price=25.99, weight_kg=1.5, processing_unit='Unit A', processing_date=timezone.now().date(), batch_number='B001', qr_code='QR001')
 

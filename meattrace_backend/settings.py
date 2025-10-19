@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'django_filters',
     'drf_yasg',
+    'drf_spectacular',  # Added for OpenAPI documentation
     'meat_trace',
 ]
 
@@ -151,14 +152,17 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
-    'PAGE_SIZE': 10,
+    # Removed global pagination - ViewSets can enable it individually if needed
+    # 'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    # 'PAGE_SIZE': 10,
     'DEFAULT_FILTER_BACKENDS': [
         'rest_framework.filters.SearchFilter',
         'rest_framework.filters.OrderingFilter',
     ],
     'SEARCH_PARAM': 'search',
     'ORDERING_PARAM': 'ordering',
+    # Add drf-spectacular schema generation
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
 
 # JWT settings
@@ -252,4 +256,21 @@ LOGGING = {
             'propagate': False,
         },
     },
+}
+
+# drf-spectacular settings for API documentation
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'MeatTrace API',
+    'DESCRIPTION': 'Complete API documentation for the MeatTrace livestock tracking system',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'COMPONENT_SPLIT_REQUEST': True,
+    'SCHEMA_PATH_PREFIX': '/api/',
+    'SWAGGER_UI_SETTINGS': {
+        'deepLinking': True,
+        'persistAuthorization': True,
+        'displayOperationId': True,
+    },
+    'SERVE_AUTHENTICATION': ['rest_framework.authentication.SessionAuthentication'],
+    'SERVE_PERMISSIONS': ['rest_framework.permissions.AllowAny'],  # Public docs access
 }

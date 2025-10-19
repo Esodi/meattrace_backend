@@ -2,19 +2,28 @@ from django.test import TestCase
 from django.contrib.auth.models import User
 from rest_framework.test import APIClient
 from rest_framework import status
-from meat_trace.models import Product, UserProfile, Animal
+from meat_trace.models import Product, UserProfile, Animal, ProcessingUnit
 from django.utils import timezone
 import os
 from django.conf import settings
 
 class ProductQRCodeTests(TestCase):
     def setUp(self):
+        # Create a processing unit
+        self.processing_unit_obj = ProcessingUnit.objects.create(
+            name='Test Processing Unit',
+            description='Test processing unit for QR code tests'
+        )
+
         # Create a processing unit user
         self.processing_unit = User.objects.create_user(
             username='processor1',
             password='testpass123'
         )
-        UserProfile.objects.filter(user=self.processing_unit).update(role='ProcessingUnit')
+        UserProfile.objects.filter(user=self.processing_unit).update(
+            role='ProcessingUnit',
+            processing_unit=self.processing_unit_obj
+        )
 
         # Create a farmer user
         self.farmer = User.objects.create_user(
@@ -28,7 +37,7 @@ class ProductQRCodeTests(TestCase):
             farmer=self.farmer,
             species='cow',
             age=24,
-            weight=500,
+            live_weight=500,
             slaughtered=True,
             slaughtered_at=timezone.now(),
             received_by=self.processing_unit,
@@ -37,7 +46,7 @@ class ProductQRCodeTests(TestCase):
 
         # Create a product with matching processing_unit
         self.product = Product.objects.create(
-            processing_unit_id=self.processing_unit.id,
+            processing_unit=self.processing_unit_obj,
             animal=self.animal,
             product_type='meat',
             quantity=100,
