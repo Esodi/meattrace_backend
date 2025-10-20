@@ -1,7 +1,14 @@
 from rest_framework import serializers
 from django.utils import timezone
 from django.contrib.auth.models import User
-from .models import Animal, Product, Receipt, UserProfile, ProductCategory, ProcessingStage, ProductTimelineEvent, Inventory, Order, OrderItem, CarcassMeasurement, SlaughterPart, ProcessingUnit, ProcessingUnitUser, ProductIngredient, Shop, ShopUser, UserAuditLog, JoinRequest, Notification, Activity
+from .models import (
+    Animal, Product, Receipt, UserProfile, ProductCategory, ProcessingStage,
+    ProductTimelineEvent, Inventory, Order, OrderItem, CarcassMeasurement,
+    SlaughterPart, ProcessingUnit, ProcessingUnitUser, ProductIngredient,
+    Shop, ShopUser, UserAuditLog, JoinRequest, Notification, Activity,
+    SystemAlert, PerformanceMetric, ComplianceAudit, Certification,
+    SystemHealth, SecurityLog, TransferRequest, BackupSchedule
+)
 
 
 class UserAuditLogSerializer(serializers.ModelSerializer):
@@ -77,7 +84,8 @@ class AnimalSerializer(serializers.ModelSerializer):
 
 
 class ProductSerializer(serializers.ModelSerializer):
-    processing_unit_name = serializers.CharField(source='processing_unit.username', read_only=True)
+    # ProcessingUnit model exposes `name` (not `username`). Fix source to use the correct attribute.
+    processing_unit_name = serializers.CharField(source='processing_unit.name', read_only=True)
     animal_animal_id = serializers.CharField(source='animal.animal_id', read_only=True)
     animal_species = serializers.CharField(source='animal.species', read_only=True)
     transferred_to_username = serializers.CharField(source='transferred_to.username', read_only=True, allow_null=True)
@@ -284,7 +292,7 @@ class NotificationSerializer(serializers.ModelSerializer):
 
 class ActivitySerializer(serializers.ModelSerializer):
     username = serializers.CharField(source='user.username', read_only=True)
-    
+
     class Meta:
         model = Activity
         fields = [
@@ -293,9 +301,131 @@ class ActivitySerializer(serializers.ModelSerializer):
             'created_at'
         ]
         read_only_fields = ['id', 'created_at', 'username']
-        
+
     def create(self, validated_data):
         # Set user from request context if not provided
         if 'user' not in validated_data:
             validated_data['user'] = self.context['request'].user
         return super().create(validated_data)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADMIN DASHBOARD SERIALIZERS
+# ══════════════════════════════════════════════════════════════════════════════
+
+class SystemAlertSerializer(serializers.ModelSerializer):
+    acknowledged_by_username = serializers.CharField(source='acknowledged_by.username', read_only=True)
+    processing_unit_name = serializers.CharField(source='processing_unit.name', read_only=True)
+    shop_name = serializers.CharField(source='shop.name', read_only=True)
+    user_username = serializers.CharField(source='user.username', read_only=True)
+
+    class Meta:
+        model = SystemAlert
+        fields = [
+            'id', 'title', 'message', 'alert_type', 'category', 'processing_unit',
+            'processing_unit_name', 'shop', 'shop_name', 'user', 'user_username',
+            'is_active', 'is_acknowledged', 'acknowledged_by', 'acknowledged_by_username',
+            'acknowledged_at', 'auto_resolve', 'resolved_at', 'metadata',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at', 'acknowledged_by_username']
+
+
+class PerformanceMetricSerializer(serializers.ModelSerializer):
+    processing_unit_name = serializers.CharField(source='processing_unit.name', read_only=True)
+    shop_name = serializers.CharField(source='shop.name', read_only=True)
+
+    class Meta:
+        model = PerformanceMetric
+        fields = [
+            'id', 'name', 'metric_type', 'value', 'unit', 'processing_unit',
+            'processing_unit_name', 'shop', 'shop_name', 'period_start', 'period_end',
+            'target_value', 'warning_threshold', 'critical_threshold', 'metadata', 'created_at'
+        ]
+        read_only_fields = ['id', 'created_at']
+
+
+class ComplianceAuditSerializer(serializers.ModelSerializer):
+    processing_unit_name = serializers.CharField(source='processing_unit.name', read_only=True)
+    shop_name = serializers.CharField(source='shop.name', read_only=True)
+
+    class Meta:
+        model = ComplianceAudit
+        fields = [
+            'id', 'title', 'audit_type', 'status', 'processing_unit', 'processing_unit_name',
+            'shop', 'shop_name', 'auditor', 'auditor_organization', 'scheduled_date',
+            'completed_date', 'score', 'findings', 'recommendations', 'follow_up_required',
+            'follow_up_date', 'follow_up_notes', 'metadata', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class CertificationSerializer(serializers.ModelSerializer):
+    processing_unit_name = serializers.CharField(source='processing_unit.name', read_only=True)
+    shop_name = serializers.CharField(source='shop.name', read_only=True)
+
+    class Meta:
+        model = Certification
+        fields = [
+            'id', 'name', 'cert_type', 'status', 'processing_unit', 'processing_unit_name',
+            'shop', 'shop_name', 'issuing_authority', 'certificate_number', 'issue_date',
+            'expiry_date', 'certificate_file', 'notes', 'metadata', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class SystemHealthSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SystemHealth
+        fields = [
+            'id', 'component', 'status', 'response_time', 'uptime_percentage',
+            'message', 'last_check', 'next_check', 'warning_threshold',
+            'critical_threshold', 'metadata'
+        ]
+        read_only_fields = ['id']
+
+
+class SecurityLogSerializer(serializers.ModelSerializer):
+    user_username = serializers.CharField(source='user.username', read_only=True)
+    processing_unit_name = serializers.CharField(source='processing_unit.name', read_only=True)
+    shop_name = serializers.CharField(source='shop.name', read_only=True)
+
+    class Meta:
+        model = SecurityLog
+        fields = [
+            'id', 'user', 'user_username', 'event_type', 'severity', 'description',
+            'ip_address', 'user_agent', 'processing_unit', 'processing_unit_name',
+            'shop', 'shop_name', 'resource', 'action', 'metadata', 'timestamp'
+        ]
+        read_only_fields = ['id', 'timestamp']
+
+
+class TransferRequestSerializer(serializers.ModelSerializer):
+    from_processing_unit_name = serializers.CharField(source='from_processing_unit.name', read_only=True)
+    to_processing_unit_name = serializers.CharField(source='to_processing_unit.name', read_only=True)
+    requested_by_username = serializers.CharField(source='requested_by.username', read_only=True)
+    approved_by_username = serializers.CharField(source='approved_by.username', read_only=True)
+    animal_animal_id = serializers.CharField(source='animal.animal_id', read_only=True)
+    product_name = serializers.CharField(source='product.name', read_only=True)
+
+    class Meta:
+        model = TransferRequest
+        fields = [
+            'id', 'request_type', 'status', 'from_processing_unit', 'from_processing_unit_name',
+            'to_processing_unit', 'to_processing_unit_name', 'requested_by', 'requested_by_username',
+            'approved_by', 'approved_by_username', 'approved_at', 'animal', 'animal_animal_id',
+            'product', 'product_name', 'quantity', 'notes', 'approval_required', 'priority',
+            'metadata', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class BackupScheduleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BackupSchedule
+        fields = [
+            'id', 'name', 'frequency', 'backup_type', 'scheduled_time', 'last_run',
+            'next_run', 'include_database', 'include_files', 'include_media',
+            'retention_days', 'is_active', 'last_status', 'metadata', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']

@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
     AnimalViewSet, ProductViewSet, ReceiptViewSet, CarcassMeasurementViewSet, SlaughterPartViewSet,
     ProductCategoryViewSet, ProcessingStageViewSet, ProductTimelineEventViewSet, InventoryViewSet,
@@ -15,7 +15,13 @@ from .views import (
     processing_unit_member_permissions, update_processing_unit_member_permissions,
     create_processing_unit, create_shop, search_processing_units, search_shops,
     create_join_request, list_user_join_requests, review_join_request, list_unit_join_requests,
-    log_activity, log_registration_activity, log_transfer_activity
+    log_activity, log_registration_activity, log_transfer_activity, CustomTokenObtainPairView,
+    # Admin dashboard views
+    admin_users_stats, admin_join_requests_pending, admin_suspend_user, admin_change_user_role,
+    admin_supply_chain_stats, admin_pending_transfers, admin_inventory_alerts, admin_resolve_transfer, admin_traceability_product,
+    admin_performance_kpis, admin_processing_stats, admin_yield_analysis, admin_create_performance_alert, admin_performance_reports,
+    admin_compliance_status, admin_quality_tests, admin_schedule_audit, admin_certifications, admin_report_incident,
+    admin_system_health, admin_security_logs, admin_system_performance, admin_schedule_backup, admin_system_alerts
 )
 
 app_name = 'meat_trace'
@@ -41,7 +47,7 @@ router.register(r'activities', ActivityViewSet, basename='activity')
 
 urlpatterns = [
     path('api/v2/', include(router.urls)),
-    path('api/v2/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
+    path('api/v2/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/v2/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('api/v2/register/', register_user, name='register'),
     path('api/v2/upload/', upload_file, name='upload_file'),
@@ -96,4 +102,42 @@ urlpatterns = [
     path('api/v2/activities/log/', log_activity, name='log_activity'),
     path('api/v2/activities/log/registration/', log_registration_activity, name='log_registration_activity'),
     path('api/v2/activities/log/transfer/', log_transfer_activity, name='log_transfer_activity'),
+
+    # ══════════════════════════════════════════════════════════════════════════════
+    # ADMIN DASHBOARD ENDPOINTS
+    # ══════════════════════════════════════════════════════════════════════════════
+
+    # User and Role Management
+    path('api/v2/admin/users/stats/', admin_users_stats, name='admin_users_stats'),
+    path('api/v2/admin/join-requests/pending/', admin_join_requests_pending, name='admin_join_requests_pending'),
+    path('api/v2/admin/users/<int:user_id>/suspend/', admin_suspend_user, name='admin_suspend_user'),
+    path('api/v2/admin/users/<int:user_id>/role/', admin_change_user_role, name='admin_change_user_role'),
+
+    # Supply Chain Monitoring
+    path('api/v2/admin/supply-chain/stats/', admin_supply_chain_stats, name='admin_supply_chain_stats'),
+    path('api/v2/admin/transfers/pending/', admin_pending_transfers, name='admin_pending_transfers'),
+    path('api/v2/admin/inventory/alerts/', admin_inventory_alerts, name='admin_inventory_alerts'),
+    path('api/v2/admin/transfers/<int:transfer_id>/resolve/', admin_resolve_transfer, name='admin_resolve_transfer'),
+    path('api/v2/admin/traceability/<int:product_id>/', admin_traceability_product, name='admin_traceability_product'),
+
+    # Operational Performance Metrics
+    path('api/v2/admin/performance/kpis/', admin_performance_kpis, name='admin_performance_kpis'),
+    path('api/v2/admin/processing/stats/', admin_processing_stats, name='admin_processing_stats'),
+    path('api/v2/admin/yield/analysis/', admin_yield_analysis, name='admin_yield_analysis'),
+    path('api/v2/admin/alerts/performance/', admin_create_performance_alert, name='admin_create_performance_alert'),
+    path('api/v2/admin/reports/performance/', admin_performance_reports, name='admin_performance_reports'),
+
+    # Compliance and Quality Assurance
+    path('api/v2/admin/compliance/status/', admin_compliance_status, name='admin_compliance_status'),
+    path('api/v2/admin/quality/tests/', admin_quality_tests, name='admin_quality_tests'),
+    path('api/v2/admin/audits/schedule/', admin_schedule_audit, name='admin_schedule_audit'),
+    path('api/v2/admin/certifications/', admin_certifications, name='admin_certifications'),
+    path('api/v2/admin/incidents/report/', admin_report_incident, name='admin_report_incident'),
+
+    # System Health and Security
+    path('api/v2/admin/system/health/', admin_system_health, name='admin_system_health'),
+    path('api/v2/admin/security/logs/', admin_security_logs, name='admin_security_logs'),
+    path('api/v2/admin/performance/system/', admin_system_performance, name='admin_system_performance'),
+    path('api/v2/admin/backups/schedule/', admin_schedule_backup, name='admin_schedule_backup'),
+    path('api/v2/admin/alerts/system/', admin_system_alerts, name='admin_system_alerts'),
 ]

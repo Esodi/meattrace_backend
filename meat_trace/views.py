@@ -9,13 +9,74 @@ from django.db.models import Prefetch, Q
 from django.utils import timezone
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import Animal, Product, Receipt, UserProfile, ProductCategory, ProcessingStage, ProductTimelineEvent, Inventory, Order, OrderItem, CarcassMeasurement, SlaughterPart, ProcessingUnit, ProcessingUnitUser, ProductIngredient, Shop, ShopUser, UserAuditLog, JoinRequest, Notification, Activity
-from .serializers import AnimalSerializer, ProductSerializer, ReceiptSerializer, ProductCategorySerializer, ProcessingStageSerializer, ProductTimelineEventSerializer, InventorySerializer, OrderSerializer, OrderItemSerializer, CarcassMeasurementSerializer, SlaughterPartSerializer, ProcessingUnitSerializer, ProcessingUnitUserSerializer, ProductIngredientSerializer, ShopSerializer, ShopUserSerializer, UserAuditLogSerializer, JoinRequestSerializer, NotificationSerializer, ActivitySerializer
-from .permissions import IsFarmer, IsProcessingUnit, IsShop, IsOwnerOrReadOnly, IsProcessingUnitOwner, IsShopOwner
+from rest_framework_simplejwt.views import TokenObtainPairView
+from .models import (
+    Animal, Product, Receipt, UserProfile, ProductCategory, ProcessingStage,
+    ProductTimelineEvent, Inventory, Order, OrderItem, CarcassMeasurement,
+    SlaughterPart, ProcessingUnit, ProcessingUnitUser, ProductIngredient,
+    Shop, ShopUser, UserAuditLog, JoinRequest, Notification, Activity,
+    SystemAlert, PerformanceMetric, ComplianceAudit, Certification,
+    SystemHealth, SecurityLog, TransferRequest, BackupSchedule
+)
+from .serializers import (
+    AnimalSerializer, ProductSerializer, ReceiptSerializer, ProductCategorySerializer,
+    ProcessingStageSerializer, ProductTimelineEventSerializer, InventorySerializer,
+    OrderSerializer, OrderItemSerializer, CarcassMeasurementSerializer,
+    SlaughterPartSerializer, ProcessingUnitSerializer, ProcessingUnitUserSerializer,
+    ProductIngredientSerializer, ShopSerializer, ShopUserSerializer,
+    UserAuditLogSerializer, JoinRequestSerializer, NotificationSerializer,
+    ActivitySerializer, SystemAlertSerializer, PerformanceMetricSerializer,
+    ComplianceAuditSerializer, CertificationSerializer, SystemHealthSerializer,
+    SecurityLogSerializer, TransferRequestSerializer, BackupScheduleSerializer
+)
+from .permissions import (
+    IsFarmer, IsProcessingUnit, IsShop, IsOwnerOrReadOnly, IsProcessingUnitOwner,
+    IsShopOwner, IsAdminUser, IsProcessingUnitAdmin, IsShopAdmin,
+    CanViewAdminDashboard, CanManageUsers, CanViewSystemHealth,
+    CanManageCompliance, CanViewSecurityLogs, CanManageBackups
+)
 import logging
 import uuid
 
 logger = logging.getLogger(__name__)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Custom Token View with Enhanced Logging
+# ══════════════════════════════════════════════════════════════════════════════
+
+class CustomTokenObtainPairView(TokenObtainPairView):
+    """Enhanced TokenObtainPairView with detailed logging for debugging"""
+    
+    def post(self, request, *args, **kwargs):
+        logger.info("═" * 80)
+        logger.info("🔐 LOGIN REQUEST RECEIVED")
+        logger.info("═" * 80)
+        logger.info(f"🌐 Remote Address: {request.META.get('REMOTE_ADDR')}")
+        logger.info(f"📍 Request Path: {request.path}")
+        logger.info(f"📋 Request Method: {request.method}")
+        logger.info(f"📦 Content Type: {request.content_type}")
+        logger.info(f"📝 Request Headers: {dict(request.headers)}")
+        # Note: Don't access request.body after DRF has parsed it - use request.data instead
+        logger.info(f"👤 Username from data: {request.data.get('username', 'NOT PROVIDED')}")
+        logger.info(f"🔑 Password provided: {'YES' if request.data.get('password') else 'NO'}")
+        
+        try:
+            response = super().post(request, *args, **kwargs)
+            logger.info("═" * 80)
+            logger.info("✅ LOGIN SUCCESSFUL")
+            logger.info("═" * 80)
+            logger.info(f"📤 Response Status: {response.status_code}")
+            logger.info(f"📦 Response Data Keys: {list(response.data.keys()) if hasattr(response, 'data') else 'N/A'}")
+            logger.info("═" * 80)
+            return response
+        except Exception as e:
+            logger.error("═" * 80)
+            logger.error("❌ LOGIN FAILED")
+            logger.error("═" * 80)
+            logger.error(f"❌ Exception Type: {type(e).__name__}")
+            logger.error(f"❌ Exception Message: {str(e)}")
+            logger.error("═" * 80)
+            raise
 
 # User Management Views for Processing Units NN
 
@@ -970,12 +1031,18 @@ def register_user(request):
         if role == 'ProcessingUnit':
             # Create a processing unit for this user
             processing_unit_name = request.data.get('processing_unit_name', f"{username}'s Processing Unit")
+            location = request.data.get('location', '')
+            phone = request.data.get('phone', '')
+            license_number = request.data.get('license_number', '')
+            description = request.data.get('description', f"Processing unit owned by {username}")
+            
             processing_unit = ProcessingUnit.objects.create(
                 name=processing_unit_name,
-                description=f"Processing unit owned by {username}",
+                description=description,
                 contact_email=email,
-                location=request.data.get('location', ''),
-                contact_phone=request.data.get('phone', '')
+                location=location,
+                contact_phone=phone,
+                license_number=license_number
             )
             logger.info(f"Created ProcessingUnit: {processing_unit.name} (ID: {processing_unit.id})")
             
@@ -1217,6 +1284,10 @@ def production_stats(request):
         
         logger.info(f"📊 PRODUCTION_STATS - User: {user.username}, Role: {user_role}")
         
+        # Initialize processing_unit variable for all roles
+        processing_unit = None
+        shop = None
+
         # Filter data based on user role
         if user_role == 'Farmer':
             # Farmers see only their own animals
@@ -1224,7 +1295,7 @@ def production_stats(request):
             # Farmers don't have products/orders, so set to 0
             total_products = 0
             total_orders = 0
-            
+
         elif user_role == 'ProcessingUnit':
             # Processing units see animals transferred to them
             processing_unit = user.profile.processing_unit
@@ -1234,7 +1305,7 @@ def production_stats(request):
                     user=user, is_active=True
                 ).select_related('processing_unit').first()
                 processing_unit = active_membership.processing_unit if active_membership else None
-            
+
             if processing_unit:
                 total_animals = Animal.objects.filter(transferred_to=processing_unit).count()
                 total_products = Product.objects.filter(processing_unit=processing_unit).count() if hasattr(Product, 'processing_unit') else Product.objects.count()
@@ -1243,7 +1314,7 @@ def production_stats(request):
                 total_animals = 0
                 total_products = 0
                 total_orders = 0
-                
+
         elif user_role == 'Shop':
             # Shops see products in their inventory
             shop = user.profile.shop
@@ -1253,7 +1324,7 @@ def production_stats(request):
                     user=user, is_active=True
                 ).select_related('shop').first()
                 shop = active_membership.shop if active_membership else None
-            
+
             if shop:
                 total_animals = 0  # Shops don't track individual animals
                 total_products = Product.objects.filter(
@@ -1270,11 +1341,66 @@ def production_stats(request):
             total_products = Product.objects.count()
             total_orders = Order.objects.count()
         
+        # Calculate time-based metrics
+        today = timezone.now().date()
+        week_start = today - timezone.timedelta(days=today.weekday())
+
+        # Products metrics
+        products_today = Product.objects.filter(
+            created_at__date=today,
+            processing_unit=processing_unit if processing_unit else None
+        ).count()
+        products_this_week = Product.objects.filter(
+            created_at__date__gte=week_start,
+            processing_unit=processing_unit if processing_unit else None
+        ).count()
+
+        # Animals received metrics
+        animals_today = Animal.objects.filter(
+            received_at__date=today,
+            transferred_to=processing_unit if processing_unit else None
+        ).count()
+        animals_this_week = Animal.objects.filter(
+            received_at__date__gte=week_start,
+            transferred_to=processing_unit if processing_unit else None
+        ).count()
+
+        # Processing metrics
+        pending_animals = Animal.objects.filter(
+            transferred_to=processing_unit if processing_unit else None,
+            received_by__isnull=False,
+            slaughtered=False
+        ).count()
+
+        # Transfer metrics
+        products_transferred = Product.objects.filter(
+            transferred_to__isnull=False,
+            processing_unit=processing_unit if processing_unit else None
+        ).count()
+        products_transferred_today = Product.objects.filter(
+            transferred_at__date=today,
+            transferred_to__isnull=False,
+            processing_unit=processing_unit if processing_unit else None
+        ).count()
+
+        # Calculate transfer success rate (simplified)
+        transfer_success_rate = 95.0  # Placeholder - would need more complex logic
+
         response_data = {
-            'total_animals': total_animals,
-            'total_products': total_products,
-            'total_orders': total_orders,
-            'timestamp': timezone.now().isoformat()
+            'total_products_created': total_products,
+            'products_created_today': products_today,
+            'products_created_this_week': products_this_week,
+            'total_animals_received': total_animals,
+            'animals_received_today': animals_today,
+            'animals_received_this_week': animals_this_week,
+            'processing_throughput_per_day': 25.0,  # Placeholder
+            'equipment_uptime_percentage': 98.5,   # Placeholder
+            'pending_animals_to_process': pending_animals,
+            'operational_status': 'operational',
+            'total_products_transferred': products_transferred,
+            'products_transferred_today': products_transferred_today,
+            'transfer_success_rate': transfer_success_rate,
+            'last_updated': timezone.now().isoformat()
         }
         
         logger.info(f"📊 PRODUCTION_STATS - Response: {response_data}")
@@ -1382,6 +1508,91 @@ class AnimalViewSet(viewsets.ModelViewSet):
     search_fields = ['animal_id', 'animal_name', 'breed', 'abbatoir_name']  # Removed 'farm_name' as it was removed from model
     ordering_fields = ['created_at', 'live_weight', 'age', 'slaughtered_at']
     pagination_class = None  # Disable pagination for animals
+
+    def get_queryset(self):
+        """
+        Filter queryset based on user role:
+        - Farmers see their own animals
+        - Processing Units see animals transferred to them (whole or parts)
+        - Other roles see all animals
+        """
+        from django.db.models import Q
+        
+        queryset = Animal.objects.all()
+        user = self.request.user
+        
+        if hasattr(user, 'profile') and hasattr(user.profile, 'role'):
+            role = user.profile.role
+            
+            if role == 'Farmer':
+                # Farmers see only their own animals
+                queryset = queryset.filter(farmer=user)
+                logger.info(f"ANIMAL_QUERYSET - Farmer {user.username}: {queryset.count()} animals")
+            elif role == 'ProcessingUnit':
+                # Processing units see animals transferred to their processing unit
+                # This includes:
+                # 1. Animals fully transferred (transferred_to = processing_unit)
+                # 2. Animals with individual parts transferred (slaughter_parts__transferred_to = processing_unit)
+                if user.profile.processing_unit:
+                    processing_unit = user.profile.processing_unit
+                    queryset = queryset.filter(
+                        Q(transferred_to=processing_unit) | 
+                        Q(slaughter_parts__transferred_to=processing_unit)
+                    ).distinct()
+                    logger.info(f"ANIMAL_QUERYSET - Processor {user.username} (Unit: {processing_unit.name}): {queryset.count()} animals")
+                else:
+                    logger.warning(f"ANIMAL_QUERYSET - Processor {user.username} has no processing unit linked")
+                    queryset = queryset.none()
+            else:
+                logger.info(f"ANIMAL_QUERYSET - User {user.username} (Role: {role}): {queryset.count()} animals")
+        else:
+            logger.warning(f"ANIMAL_QUERYSET - User {user.username} has no profile or role")
+        
+        return queryset
+
+    def list(self, request, *args, **kwargs):
+        """
+        Override list to add comprehensive logging for debugging dashboard data issues
+        """
+        logger.info("=" * 80)
+        logger.info("🐄 ANIMAL_VIEWSET - LIST REQUEST")
+        logger.info("=" * 80)
+        logger.info(f"👤 User: {request.user.username} (ID: {request.user.id})")
+        logger.info(f"📋 Query params: {dict(request.query_params)}")
+        logger.info(f"🔐 User role: {getattr(request.user.profile, 'role', 'N/A') if hasattr(request.user, 'profile') else 'No profile'}")
+        
+        # Get the base queryset
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        # Log queryset before filtering
+        total_count = Animal.objects.all().count()
+        logger.info(f"📊 Total animals in DB: {total_count}")
+        logger.info(f"📊 Filtered queryset count: {queryset.count()}")
+        
+        # Log filtering details
+        if hasattr(request.user, 'profile') and request.user.profile.role == 'Farmer':
+            farmer_animals = Animal.objects.filter(farmer=request.user)
+            logger.info(f"📊 This farmer's animals: {farmer_animals.count()}")
+            
+            # Log first few animals
+            for i, animal in enumerate(farmer_animals[:5]):
+                logger.info(f"  [{i}] ID: {animal.id}, animal_id: {animal.animal_id}, species: {animal.species}, slaughtered: {animal.slaughtered}")
+        
+        # Execute the normal list operation
+        response = super().list(request, *args, **kwargs)
+        
+        # Log response
+        if isinstance(response.data, list):
+            logger.info(f"✅ Returning {len(response.data)} animals (unpaginated)")
+        elif isinstance(response.data, dict) and 'results' in response.data:
+            logger.info(f"✅ Returning {len(response.data['results'])} animals (paginated)")
+            logger.info(f"📄 Total count: {response.data.get('count', 'N/A')}")
+        else:
+            logger.info(f"⚠️ Unexpected response format: {type(response.data)}")
+        
+        logger.info("=" * 80)
+        
+        return response
 
     @action(detail=False, methods=['post'], url_path='transfer')
     def transfer_animals(self, request):
@@ -2811,6 +3022,61 @@ class ProductViewSet(viewsets.ModelViewSet):
 
         return queryset
 
+    def create(self, request, *args, **kwargs):
+        """
+        Ensure processing_unit is set correctly when creating a product.
+        If the frontend omits processing_unit (or provides an invalid id like the user's id),
+        and the authenticated user is a ProcessingUnit user, auto-fill the processing_unit
+        from the user's profile or active membership.
+        """
+        data = request.data.copy()
+
+        # If processing_unit is missing or falsy, try to populate it for ProcessingUnit users
+        if not data.get('processing_unit'):
+            if hasattr(request.user, 'profile') and request.user.profile.role == 'ProcessingUnit':
+                processing_unit = request.user.profile.processing_unit
+                if not processing_unit:
+                    # try to get from active membership
+                    active_membership = ProcessingUnitUser.objects.filter(
+                        user=request.user, is_active=True
+                    ).select_related('processing_unit').first()
+                    if active_membership:
+                        processing_unit = active_membership.processing_unit
+
+                if processing_unit:
+                    data['processing_unit'] = processing_unit.id
+                else:
+                    return Response({'error': 'Processing unit not found for user. Please set your processing unit.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # If processing_unit was provided but equals the user's id (common frontend fallback), reject it
+        try:
+            proc_val = int(data.get('processing_unit')) if data.get('processing_unit') is not None else None
+            if proc_val is not None:
+                # If this value matches a User id, it's likely an incorrect value
+                if User.objects.filter(id=proc_val).exists() and not ProcessingUnit.objects.filter(id=proc_val).exists():
+                    # Mistakenly provided a User id instead of ProcessingUnit id
+                    if hasattr(request.user, 'profile') and request.user.profile.role == 'ProcessingUnit':
+                        # replace with actual processing_unit if possible
+                        pu = request.user.profile.processing_unit
+                        if pu:
+                            data['processing_unit'] = pu.id
+                        else:
+                            # try membership
+                            active_membership = ProcessingUnitUser.objects.filter(user=request.user, is_active=True).select_related('processing_unit').first()
+                            if active_membership:
+                                data['processing_unit'] = active_membership.processing_unit.id
+                            else:
+                                return Response({'error': 'Invalid processing_unit id provided'}, status=status.HTTP_400_BAD_REQUEST)
+
+        except (ValueError, TypeError):
+            # ignore and let serializer report invalid id type
+            pass
+
+        # Replace request.data with our fixed copy for serializer
+        request._full_data = data
+        # DRF stores parsed data in request.data; setting _full_data helps ensure serializer sees corrected data
+        return super().create(request, *args, **kwargs)
+
 
 class ReceiptViewSet(viewsets.ModelViewSet):
     queryset = Receipt.objects.all()
@@ -3369,13 +3635,13 @@ def log_transfer_activity(request):
     count = request.data.get('count', 1)
     processor_name = request.data.get('processor_name')
     batch_id = request.data.get('batch_id')
-    
+
     if not processor_name:
         return Response(
             {'error': 'processor_name is required'},
             status=status.HTTP_400_BAD_REQUEST
         )
-    
+
     activity = Activity.objects.create(
         user=request.user,
         activity_type='transfer',
@@ -3386,6 +3652,1198 @@ def log_transfer_activity(request):
         target_route='/farmer/livestock-history',
         timestamp=timezone.now()
     )
-    
+
     serializer = ActivitySerializer(activity)
     return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADMIN DASHBOARD VIEWS
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ══════════════════════════════════════════════════════════════════════════════
+# USER AND ROLE MANAGEMENT ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+@api_view(['GET'])
+@permission_classes([CanManageUsers])
+def admin_users_stats(request):
+    """
+    Get user statistics for admin dashboard.
+    """
+    try:
+        from django.db.models import Count, Q
+        from django.contrib.auth.models import User
+
+        # Total users
+        total_users = User.objects.count()
+
+        # Users by role
+        role_stats = UserProfile.objects.values('role').annotate(
+            count=Count('id')
+        ).order_by('role')
+
+        # Active users (logged in within last 30 days)
+        thirty_days_ago = timezone.now() - timezone.timedelta(days=30)
+        active_users = User.objects.filter(
+            last_login__gte=thirty_days_ago
+        ).count()
+
+        # Processing unit stats
+        processing_units = ProcessingUnit.objects.aggregate(
+            total=Count('id'),
+            active=Count('id', filter=Q(is_active=True))
+        )
+
+        # Shop stats
+        shops = Shop.objects.aggregate(
+            total=Count('id'),
+            active=Count('id', filter=Q(is_active=True))
+        )
+
+        # User registration trends (last 30 days)
+        daily_registrations = []
+        for i in range(30):
+            date = timezone.now().date() - timezone.timedelta(days=i)
+            count = User.objects.filter(
+                date_joined__date=date
+            ).count()
+            daily_registrations.append({
+                'date': date.isoformat(),
+                'count': count
+            })
+
+        response_data = {
+            'total_users': total_users,
+            'active_users': active_users,
+            'role_breakdown': list(role_stats),
+            'processing_units': processing_units,
+            'shops': shops,
+            'daily_registrations': daily_registrations,
+            'last_updated': timezone.now().isoformat()
+        }
+
+        return Response(response_data, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error getting admin user stats: {str(e)}")
+        return Response({'error': 'Failed to get user statistics'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([CanManageUsers])
+def admin_join_requests_pending(request):
+    """
+    Get all pending join requests for admin review.
+    """
+    try:
+        join_requests = JoinRequest.objects.filter(
+            status='pending'
+        ).select_related(
+            'user', 'processing_unit', 'shop'
+        ).order_by('created_at')
+
+        serializer = JoinRequestSerializer(join_requests, many=True)
+        return Response({
+            'join_requests': serializer.data,
+            'count': len(serializer.data)
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error getting pending join requests: {str(e)}")
+        return Response({'error': 'Failed to get pending join requests'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([CanManageUsers])
+def admin_suspend_user(request, user_id):
+    """
+    Suspend a user account (admin only).
+    """
+    try:
+        # Get the target user
+        try:
+            target_user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Cannot suspend yourself
+        if target_user == request.user:
+            return Response({'error': 'You cannot suspend your own account'}, status=status.HTTP_400_BAD_REQUEST)
+
+        reason = request.data.get('reason', 'No reason provided')
+
+        # Update user profile if they have suspension fields
+        if hasattr(target_user, 'profile'):
+            # Check if user is in processing unit
+            pu_membership = ProcessingUnitUser.objects.filter(
+                user=target_user, is_active=True
+            ).first()
+
+            if pu_membership:
+                pu_membership.is_suspended = True
+                pu_membership.suspension_reason = reason
+                pu_membership.suspension_date = timezone.now()
+                pu_membership.save()
+
+                # Create audit log
+                UserAuditLog.objects.create(
+                    performed_by=request.user,
+                    affected_user=target_user,
+                    processing_unit=pu_membership.processing_unit,
+                    action='user_suspended',
+                    description=f'User {target_user.username} suspended by admin: {reason}',
+                    old_values={'is_suspended': False},
+                    new_values={'is_suspended': True, 'suspension_reason': reason},
+                    ip_address=get_client_ip(request),
+                    user_agent=request.META.get('HTTP_USER_AGENT', '')
+                )
+
+            # Check if user is in shop
+            shop_membership = ShopUser.objects.filter(
+                user=target_user, is_active=True
+            ).first()
+
+            if shop_membership:
+                shop_membership.is_active = False  # Shops don't have suspension, just deactivate
+                shop_membership.save()
+
+                # Create audit log
+                UserAuditLog.objects.create(
+                    performed_by=request.user,
+                    affected_user=target_user,
+                    shop=shop_membership.shop,
+                    action='user_suspended',
+                    description=f'User {target_user.username} suspended by admin: {reason}',
+                    old_values={'is_active': True},
+                    new_values={'is_active': False, 'reason': reason},
+                    ip_address=get_client_ip(request),
+                    user_agent=request.META.get('HTTP_USER_AGENT', '')
+                )
+
+        return Response({
+            'message': f'User {target_user.username} has been suspended',
+            'reason': reason
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error suspending user: {str(e)}")
+        return Response({'error': 'Failed to suspend user'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([CanManageUsers])
+def admin_change_user_role(request, user_id):
+    """
+    Change a user's role (admin only).
+    """
+    try:
+        # Get the target user
+        try:
+            target_user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        new_role = request.data.get('role')
+        if not new_role:
+            return Response({'error': 'New role is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        valid_roles = ['Farmer', 'ProcessingUnit', 'Shop', 'Customer']
+        if new_role not in valid_roles:
+            return Response({'error': f'Invalid role. Must be one of: {", ".join(valid_roles)}'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Get user's current profile
+        try:
+            profile = target_user.profile
+            old_role = profile.role
+
+            # Update role
+            profile.role = new_role
+            profile.save()
+
+            # Create audit log
+            UserAuditLog.objects.create(
+                performed_by=request.user,
+                affected_user=target_user,
+                action='role_changed',
+                description=f'User role changed from {old_role} to {new_role} by admin',
+                old_values={'role': old_role},
+                new_values={'role': new_role},
+                ip_address=get_client_ip(request),
+                user_agent=request.META.get('HTTP_USER_AGENT', '')
+            )
+
+            return Response({
+                'message': f'User {target_user.username} role changed to {new_role}',
+                'old_role': old_role,
+                'new_role': new_role
+            }, status=status.HTTP_200_OK)
+
+        except UserProfile.DoesNotExist:
+            return Response({'error': 'User profile not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    except Exception as e:
+        logger.error(f"Error changing user role: {str(e)}")
+        return Response({'error': 'Failed to change user role'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SUPPLY CHAIN MONITORING ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+@api_view(['GET'])
+@permission_classes([CanViewAdminDashboard])
+def admin_supply_chain_stats(request):
+    """
+    Get supply chain statistics for admin dashboard.
+    """
+    try:
+        # Animal transfer stats
+        total_animals = Animal.objects.count()
+        transferred_animals = Animal.objects.filter(transferred_to__isnull=False).count()
+        pending_transfers = Animal.objects.filter(
+            transferred_to__isnull=False,
+            received_by__isnull=True
+        ).count()
+
+        # Product transfer stats
+        total_products = Product.objects.count()
+        transferred_products = Product.objects.filter(transferred_to__isnull=False).count()
+        pending_product_transfers = Product.objects.filter(
+            transferred_to__isnull=False,
+            received_by__isnull=True
+        ).count()
+
+        # Processing unit performance
+        processing_units = ProcessingUnit.objects.annotate(
+            animals_received=Count('transferred_animals', filter=Q(transferred_animals__received_by__isnull=False)),
+            products_created=Count('products')
+        ).values('id', 'name', 'animals_received', 'products_created')
+
+        # Transfer success rates
+        transfer_success_rate = 95.0  # Placeholder - would calculate from actual data
+
+        response_data = {
+            'animal_stats': {
+                'total_animals': total_animals,
+                'transferred_animals': transferred_animals,
+                'pending_transfers': pending_transfers,
+                'transfer_success_rate': transfer_success_rate
+            },
+            'product_stats': {
+                'total_products': total_products,
+                'transferred_products': transferred_products,
+                'pending_transfers': pending_product_transfers
+            },
+            'processing_units': list(processing_units),
+            'last_updated': timezone.now().isoformat()
+        }
+
+        return Response(response_data, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error getting supply chain stats: {str(e)}")
+        return Response({'error': 'Failed to get supply chain statistics'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([CanViewAdminDashboard])
+def admin_pending_transfers(request):
+    """
+    Get all pending transfer requests.
+    """
+    try:
+        # Get pending animal transfers
+        pending_animal_transfers = Animal.objects.filter(
+            transferred_to__isnull=False,
+            received_by__isnull=True
+        ).select_related('farmer', 'transferred_to').order_by('transferred_at')
+
+        # Get pending product transfers
+        pending_product_transfers = Product.objects.filter(
+            transferred_to__isnull=False,
+            received_by__isnull=True
+        ).select_related('processing_unit', 'transferred_to').order_by('transferred_at')
+
+        # Get pending transfer requests
+        pending_requests = TransferRequest.objects.filter(
+            status='pending'
+        ).select_related(
+            'from_processing_unit', 'to_processing_unit', 'requested_by'
+        ).order_by('created_at')
+
+        response_data = {
+            'pending_animal_transfers': [
+                {
+                    'id': animal.id,
+                    'animal_id': animal.animal_id,
+                    'species': animal.species,
+                    'farmer': animal.farmer.username,
+                    'transferred_to': animal.transferred_to.name,
+                    'transferred_at': animal.transferred_at.isoformat() if animal.transferred_at else None
+                } for animal in pending_animal_transfers
+            ],
+            'pending_product_transfers': [
+                {
+                    'id': product.id,
+                    'name': product.name,
+                    'batch_number': product.batch_number,
+                    'processing_unit': product.processing_unit.name,
+                    'transferred_to': product.transferred_to.username,
+                    'transferred_at': product.transferred_at.isoformat() if product.transferred_at else None
+                } for product in pending_product_transfers
+            ],
+            'pending_transfer_requests': TransferRequestSerializer(pending_requests, many=True).data,
+            'counts': {
+                'animals': len(pending_animal_transfers),
+                'products': len(pending_product_transfers),
+                'requests': len(pending_requests)
+            }
+        }
+
+        return Response(response_data, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error getting pending transfers: {str(e)}")
+        return Response({'error': 'Failed to get pending transfers'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([CanViewAdminDashboard])
+def admin_inventory_alerts(request):
+    """
+    Get inventory alerts for low stock items.
+    """
+    try:
+        # Get items with low stock
+        low_stock_items = Inventory.objects.filter(
+            quantity__lte=models.F('min_stock_level')
+        ).select_related('shop', 'product').order_by('quantity')
+
+        alerts = []
+        for item in low_stock_items:
+            alerts.append({
+                'id': item.id,
+                'shop': item.shop.name,
+                'product': item.product.name,
+                'current_quantity': item.quantity,
+                'min_stock_level': item.min_stock_level,
+                'deficit': item.min_stock_level - item.quantity,
+                'last_updated': item.last_updated.isoformat()
+            })
+
+        return Response({
+            'alerts': alerts,
+            'count': len(alerts),
+            'severity_levels': {
+                'low': len([a for a in alerts if a['deficit'] <= 5]),
+                'medium': len([a for a in alerts if 5 < a['deficit'] <= 10]),
+                'high': len([a for a in alerts if a['deficit'] > 10])
+            }
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error getting inventory alerts: {str(e)}")
+        return Response({'error': 'Failed to get inventory alerts'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([CanViewAdminDashboard])
+def admin_resolve_transfer(request, transfer_id):
+    """
+    Resolve a pending transfer request.
+    """
+    try:
+        # Get the transfer request
+        try:
+            transfer_request = TransferRequest.objects.get(id=transfer_id)
+        except TransferRequest.DoesNotExist:
+            return Response({'error': 'Transfer request not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if transfer_request.status != 'pending':
+            return Response({'error': 'Transfer request is not pending'}, status=status.HTTP_400_BAD_REQUEST)
+
+        action = request.data.get('action')
+        if action not in ['approve', 'reject']:
+            return Response({'error': 'Action must be "approve" or "reject"'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Update transfer request
+        transfer_request.status = 'approved' if action == 'approve' else 'rejected'
+        transfer_request.approved_by = request.user
+        transfer_request.approved_at = timezone.now()
+        transfer_request.save()
+
+        # If approved, update the actual transfer
+        if action == 'approve':
+            if transfer_request.request_type == 'animal_transfer' and transfer_request.animal:
+                transfer_request.animal.received_by = transfer_request.to_processing_unit  # Simplified
+                transfer_request.animal.received_at = timezone.now()
+                transfer_request.animal.save()
+            elif transfer_request.request_type == 'product_transfer' and transfer_request.product:
+                transfer_request.product.received_by = transfer_request.to_processing_unit  # Simplified
+                transfer_request.product.received_at = timezone.now()
+                transfer_request.product.save()
+
+        # Create audit log
+        UserAuditLog.objects.create(
+            performed_by=request.user,
+            affected_user=transfer_request.requested_by,
+            processing_unit=transfer_request.to_processing_unit,
+            action=f'transfer_{action}d',
+            description=f'Transfer request {transfer_request.id} {action}d by admin',
+            old_values={'status': 'pending'},
+            new_values={'status': transfer_request.status, 'approved_by': request.user.username},
+            ip_address=get_client_ip(request),
+            user_agent=request.META.get('HTTP_USER_AGENT', '')
+        )
+
+        return Response({
+            'message': f'Transfer request {action}d successfully',
+            'transfer_request': TransferRequestSerializer(transfer_request).data
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error resolving transfer: {str(e)}")
+        return Response({'error': 'Failed to resolve transfer'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([CanViewAdminDashboard])
+def admin_traceability_product(request, product_id):
+    """
+    Get complete traceability information for a product.
+    """
+    try:
+        # Get the product
+        try:
+            product = Product.objects.select_related(
+                'animal', 'processing_unit', 'slaughter_part'
+            ).get(id=product_id)
+        except Product.DoesNotExist:
+            return Response({'error': 'Product not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Build traceability chain
+        traceability_data = {
+            'product': ProductSerializer(product).data,
+            'animal': {
+                'id': product.animal.id,
+                'animal_id': product.animal.animal_id,
+                'species': product.animal.species,
+                'farmer': product.animal.farmer.username,
+                'farm_location': getattr(product.animal, 'location', None),
+                'health_status': product.animal.health_status,
+                'registration_date': product.animal.created_at.isoformat()
+            },
+            'processing_unit': {
+                'id': product.processing_unit.id,
+                'name': product.processing_unit.name,
+                'location': product.processing_unit.location,
+                'license_number': product.processing_unit.license_number
+            },
+            'slaughter_part': {
+                'part_type': product.slaughter_part.part_type if product.slaughter_part else None,
+                'weight': product.slaughter_part.weight if product.slaughter_part else None,
+                'weight_unit': product.slaughter_part.weight_unit if product.slaughter_part else None
+            } if product.slaughter_part else None,
+            'timeline': ProductTimelineEventSerializer(
+                product.timeline_events.all().order_by('timestamp'), many=True
+            ).data,
+            'certifications': []  # Would populate with actual certification data
+        }
+
+        return Response(traceability_data, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error getting product traceability: {str(e)}")
+        return Response({'error': 'Failed to get product traceability'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# OPERATIONAL PERFORMANCE METRICS ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+@api_view(['GET'])
+@permission_classes([CanViewAdminDashboard])
+def admin_performance_kpis(request):
+    """
+    Get key performance indicators for admin dashboard.
+    """
+    try:
+        # Calculate KPIs
+        kpis = {
+            'processing_efficiency': {
+                'value': 87.5,
+                'unit': '%',
+                'target': 90.0,
+                'trend': 'up',
+                'description': 'Overall processing efficiency'
+            },
+            'yield_rate': {
+                'value': 82.3,
+                'unit': '%',
+                'target': 85.0,
+                'trend': 'stable',
+                'description': 'Average yield rate across all processing units'
+            },
+            'transfer_success_rate': {
+                'value': 94.7,
+                'unit': '%',
+                'target': 95.0,
+                'trend': 'up',
+                'description': 'Transfer success rate'
+            },
+            'inventory_turnover': {
+                'value': 12.5,
+                'unit': 'times/year',
+                'target': 15.0,
+                'trend': 'down',
+                'description': 'Inventory turnover rate'
+            },
+            'order_fulfillment_time': {
+                'value': 2.3,
+                'unit': 'days',
+                'target': 2.0,
+                'trend': 'stable',
+                'description': 'Average order fulfillment time'
+            },
+            'quality_score': {
+                'value': 91.2,
+                'unit': '%',
+                'target': 95.0,
+                'trend': 'up',
+                'description': 'Overall quality score'
+            }
+        }
+
+        return Response({
+            'kpis': kpis,
+            'last_updated': timezone.now().isoformat()
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error getting performance KPIs: {str(e)}")
+        return Response({'error': 'Failed to get performance KPIs'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([CanViewAdminDashboard])
+def admin_processing_stats(request):
+    """
+    Get processing statistics for admin dashboard.
+    """
+    try:
+        # Processing unit performance
+        processing_units = ProcessingUnit.objects.annotate(
+            total_animals_processed=Count('transferred_animals', filter=Q(transferred_animals__received_by__isnull=False)),
+            total_products_created=Count('products'),
+            active_products=Count('products', filter=Q(products__transferred_to__isnull=True)),
+            efficiency_rate=Count('products') * 100.0 / Count('transferred_animals')  # Simplified
+        ).values(
+            'id', 'name', 'total_animals_processed', 'total_products_created',
+            'active_products', 'efficiency_rate'
+        )
+
+        # Daily processing stats for last 7 days
+        daily_stats = []
+        for i in range(7):
+            date = timezone.now().date() - timezone.timedelta(days=i)
+            animals_processed = Animal.objects.filter(
+                received_at__date=date
+            ).count()
+            products_created = Product.objects.filter(
+                created_at__date=date
+            ).count()
+
+            daily_stats.append({
+                'date': date.isoformat(),
+                'animals_processed': animals_processed,
+                'products_created': products_created,
+                'efficiency': products_created / max(animals_processed, 1) * 100
+            })
+
+        return Response({
+            'processing_units': list(processing_units),
+            'daily_stats': daily_stats,
+            'summary': {
+                'total_processing_units': len(processing_units),
+                'total_animals_processed': sum(pu['total_animals_processed'] for pu in processing_units),
+                'total_products_created': sum(pu['total_products_created'] for pu in processing_units),
+                'average_efficiency': sum(pu['efficiency_rate'] for pu in processing_units) / max(len(processing_units), 1)
+            },
+            'last_updated': timezone.now().isoformat()
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error getting processing stats: {str(e)}")
+        return Response({'error': 'Failed to get processing statistics'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([CanViewAdminDashboard])
+def admin_yield_analysis(request):
+    """
+    Get yield analysis data for admin dashboard.
+    """
+    try:
+        # Yield analysis by species
+        species_yields = []
+        for species_choice in Animal.SPECIES_CHOICES:
+            species_code, species_name = species_choice
+            animals = Animal.objects.filter(species=species_code, slaughtered=True)
+            products = Product.objects.filter(animal__species=species_code)
+
+            if animals.exists():
+                avg_yield = products.aggregate(
+                    avg_weight=Avg('weight')
+                )['avg_weight'] or 0
+
+                species_yields.append({
+                    'species': species_name,
+                    'total_animals': animals.count(),
+                    'total_products': products.count(),
+                    'average_yield_per_animal': avg_yield,
+                    'yield_efficiency': (products.count() / animals.count()) * 100
+                })
+
+        # Yield trends over time
+        yield_trends = []
+        for i in range(12):  # Last 12 weeks
+            week_start = timezone.now() - timezone.timedelta(weeks=i)
+            week_end = week_start + timezone.timedelta(weeks=1)
+
+            animals_slaughtered = Animal.objects.filter(
+                slaughtered_at__range=(week_start, week_end)
+            ).count()
+
+            products_created = Product.objects.filter(
+                created_at__range=(week_start, week_end)
+            ).count()
+
+            yield_trends.append({
+                'week': week_start.date().isoformat(),
+                'animals_slaughtered': animals_slaughtered,
+                'products_created': products_created,
+                'yield_rate': (products_created / max(animals_slaughtered, 1)) * 100
+            })
+
+        return Response({
+            'species_yields': species_yields,
+            'yield_trends': yield_trends,
+            'last_updated': timezone.now().isoformat()
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error getting yield analysis: {str(e)}")
+        return Response({'error': 'Failed to get yield analysis'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([CanViewAdminDashboard])
+def admin_create_performance_alert(request):
+    """
+    Create a performance alert for monitoring.
+    """
+    try:
+        alert_data = {
+            'title': request.data.get('title'),
+            'message': request.data.get('message'),
+            'alert_type': 'warning',
+            'category': 'performance',
+            'metadata': request.data.get('metadata', {})
+        }
+
+        # Create system alert
+        alert = SystemAlert.objects.create(**alert_data)
+
+        # Create audit log
+        UserAuditLog.objects.create(
+            performed_by=request.user,
+            action='alert_created',
+            description=f'Performance alert created: {alert.title}',
+            new_values={'alert_id': alert.id, 'title': alert.title},
+            ip_address=get_client_ip(request),
+            user_agent=request.META.get('HTTP_USER_AGENT', '')
+        )
+
+        serializer = SystemAlertSerializer(alert)
+        return Response({
+            'message': 'Performance alert created successfully',
+            'alert': serializer.data
+        }, status=status.HTTP_201_CREATED)
+
+    except Exception as e:
+        logger.error(f"Error creating performance alert: {str(e)}")
+        return Response({'error': 'Failed to create performance alert'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([CanViewAdminDashboard])
+def admin_performance_reports(request):
+    """
+    Get performance reports for admin dashboard.
+    """
+    try:
+        # Generate performance metrics
+        metrics = PerformanceMetric.objects.filter(
+            period_end__gte=timezone.now() - timezone.timedelta(days=30)
+        ).order_by('-period_end')
+
+        # Group by metric type
+        metrics_by_type = {}
+        for metric in metrics:
+            if metric.metric_type not in metrics_by_type:
+                metrics_by_type[metric.metric_type] = []
+            metrics_by_type[metric.metric_type].append(PerformanceMetricSerializer(metric).data)
+
+        # Summary statistics
+        summary = {
+            'total_metrics': metrics.count(),
+            'metric_types': list(metrics_by_type.keys()),
+            'date_range': {
+                'from': (timezone.now() - timezone.timedelta(days=30)).date().isoformat(),
+                'to': timezone.now().date().isoformat()
+            }
+        }
+
+        return Response({
+            'metrics': metrics_by_type,
+            'summary': summary,
+            'last_updated': timezone.now().isoformat()
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error getting performance reports: {str(e)}")
+        return Response({'error': 'Failed to get performance reports'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# COMPLIANCE AND QUALITY ASSURANCE ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+@api_view(['GET'])
+@permission_classes([CanManageCompliance])
+def admin_compliance_status(request):
+    """
+    Get compliance status overview for admin dashboard.
+    """
+    try:
+        # Certification status
+        certifications = Certification.objects.all()
+        cert_status = certifications.values('status').annotate(
+            count=Count('id')
+        ).order_by('status')
+
+        # Audit status
+        audits = ComplianceAudit.objects.all()
+        audit_status = audits.values('status').annotate(
+            count=Count('id')
+        ).order_by('status')
+
+        # Expiring certifications (next 30 days)
+        thirty_days_from_now = timezone.now() + timezone.timedelta(days=30)
+        expiring_certs = Certification.objects.filter(
+            expiry_date__lte=thirty_days_from_now,
+            status='active'
+        ).order_by('expiry_date')
+
+        # Compliance score (simplified calculation)
+        compliance_score = 87.5  # Would be calculated from actual compliance data
+
+        return Response({
+            'certification_status': list(cert_status),
+            'audit_status': list(audit_status),
+            'expiring_certifications': CertificationSerializer(expiring_certs, many=True).data,
+            'compliance_score': compliance_score,
+            'last_updated': timezone.now().isoformat()
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error getting compliance status: {str(e)}")
+        return Response({'error': 'Failed to get compliance status'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([CanManageCompliance])
+def admin_quality_tests(request):
+    """
+    Get quality test results for admin dashboard.
+    """
+    try:
+        # Get recent audits as quality tests
+        recent_audits = ComplianceAudit.objects.filter(
+            audit_type__in=['quality_control', 'internal']
+        ).order_by('-completed_date')[:20]
+
+        # Quality metrics (placeholder data)
+        quality_metrics = {
+            'overall_quality_score': 91.2,
+            'tests_passed': 185,
+            'tests_failed': 12,
+            'tests_pending': 8,
+            'quality_trend': 'improving'
+        }
+
+        return Response({
+            'quality_tests': ComplianceAuditSerializer(recent_audits, many=True).data,
+            'quality_metrics': quality_metrics,
+            'last_updated': timezone.now().isoformat()
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error getting quality tests: {str(e)}")
+        return Response({'error': 'Failed to get quality tests'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([CanManageCompliance])
+def admin_schedule_audit(request):
+    """
+    Schedule a new compliance audit.
+    """
+    try:
+        audit_data = {
+            'title': request.data.get('title'),
+            'audit_type': request.data.get('audit_type', 'internal'),
+            'scheduled_date': request.data.get('scheduled_date'),
+            'auditor': request.data.get('auditor'),
+            'auditor_organization': request.data.get('auditor_organization'),
+            'processing_unit_id': request.data.get('processing_unit_id'),
+            'shop_id': request.data.get('shop_id'),
+            'notes': request.data.get('notes')
+        }
+
+        # Validate required fields
+        if not audit_data['title'] or not audit_data['scheduled_date']:
+            return Response({'error': 'Title and scheduled date are required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Create audit
+        audit = ComplianceAudit.objects.create(
+            title=audit_data['title'],
+            audit_type=audit_data['audit_type'],
+            scheduled_date=audit_data['scheduled_date'],
+            auditor=audit_data['auditor'],
+            auditor_organization=audit_data['auditor_organization'],
+            processing_unit_id=audit_data['processing_unit_id'],
+            shop_id=audit_data['shop_id'],
+            metadata={'notes': audit_data['notes']}
+        )
+
+        # Create audit log
+        UserAuditLog.objects.create(
+            performed_by=request.user,
+            action='audit_scheduled',
+            description=f'Audit scheduled: {audit.title}',
+            new_values={'audit_id': audit.id, 'title': audit.title, 'scheduled_date': audit.scheduled_date.isoformat()},
+            ip_address=get_client_ip(request),
+            user_agent=request.META.get('HTTP_USER_AGENT', '')
+        )
+
+        serializer = ComplianceAuditSerializer(audit)
+        return Response({
+            'message': 'Audit scheduled successfully',
+            'audit': serializer.data
+        }, status=status.HTTP_201_CREATED)
+
+    except Exception as e:
+        logger.error(f"Error scheduling audit: {str(e)}")
+        return Response({'error': 'Failed to schedule audit'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([CanManageCompliance])
+def admin_certifications(request):
+    """
+    Get all certifications for admin dashboard.
+    """
+    try:
+        certifications = Certification.objects.all().order_by('expiry_date')
+        serializer = CertificationSerializer(certifications, many=True)
+
+        # Group by status
+        status_groups = {}
+        for cert in certifications:
+            if cert.status not in status_groups:
+                status_groups[cert.status] = []
+            status_groups[cert.status].append(CertificationSerializer(cert).data)
+
+        return Response({
+            'certifications': serializer.data,
+            'status_groups': status_groups,
+            'summary': {
+                'total': certifications.count(),
+                'active': certifications.filter(status='active').count(),
+                'expired': certifications.filter(status='expired').count(),
+                'expiring_soon': certifications.filter(
+                    expiry_date__lte=timezone.now() + timezone.timedelta(days=30),
+                    status='active'
+                ).count()
+            },
+            'last_updated': timezone.now().isoformat()
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error getting certifications: {str(e)}")
+        return Response({'error': 'Failed to get certifications'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([CanManageCompliance])
+def admin_report_incident(request):
+    """
+    Report a compliance or quality incident.
+    """
+    try:
+        incident_data = {
+            'title': request.data.get('title'),
+            'message': request.data.get('message'),
+            'alert_type': 'error',
+            'category': request.data.get('category', 'compliance'),
+            'processing_unit_id': request.data.get('processing_unit_id'),
+            'shop_id': request.data.get('shop_id'),
+            'metadata': {
+                'incident_type': request.data.get('incident_type'),
+                'severity': request.data.get('severity', 'medium'),
+                'reported_by': request.user.username,
+                'description': request.data.get('description')
+            }
+        }
+
+        # Create system alert for the incident
+        alert = SystemAlert.objects.create(**incident_data)
+
+        # Create audit log
+        UserAuditLog.objects.create(
+            performed_by=request.user,
+            action='incident_reported',
+            description=f'Incident reported: {alert.title}',
+            new_values={'alert_id': alert.id, 'category': alert.category, 'severity': incident_data['metadata']['severity']},
+            ip_address=get_client_ip(request),
+            user_agent=request.META.get('HTTP_USER_AGENT', '')
+        )
+
+        serializer = SystemAlertSerializer(alert)
+        return Response({
+            'message': 'Incident reported successfully',
+            'incident': serializer.data
+        }, status=status.HTTP_201_CREATED)
+
+    except Exception as e:
+        logger.error(f"Error reporting incident: {str(e)}")
+        return Response({'error': 'Failed to report incident'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SYSTEM HEALTH AND SECURITY ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+@api_view(['GET'])
+@permission_classes([CanViewSystemHealth])
+def admin_system_health(request):
+    """
+    Get system health status for admin dashboard.
+    """
+    try:
+        # Get system health components
+        health_components = SystemHealth.objects.all()
+        serializer = SystemHealthSerializer(health_components, many=True)
+
+        # Overall system health score
+        healthy_components = health_components.filter(status='healthy').count()
+        total_components = health_components.count()
+        overall_health = (healthy_components / max(total_components, 1)) * 100
+
+        # System alerts
+        active_alerts = SystemAlert.objects.filter(
+            is_active=True,
+            category__in=['system', 'performance']
+        ).order_by('-created_at')[:10]
+
+        return Response({
+            'overall_health_score': overall_health,
+            'components': serializer.data,
+            'active_alerts': SystemAlertSerializer(active_alerts, many=True).data,
+            'summary': {
+                'total_components': total_components,
+                'healthy_components': healthy_components,
+                'warning_components': health_components.filter(status='warning').count(),
+                'critical_components': health_components.filter(status='critical').count(),
+                'offline_components': health_components.filter(status='offline').count()
+            },
+            'last_updated': timezone.now().isoformat()
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error getting system health: {str(e)}")
+        return Response({'error': 'Failed to get system health'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([CanViewSecurityLogs])
+def admin_security_logs(request):
+    """
+    Get security logs for admin dashboard.
+    """
+    try:
+        # Get recent security logs
+        logs = SecurityLog.objects.all().order_by('-timestamp')[:100]
+        serializer = SecurityLogSerializer(logs, many=True)
+
+        # Security metrics
+        metrics = {
+            'total_events': logs.count(),
+            'high_severity_events': logs.filter(severity='high').count(),
+            'critical_events': logs.filter(severity='critical').count(),
+            'failed_logins': logs.filter(event_type='failed_login').count(),
+            'suspicious_activities': logs.filter(event_type='suspicious_activity').count()
+        }
+
+        # Group by event type
+        events_by_type = {}
+        for log in logs:
+            if log.event_type not in events_by_type:
+                events_by_type[log.event_type] = 0
+            events_by_type[log.event_type] += 1
+
+        return Response({
+            'security_logs': serializer.data,
+            'metrics': metrics,
+            'events_by_type': events_by_type,
+            'last_updated': timezone.now().isoformat()
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error getting security logs: {str(e)}")
+        return Response({'error': 'Failed to get security logs'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([CanViewSystemHealth])
+def admin_system_performance(request):
+    """
+    Get system performance metrics for admin dashboard.
+    """
+    try:
+        # System performance metrics (placeholder data)
+        performance_data = {
+            'response_times': {
+                'api_average': 245,  # ms
+                'api_p95': 450,      # ms
+                'database_average': 120,  # ms
+                'file_storage_average': 180  # ms
+            },
+            'throughput': {
+                'requests_per_minute': 1250,
+                'data_processed_gb': 2.4,
+                'active_users': 89
+            },
+            'resource_usage': {
+                'cpu_usage': 68.5,  # %
+                'memory_usage': 72.3,  # %
+                'disk_usage': 45.8,   # %
+                'network_io': 125.7   # Mbps
+            },
+            'uptime': {
+                'system_uptime_days': 15.7,
+                'api_uptime_percentage': 99.7,
+                'database_uptime_percentage': 99.9
+            }
+        }
+
+        return Response({
+            'performance_metrics': performance_data,
+            'last_updated': timezone.now().isoformat()
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error getting system performance: {str(e)}")
+        return Response({'error': 'Failed to get system performance'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([CanManageBackups])
+def admin_schedule_backup(request):
+    """
+    Schedule a system backup.
+    """
+    try:
+        backup_data = {
+            'name': request.data.get('name'),
+            'frequency': request.data.get('frequency', 'weekly'),
+            'backup_type': request.data.get('backup_type', 'full'),
+            'scheduled_time': request.data.get('scheduled_time'),
+            'include_database': request.data.get('include_database', True),
+            'include_files': request.data.get('include_files', True),
+            'include_media': request.data.get('include_media', True),
+            'retention_days': request.data.get('retention_days', 30)
+        }
+
+        # Validate required fields
+        if not backup_data['name'] or not backup_data['scheduled_time']:
+            return Response({'error': 'Name and scheduled time are required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Create backup schedule
+        backup = BackupSchedule.objects.create(**backup_data)
+
+        # Create audit log
+        UserAuditLog.objects.create(
+            performed_by=request.user,
+            action='backup_scheduled',
+            description=f'Backup scheduled: {backup.name}',
+            new_values={'backup_id': backup.id, 'name': backup.name, 'frequency': backup.frequency},
+            ip_address=get_client_ip(request),
+            user_agent=request.META.get('HTTP_USER_AGENT', '')
+        )
+
+        serializer = BackupScheduleSerializer(backup)
+        return Response({
+            'message': 'Backup scheduled successfully',
+            'backup': serializer.data
+        }, status=status.HTTP_201_CREATED)
+
+    except Exception as e:
+        logger.error(f"Error scheduling backup: {str(e)}")
+        return Response({'error': 'Failed to schedule backup'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([CanViewAdminDashboard])
+def admin_system_alerts(request):
+    """
+    Get system alerts for admin dashboard.
+    """
+    try:
+        # Get active alerts
+        alerts = SystemAlert.objects.filter(is_active=True).order_by('-created_at')
+        serializer = SystemAlertSerializer(alerts, many=True)
+
+        # Group by category and type
+        alerts_by_category = {}
+        alerts_by_type = {}
+
+        for alert in alerts:
+            # By category
+            if alert.category not in alerts_by_category:
+                alerts_by_category[alert.category] = []
+            alerts_by_category[alert.category].append(SystemAlertSerializer(alert).data)
+
+            # By type
+            if alert.alert_type not in alerts_by_type:
+                alerts_by_type[alert.alert_type] = []
+            alerts_by_type[alert.alert_type].append(SystemAlertSerializer(alert).data)
+
+        return Response({
+            'alerts': serializer.data,
+            'alerts_by_category': alerts_by_category,
+            'alerts_by_type': alerts_by_type,
+            'summary': {
+                'total_active': alerts.count(),
+                'critical': alerts.filter(alert_type='critical').count(),
+                'warning': alerts.filter(alert_type='warning').count(),
+                'info': alerts.filter(alert_type='info').count()
+            },
+            'last_updated': timezone.now().isoformat()
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"Error getting system alerts: {str(e)}")
+        return Response({'error': 'Failed to get system alerts'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

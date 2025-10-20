@@ -828,18 +828,18 @@ class Activity(models.Model):
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='activities')
     activity_type = models.CharField(max_length=30, choices=ACTIVITY_TYPE_CHOICES)
-    
+
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True, null=True)
-    
+
     # Entity references
     entity_id = models.CharField(max_length=100, blank=True, null=True, help_text="ID of the related entity (animal, batch, etc.)")
     entity_type = models.CharField(max_length=50, blank=True, null=True, help_text="Type of entity (animal, batch, etc.)")
-    
+
     # Additional metadata
     metadata = models.JSONField(default=dict, blank=True, help_text="Additional activity metadata")
     target_route = models.CharField(max_length=200, blank=True, null=True, help_text="Route to navigate when activity is clicked")
-    
+
     timestamp = models.DateTimeField(default=timezone.now)
     created_at = models.DateTimeField(default=timezone.now)
 
@@ -853,3 +853,442 @@ class Activity(models.Model):
 
     def __str__(self):
         return f"{self.user.username}: {self.title} ({self.activity_type})"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADMIN DASHBOARD MODELS
+# ══════════════════════════════════════════════════════════════════════════════
+
+class SystemAlert(models.Model):
+    """Model for system-wide alerts and notifications"""
+    ALERT_TYPE_CHOICES = [
+        ('info', 'Information'),
+        ('warning', 'Warning'),
+        ('error', 'Error'),
+        ('critical', 'Critical'),
+        ('maintenance', 'Maintenance'),
+    ]
+
+    ALERT_CATEGORY_CHOICES = [
+        ('system', 'System'),
+        ('security', 'Security'),
+        ('performance', 'Performance'),
+        ('compliance', 'Compliance'),
+        ('inventory', 'Inventory'),
+        ('supply_chain', 'Supply Chain'),
+    ]
+
+    title = models.CharField(max_length=200)
+    message = models.TextField()
+    alert_type = models.CharField(max_length=20, choices=ALERT_TYPE_CHOICES, default='info')
+    category = models.CharField(max_length=20, choices=ALERT_CATEGORY_CHOICES, default='system')
+
+    # Related entities
+    processing_unit = models.ForeignKey(ProcessingUnit, on_delete=models.CASCADE, null=True, blank=True)
+    shop = models.ForeignKey(Shop, on_delete=models.CASCADE, null=True, blank=True)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True)
+
+    # Alert metadata
+    is_active = models.BooleanField(default=True)
+    is_acknowledged = models.BooleanField(default=False)
+    acknowledged_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='acknowledged_alerts')
+    acknowledged_at = models.DateTimeField(null=True, blank=True)
+
+    # Auto-resolution
+    auto_resolve = models.BooleanField(default=False)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    # Additional data
+    metadata = models.JSONField(default=dict, blank=True)
+
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['is_active', 'alert_type']),
+            models.Index(fields=['category', 'created_at']),
+            models.Index(fields=['processing_unit', 'is_active']),
+            models.Index(fields=['shop', 'is_active']),
+        ]
+
+    def __str__(self):
+        return f"{self.alert_type.upper()}: {self.title}"
+
+
+class PerformanceMetric(models.Model):
+    """Model for tracking operational performance metrics"""
+    METRIC_TYPE_CHOICES = [
+        ('processing_efficiency', 'Processing Efficiency'),
+        ('yield_rate', 'Yield Rate'),
+        ('transfer_success', 'Transfer Success Rate'),
+        ('inventory_turnover', 'Inventory Turnover'),
+        ('order_fulfillment', 'Order Fulfillment Time'),
+        ('quality_score', 'Quality Score'),
+        ('compliance_rate', 'Compliance Rate'),
+    ]
+
+    name = models.CharField(max_length=100)
+    metric_type = models.CharField(max_length=30, choices=METRIC_TYPE_CHOICES)
+    value = models.DecimalField(max_digits=10, decimal_places=4)
+    unit = models.CharField(max_length=20, blank=True, null=True)  # e.g., '%', 'kg', 'hours'
+
+    # Context
+    processing_unit = models.ForeignKey(ProcessingUnit, on_delete=models.CASCADE, null=True, blank=True)
+    shop = models.ForeignKey(Shop, on_delete=models.CASCADE, null=True, blank=True)
+
+    # Time period
+    period_start = models.DateTimeField()
+    period_end = models.DateTimeField()
+
+    # Target and thresholds
+    target_value = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    warning_threshold = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    critical_threshold = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+
+    # Additional data
+    metadata = models.JSONField(default=dict, blank=True)
+
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ['-period_end']
+        indexes = [
+            models.Index(fields=['metric_type', 'period_end']),
+            models.Index(fields=['processing_unit', 'metric_type']),
+            models.Index(fields=['shop', 'metric_type']),
+        ]
+
+    def __str__(self):
+        return f"{self.name}: {self.value} {self.unit or ''}"
+
+
+class ComplianceAudit(models.Model):
+    """Model for compliance audits and quality checks"""
+    AUDIT_TYPE_CHOICES = [
+        ('internal', 'Internal Audit'),
+        ('external', 'External Audit'),
+        ('regulatory', 'Regulatory Inspection'),
+        ('quality_control', 'Quality Control Check'),
+        ('traceability', 'Traceability Verification'),
+    ]
+
+    STATUS_CHOICES = [
+        ('scheduled', 'Scheduled'),
+        ('in_progress', 'In Progress'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    title = models.CharField(max_length=200)
+    audit_type = models.CharField(max_length=20, choices=AUDIT_TYPE_CHOICES)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='scheduled')
+
+    # Audit scope
+    processing_unit = models.ForeignKey(ProcessingUnit, on_delete=models.CASCADE, null=True, blank=True)
+    shop = models.ForeignKey(Shop, on_delete=models.CASCADE, null=True, blank=True)
+
+    # Audit details
+    auditor = models.CharField(max_length=100, blank=True, null=True)
+    auditor_organization = models.CharField(max_length=100, blank=True, null=True)
+    scheduled_date = models.DateTimeField()
+    completed_date = models.DateTimeField(null=True, blank=True)
+
+    # Results
+    score = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, help_text="Audit score (0-100)")
+    findings = models.TextField(blank=True, null=True)
+    recommendations = models.TextField(blank=True, null=True)
+
+    # Follow-up
+    follow_up_required = models.BooleanField(default=False)
+    follow_up_date = models.DateTimeField(null=True, blank=True)
+    follow_up_notes = models.TextField(blank=True, null=True)
+
+    # Metadata
+    metadata = models.JSONField(default=dict, blank=True)
+
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-scheduled_date']
+        indexes = [
+            models.Index(fields=['status', 'scheduled_date']),
+            models.Index(fields=['audit_type', 'status']),
+            models.Index(fields=['processing_unit', 'status']),
+            models.Index(fields=['shop', 'status']),
+        ]
+
+    def __str__(self):
+        return f"{self.audit_type}: {self.title} ({self.status})"
+
+
+class Certification(models.Model):
+    """Model for certifications and compliance documents"""
+    CERT_TYPE_CHOICES = [
+        ('haccp', 'HACCP'),
+        ('iso22000', 'ISO 22000'),
+        ('halal', 'Halal Certification'),
+        ('organic', 'Organic Certification'),
+        ('gmp', 'Good Manufacturing Practice'),
+        ('traceability', 'Traceability Certification'),
+        ('other', 'Other'),
+    ]
+
+    STATUS_CHOICES = [
+        ('active', 'Active'),
+        ('expired', 'Expired'),
+        ('pending', 'Pending Renewal'),
+        ('suspended', 'Suspended'),
+        ('revoked', 'Revoked'),
+    ]
+
+    name = models.CharField(max_length=200)
+    cert_type = models.CharField(max_length=20, choices=CERT_TYPE_CHOICES)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
+
+    # Associated entity
+    processing_unit = models.ForeignKey(ProcessingUnit, on_delete=models.CASCADE, null=True, blank=True)
+    shop = models.ForeignKey(Shop, on_delete=models.CASCADE, null=True, blank=True)
+
+    # Certification details
+    issuing_authority = models.CharField(max_length=100)
+    certificate_number = models.CharField(max_length=100, unique=True)
+    issue_date = models.DateField()
+    expiry_date = models.DateField()
+
+    # Document storage
+    certificate_file = models.FileField(upload_to='certificates/', null=True, blank=True)
+
+    # Additional info
+    notes = models.TextField(blank=True, null=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-expiry_date']
+        indexes = [
+            models.Index(fields=['status', 'expiry_date']),
+            models.Index(fields=['cert_type', 'status']),
+            models.Index(fields=['processing_unit', 'status']),
+            models.Index(fields=['shop', 'status']),
+        ]
+
+    def __str__(self):
+        return f"{self.cert_type}: {self.name} ({self.status})"
+
+
+class SystemHealth(models.Model):
+    """Model for system health monitoring"""
+    COMPONENT_CHOICES = [
+        ('database', 'Database'),
+        ('api', 'API Services'),
+        ('file_storage', 'File Storage'),
+        ('qr_generation', 'QR Code Generation'),
+        ('email', 'Email Service'),
+        ('notifications', 'Notification System'),
+        ('backup', 'Backup System'),
+    ]
+
+    STATUS_CHOICES = [
+        ('healthy', 'Healthy'),
+        ('warning', 'Warning'),
+        ('critical', 'Critical'),
+        ('offline', 'Offline'),
+    ]
+
+    component = models.CharField(max_length=20, choices=COMPONENT_CHOICES)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='healthy')
+
+    # Metrics
+    response_time = models.DecimalField(max_digits=8, decimal_places=3, null=True, blank=True, help_text="Response time in seconds")
+    uptime_percentage = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, help_text="Uptime percentage")
+
+    # Status details
+    message = models.TextField(blank=True, null=True)
+    last_check = models.DateTimeField(default=timezone.now)
+    next_check = models.DateTimeField(null=True, blank=True)
+
+    # Alert thresholds
+    warning_threshold = models.DecimalField(max_digits=8, decimal_places=3, null=True, blank=True)
+    critical_threshold = models.DecimalField(max_digits=8, decimal_places=3, null=True, blank=True)
+
+    # Metadata
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        unique_together = ['component']
+        ordering = ['component']
+
+    def __str__(self):
+        return f"{self.component}: {self.status}"
+
+
+class SecurityLog(models.Model):
+    """Model for security events and access logs"""
+    EVENT_TYPE_CHOICES = [
+        ('login', 'Login'),
+        ('logout', 'Logout'),
+        ('failed_login', 'Failed Login'),
+        ('password_change', 'Password Change'),
+        ('permission_change', 'Permission Change'),
+        ('suspicious_activity', 'Suspicious Activity'),
+        ('data_access', 'Data Access'),
+        ('api_access', 'API Access'),
+        ('file_access', 'File Access'),
+    ]
+
+    SEVERITY_CHOICES = [
+        ('low', 'Low'),
+        ('medium', 'Medium'),
+        ('high', 'High'),
+        ('critical', 'Critical'),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='security_events')
+    event_type = models.CharField(max_length=20, choices=EVENT_TYPE_CHOICES)
+    severity = models.CharField(max_length=10, choices=SEVERITY_CHOICES, default='low')
+
+    # Event details
+    description = models.TextField()
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.TextField(blank=True, null=True)
+
+    # Related entities
+    processing_unit = models.ForeignKey(ProcessingUnit, on_delete=models.SET_NULL, null=True, blank=True)
+    shop = models.ForeignKey(Shop, on_delete=models.SET_NULL, null=True, blank=True)
+
+    # Additional context
+    resource = models.CharField(max_length=200, blank=True, null=True, help_text="Resource that was accessed")
+    action = models.CharField(max_length=100, blank=True, null=True, help_text="Action performed")
+
+    # Metadata
+    metadata = models.JSONField(default=dict, blank=True)
+
+    timestamp = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['event_type', 'timestamp']),
+            models.Index(fields=['severity', 'timestamp']),
+            models.Index(fields=['user', 'timestamp']),
+            models.Index(fields=['ip_address', 'timestamp']),
+        ]
+
+    def __str__(self):
+        user_info = self.user.username if self.user else 'Anonymous'
+        return f"{self.event_type} by {user_info} at {self.timestamp}"
+
+
+class TransferRequest(models.Model):
+    """Model for pending transfer requests that need admin approval"""
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    REQUEST_TYPE_CHOICES = [
+        ('animal_transfer', 'Animal Transfer'),
+        ('product_transfer', 'Product Transfer'),
+        ('part_transfer', 'Slaughter Part Transfer'),
+    ]
+
+    # Request details
+    request_type = models.CharField(max_length=20, choices=REQUEST_TYPE_CHOICES)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+
+    # Entities involved
+    from_processing_unit = models.ForeignKey(ProcessingUnit, on_delete=models.CASCADE, related_name='outgoing_transfers')
+    to_processing_unit = models.ForeignKey(ProcessingUnit, on_delete=models.CASCADE, related_name='incoming_transfers')
+
+    # Requestor and approver
+    requested_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='transfer_requests')
+    approved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_transfers')
+    approved_at = models.DateTimeField(null=True, blank=True)
+
+    # Transfer details
+    animal = models.ForeignKey(Animal, on_delete=models.CASCADE, null=True, blank=True)
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, null=True, blank=True)
+    slaughter_parts = models.ManyToManyField(SlaughterPart, blank=True)
+
+    # Quantities and details
+    quantity = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    notes = models.TextField(blank=True, null=True)
+
+    # Approval workflow
+    approval_required = models.BooleanField(default=True)
+    priority = models.CharField(max_length=10, choices=[('low', 'Low'), ('medium', 'Medium'), ('high', 'High'), ('urgent', 'Urgent')], default='medium')
+
+    # Metadata
+    metadata = models.JSONField(default=dict, blank=True)
+
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status', 'created_at']),
+            models.Index(fields=['request_type', 'status']),
+            models.Index(fields=['from_processing_unit', 'status']),
+            models.Index(fields=['to_processing_unit', 'status']),
+        ]
+
+    def __str__(self):
+        return f"{self.request_type} from {self.from_processing_unit.name} to {self.to_processing_unit.name} ({self.status})"
+
+
+class BackupSchedule(models.Model):
+    """Model for system backup scheduling"""
+    FREQUENCY_CHOICES = [
+        ('daily', 'Daily'),
+        ('weekly', 'Weekly'),
+        ('monthly', 'Monthly'),
+        ('manual', 'Manual Only'),
+    ]
+
+    BACKUP_TYPE_CHOICES = [
+        ('full', 'Full Backup'),
+        ('incremental', 'Incremental Backup'),
+        ('differential', 'Differential Backup'),
+    ]
+
+    name = models.CharField(max_length=100)
+    frequency = models.CharField(max_length=10, choices=FREQUENCY_CHOICES, default='daily')
+    backup_type = models.CharField(max_length=15, choices=BACKUP_TYPE_CHOICES, default='full')
+
+    # Schedule details
+    scheduled_time = models.TimeField()
+    last_run = models.DateTimeField(null=True, blank=True)
+    next_run = models.DateTimeField(null=True, blank=True)
+
+    # Backup scope
+    include_database = models.BooleanField(default=True)
+    include_files = models.BooleanField(default=True)
+    include_media = models.BooleanField(default=True)
+
+    # Retention
+    retention_days = models.PositiveIntegerField(default=30)
+
+    # Status
+    is_active = models.BooleanField(default=True)
+    last_status = models.CharField(max_length=20, choices=[('success', 'Success'), ('failed', 'Failed'), ('running', 'Running')], null=True, blank=True)
+
+    # Metadata
+    metadata = models.JSONField(default=dict, blank=True)
+
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['next_run']
+
+    def __str__(self):
+        return f"{self.name} ({self.frequency} {self.backup_type})"

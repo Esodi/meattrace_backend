@@ -149,3 +149,136 @@ class CanManageProcessingUnitUsers(permissions.BasePermission):
             except ProcessingUnitUser.DoesNotExist:
                 return False
         return False
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADMIN DASHBOARD PERMISSIONS
+# ══════════════════════════════════════════════════════════════════════════════
+
+class IsAdminUser(permissions.BasePermission):
+    """
+    Check if user is a system administrator.
+    For now, this checks if user has 'admin' role in their profile or is a superuser.
+    """
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+
+        # Check if user is a Django superuser
+        if request.user.is_superuser:
+            return True
+
+        # Check if user has admin role in profile
+        if hasattr(request.user, 'profile') and request.user.profile.role == 'Admin':
+            return True
+
+        return False
+
+
+class IsProcessingUnitAdmin(permissions.BasePermission):
+    """
+    Check if user is an admin (owner/manager) in any processing unit.
+    """
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+
+        from .models import ProcessingUnitUser
+        return ProcessingUnitUser.objects.filter(
+            user=request.user,
+            role__in=['owner', 'manager'],
+            is_active=True,
+            is_suspended=False
+        ).exists()
+
+
+class IsShopAdmin(permissions.BasePermission):
+    """
+    Check if user is an admin (owner/manager) in any shop.
+    """
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+
+        from .models import ShopUser
+        return ShopUser.objects.filter(
+            user=request.user,
+            role__in=['owner', 'manager'],
+            is_active=True
+        ).exists()
+
+
+class CanViewAdminDashboard(permissions.BasePermission):
+    """
+    Check if user can view admin dashboard (admin users, processing unit admins, or shop admins).
+    """
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+
+        # Check admin permissions
+        if IsAdminUser().has_permission(request, view):
+            return True
+
+        if IsProcessingUnitAdmin().has_permission(request, view):
+            return True
+
+        if IsShopAdmin().has_permission(request, view):
+            return True
+
+        return False
+
+
+class CanManageUsers(permissions.BasePermission):
+    """
+    Check if user can manage users (system admins or processing unit/shop owners).
+    """
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+
+        # System admins can manage all users
+        if IsAdminUser().has_permission(request, view):
+            return True
+
+        # Processing unit owners can manage users in their units
+        if IsProcessingUnitAdmin().has_permission(request, view):
+            return True
+
+        # Shop owners can manage users in their shops
+        if IsShopAdmin().has_permission(request, view):
+            return True
+
+        return False
+
+
+class CanViewSystemHealth(permissions.BasePermission):
+    """
+    Check if user can view system health information.
+    """
+    def has_permission(self, request, view):
+        return CanViewAdminDashboard().has_permission(request, view)
+
+
+class CanManageCompliance(permissions.BasePermission):
+    """
+    Check if user can manage compliance and quality assurance.
+    """
+    def has_permission(self, request, view):
+        return CanViewAdminDashboard().has_permission(request, view)
+
+
+class CanViewSecurityLogs(permissions.BasePermission):
+    """
+    Check if user can view security logs.
+    """
+    def has_permission(self, request, view):
+        return CanViewAdminDashboard().has_permission(request, view)
+
+
+class CanManageBackups(permissions.BasePermission):
+    """
+    Check if user can manage backup schedules (system admins only).
+    """
+    def has_permission(self, request, view):
+        return IsAdminUser().has_permission(request, view)
