@@ -3,15 +3,15 @@ from .models import UserProfile, ShopUser
 
 class IsFarmer(permissions.BasePermission):
     def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.profile.role == 'Farmer'
+        return request.user.is_authenticated and request.user.profile.role == 'farmer'
 
 class IsProcessingUnit(permissions.BasePermission):
     def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.profile.role == 'ProcessingUnit'
+        return request.user.is_authenticated and request.user.profile.role == 'processing_unit'
 
 class IsShop(permissions.BasePermission):
     def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.profile.role == 'Shop'
+        return request.user.is_authenticated and request.user.profile.role == 'shop'
 
 class IsOwnerOrReadOnly(permissions.BasePermission):
     """
@@ -169,7 +169,7 @@ class IsAdminUser(permissions.BasePermission):
             return True
 
         # Check if user has admin role in profile
-        if hasattr(request.user, 'profile') and request.user.profile.role == 'Admin':
+        if hasattr(request.user, 'profile') and request.user.profile.role == 'admin':
             return True
 
         return False

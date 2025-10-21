@@ -8,6 +8,8 @@ import qrcode
 import os
 import uuid
 from django.conf import settings
+import json
+from decimal import Decimal
 
 # Create your models here.
 
@@ -117,13 +119,13 @@ class ShopUser(models.Model):
 
 class UserProfile(models.Model):
     ROLE_CHOICES = [
-        ('Farmer', 'Farmer'),
-        ('ProcessingUnit', 'Processing Unit'),
-        ('Shop', 'Shop'),
+        ('farmer', 'Farmer'),
+        ('processing_unit', 'Processing Unit'),
+        ('shop', 'Shop'),
     ]
 
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
-    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='Farmer')
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='farmer')
     # Link to processing unit for users who are part of processing units
     processing_unit = models.ForeignKey(ProcessingUnit, on_delete=models.SET_NULL, null=True, blank=True, related_name='user_profiles')
     # Link to shop for users who are part of shops
@@ -230,7 +232,25 @@ class Animal(models.Model):
     farmer = models.ForeignKey(User, on_delete=models.CASCADE, related_name='animals')
     species = models.CharField(max_length=20, choices=SPECIES_CHOICES, default='cow')
     age = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0)], help_text="Age in months")
+
+    @property
+    def age_in_years(self):
+        """Calculate age in years from months"""
+        return self.age / 12 if self.age else 0
+
+    @property
+    def age_in_days(self):
+        """Calculate age in days from months (approximate)"""
+        return self.age * Decimal('30.44') if self.age else 0  # Average days per month
     live_weight = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0)], null=True, blank=True, help_text="Live weight in kg before slaughter")
+    # Gender and notes - added to align with frontend register screen
+    GENDER_CHOICES = [
+        ('male', 'Male'),
+        ('female', 'Female'),
+        ('unknown', 'Unknown'),
+    ]
+    gender = models.CharField(max_length=10, choices=GENDER_CHOICES, default='unknown', help_text="Animal gender")
+    notes = models.TextField(blank=True, null=True, help_text="Additional notes about the animal")
     created_at = models.DateTimeField(default=timezone.now)
     slaughtered = models.BooleanField(default=False)
     slaughtered_at = models.DateTimeField(null=True, blank=True)
@@ -251,8 +271,22 @@ class Animal(models.Model):
     photo = models.ImageField(upload_to='animal_photos/', blank=True, null=True, help_text="Animal photo")
 
     def save(self, *args, **kwargs):
+        # Ensure photo field is properly handled
+        if self.photo and hasattr(self.photo, 'name'):
+            # Validate file extension
+            allowed_extensions = ['jpg', 'jpeg', 'png', 'gif']
+            file_extension = self.photo.name.split('.')[-1].lower()
+            if file_extension not in allowed_extensions:
+                raise ValueError(f"Unsupported file extension: {file_extension}. Allowed: {', '.join(allowed_extensions)}")
+
+            # Validate file size (max 5MB)
+            if self.photo.size > 5 * 1024 * 1024:
+                raise ValueError("File size too large. Maximum allowed size is 5MB.")
+
+        # Ensure animal_id exists
         if not self.animal_id:
             self.animal_id = self._generate_animal_id()
+
         super().save(*args, **kwargs)
 
     def _generate_animal_id(self):
@@ -388,7 +422,8 @@ class CarcassMeasurement(models.Model):
             if self.head_weight is None or self.torso_weight is None:
                 raise ValidationError("For whole carcass, both head_weight and torso_weight are required.")
         elif self.carcass_type == 'split':
-            required_fields = ['left_side_weight', 'right_side_weight', 'feet_weight', 'internal_organs_weight']
+            # Use the declared split field names
+            required_fields = ['front_legs_weight', 'hind_legs_weight', 'feet_weight', 'organs_weight']
             for field_name in required_fields:
                 if getattr(self, field_name) is None:
                     raise ValidationError(f"For split carcass, {field_name.replace('_', ' ')} is required.")
@@ -484,8 +519,8 @@ class Product(models.Model):
     # QR code field for traceability
     qr_code = models.CharField(max_length=500, blank=True, null=True)
 
-    # Transfer fields (similar to Animal model)
-    transferred_to = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='transferred_products')
+    # Transfer fields (products are transferred to ProcessingUnit/Shop-level entities)
+    transferred_to = models.ForeignKey(ProcessingUnit, on_delete=models.SET_NULL, null=True, blank=True, related_name='transferred_products')
     transferred_at = models.DateTimeField(null=True, blank=True)
     # Receive fields
     received_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='received_products')
@@ -581,7 +616,7 @@ class OrderItem(models.Model):
 
 @receiver(post_save, sender=Product)
 def generate_product_qr_code(sender, instance, created, **kwargs):
-    """Generate QR code for new products"""
+    """Generate QR code for new products that links to the product info page"""
     if created and not instance.qr_code:
         try:
             # Generate the URL for the product info HTML page
@@ -622,83 +657,47 @@ def generate_product_qr_code(sender, instance, created, **kwargs):
 
 @receiver(post_save, sender=Order)
 def generate_order_qr_code(sender, instance, created, **kwargs):
-    """Generate QR code for all orders (processing orders and shop orders)"""
+    """Generate QR code for orders using Shop fields safely"""
     if created and not instance.qr_code:
         try:
-            # Generate QR codes for all orders
-            if instance.shop.profile.role == 'ProcessingUnit':
-                # Processing unit order QR code
-                qr_data = {
-                    'type': 'processing_order',
-                    'order_id': instance.id,
-                    'processor_id': instance.shop.id,
-                    'processor_name': instance.shop.username,
-                    'customer_id': instance.customer.id,
-                    'customer_name': instance.customer.username,
-                    'status': instance.status,
-                    'total_amount': float(instance.total_amount),
-                    'processing_timestamp': instance.created_at.isoformat(),
-                    'updated_at': instance.updated_at.isoformat(),
-                    'products': []
-                }
-
-                # Add product details
-                for item in instance.items.all():
-                    product_data = {
-                        'product_id': item.product.id,
-                        'name': item.product.name,
-                        'batch_number': item.product.batch_number,
-                        'quantity': float(item.quantity),
-                        'unit_price': float(item.unit_price),
-                        'subtotal': float(item.subtotal),
-                        'animal_id': item.product.animal.animal_id,
-                        'animal_species': item.product.animal.species,
-                        'farmer_name': item.product.animal.farmer.username,
-                    }
-                    qr_data['products'].append(product_data)
-
-                qr_content = json.dumps(qr_data, indent=2)
-                qr_filename = f"order_qr_{instance.id}.png"
-
-            elif instance.shop.profile.role == 'Shop':
-                # Shop order QR code
-                qr_data = {
-                    'type': 'shop_order',
-                    'order_id': instance.id,
-                    'shop_id': instance.shop.id,
-                    'shop_name': instance.shop.username,
-                    'customer_id': instance.customer.id,
-                    'customer_name': instance.customer.username,
-                    'status': instance.status,
-                    'total_amount': float(instance.total_amount),
-                    'order_timestamp': instance.created_at.isoformat(),
-                    'updated_at': instance.updated_at.isoformat(),
-                    'delivery_address': instance.delivery_address,
-                    'notes': instance.notes,
-                    'products': []
-                }
-
-                # Add product details
-                for item in instance.items.all():
-                    product_data = {
-                        'product_id': item.product.id,
-                        'name': item.product.name,
-                        'batch_number': item.product.batch_number,
-                        'quantity': float(item.quantity),
-                        'unit_price': float(item.unit_price),
-                        'subtotal': float(item.subtotal),
-                        'animal_id': item.product.animal.animal_id if item.product.animal else None,
-                        'animal_species': item.product.animal.species if item.product.animal else None,
-                        'farmer_name': item.product.animal.farmer.username if item.product.animal else None,
-                    }
-                    qr_data['products'].append(product_data)
-
-                qr_content = json.dumps(qr_data, indent=2)
-                qr_filename = f"shop_order_qr_{instance.id}.png"
-
-            else:
-                # Skip QR generation for other roles
+            # If there's no shop attached, skip
+            if not instance.shop:
                 return
+
+            # Build a shop-oriented QR payload (safe fields on Shop)
+            qr_data = {
+                'type': 'shop_order',
+                'order_id': instance.id,
+                'shop_id': instance.shop.id,
+                'shop_name': instance.shop.name,
+                'customer_id': instance.customer.id if instance.customer else None,
+                'customer_name': instance.customer.username if instance.customer else None,
+                'status': instance.status,
+                'total_amount': float(instance.total_amount) if instance.total_amount is not None else 0.0,
+                'order_timestamp': instance.created_at.isoformat() if instance.created_at else None,
+                'updated_at': instance.updated_at.isoformat() if instance.updated_at else None,
+                'delivery_address': instance.delivery_address,
+                'notes': instance.notes,
+                'products': []
+            }
+
+            # Add product details
+            for item in instance.items.all():
+                product_data = {
+                    'product_id': item.product.id,
+                    'name': item.product.name,
+                    'batch_number': item.product.batch_number,
+                    'quantity': float(item.quantity),
+                    'unit_price': float(item.unit_price),
+                    'subtotal': float(item.subtotal),
+                    'animal_id': item.product.animal.animal_id if item.product.animal else None,
+                    'animal_species': item.product.animal.species if item.product.animal else None,
+                    'farmer_name': item.product.animal.farmer.username if item.product.animal else None,
+                }
+                qr_data['products'].append(product_data)
+
+            qr_content = json.dumps(qr_data, indent=2)
+            qr_filename = f"shop_order_qr_{instance.id}.png"
 
             # Create QR code
             qr = qrcode.QRCode(

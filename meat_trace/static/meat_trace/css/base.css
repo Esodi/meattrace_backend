@@ -1,0 +1,71 @@
+/* Base stylesheet for MeatTrace templates */
+:root{
+  --brand-1:#667eea;
+  --brand-2:#764ba2;
+  --muted:#6c757d;
+  --bg:#f8f9fa;
+  --card-bg:#ffffff;
+  --success:#28a745;
+  --danger:#dc3545;
+  --max-width:1200px;
+}
+html,body{height:100%;}
+body{
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  margin:0;
+  padding:0;
+  background:var(--bg);
+  color:#222;
+  -webkit-font-smoothing:antialiased;
+}
+.container-center{
+  max-width:var(--max-width);
+  margin:0 auto;
+  padding:18px;
+}
+.card{
+  background:var(--card-bg);
+  border-radius:10px;
+  box-shadow:0 4px 8px rgba(18,38,63,0.06);
+  padding:16px;
+}
+.header-hero{
+  background:linear-gradient(135deg,var(--brand-1),var(--brand-2));
+  color:#fff;
+  padding:24px;
+  border-radius:10px;
+  box-shadow:0 6px 18px rgba(102,126,234,0.12);
+}
+h1,h2,h3{margin:0 0 12px 0}
+.summary-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
+  gap:16px;
+}
+.summary-item{padding:12px;border-radius:6px;background:linear-gradient(180deg, #fff, #fbfbfb);border-left:4px solid var(--brand-1)}
+.timeline-item{display:flex;gap:12px;padding:12px;border-radius:6px;background:linear-gradient(180deg,#fff,#fbfbfb);border-left:4px solid var(--success)}
+.timeline-stage{font-weight:700;color:var(--brand-1);text-transform:uppercase;font-size:.8rem}
+.not-recorded{color:var(--muted);font-style:italic}
+.data-table{width:100%;border-collapse:collapse}
+.data-table th,.data-table td{padding:10px;border-bottom:1px solid #ececec}
+.status-badge{display:inline-block;padding:4px 10px;border-radius:999px;font-size:.75rem;font-weight:700;text-transform:uppercase}
+.status-pending{background:#ffc107;color:#212529}
+.status-confirmed{background:#17a2b8;color:#fff}
+.status-preparing{background:#fd7e14;color:#fff}
+.status-ready{background:#20c997;color:#fff}
+.status-delivered{background:var(--success);color:#fff}
+.status-cancelled{background:var(--danger);color:#fff}
+
+.qr-code img{max-width:220px;border:2px solid #e9ecef;border-radius:6px}
+
+/* Responsive */
+@media (max-width:768px){
+  .summary-grid{grid-template-columns:1fr}
+  .timeline-item{flex-direction:column}
+}
+
+/* Print helpers */
+@media print{
+  .no-print{display:none !important}
+  .card{box-shadow:none !important;padding:0}
+}

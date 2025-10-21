@@ -1,0 +1,616 @@
+{% extends "admin/base.html" %}
+{% load static %}
+{% block title %}User Management - MeatTrace Admin{% endblock %}
+{% block page_title %}User Management{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center">
+            <h4 class="mb-0">User Management</h4>
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addUserModal">
+                <i class="fas fa-user-plus me-2"></i>Add New User
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Filters and Search -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <input type="text" class="form-control" id="searchInput" placeholder="Search users...">
+                    </div>
+                    <div class="col-md-2">
+                        <select class="form-select" id="roleFilter">
+                            <option value="">All Roles</option>
+                            <option value="farmer">Farmer</option>
+                            <option value="processor">Processor</option>
+                            <option value="shop_owner">Shop Owner</option>
+                            <option value="admin">Admin</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <select class="form-select" id="statusFilter">
+                            <option value="">All Status</option>
+                            <option value="active">Active</option>
+                            <option value="suspended">Suspended</option>
+                            <option value="pending">Pending</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <button class="btn btn-outline-secondary w-100" onclick="clearFilters()">
+                            <i class="fas fa-times me-2"></i>Clear
+                        </button>
+                    </div>
+                    <div class="col-md-2">
+                        <button class="btn btn-outline-primary w-100" onclick="exportUsers()">
+                            <i class="fas fa-download me-2"></i>Export
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- User Statistics -->
+<div class="row mb-4">
+    <div class="col-xl-3 col-md-6 mb-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h3 class="text-primary" id="totalUsersCount">{{ users_data.stats.total|default:0 }}</h3>
+                <p class="text-muted mb-0">Total Users</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-3 col-md-6 mb-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h3 class="text-success" id="activeUsersCount">{{ users_data.stats.active|default:0 }}</h3>
+                <p class="text-muted mb-0">Active Users</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-3 col-md-6 mb-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h3 class="text-warning" id="pendingUsersCount">{{ users_data.stats.pending|default:0 }}</h3>
+                <p class="text-muted mb-0">Pending Approval</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-3 col-md-6 mb-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h3 class="text-danger" id="suspendedUsersCount">{{ users_data.stats.suspended|default:0 }}</h3>
+                <p class="text-muted mb-0">Suspended</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Users Table -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">Users List</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover" id="usersTable">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Email</th>
+                                <th>Role</th>
+                                <th>Status</th>
+                                <th>Join Date</th>
+                                <th>Last Login</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="usersTableBody">
+                            {% for user in users_data.users %}
+                            <tr data-user-id="{{ user.id }}">
+                                <td>
+                                    <div class="d-flex align-items-center">
+                                        <div class="avatar-circle me-3" style="width: 40px; height: 40px; border-radius: 50%; background: #667eea; color: white; display: flex; align-items: center; justify-content: center; font-weight: bold;">
+                                            {{ user.first_name|first|default:user.email|first|upper }}
+                                        </div>
+                                        <div>
+                                            <h6 class="mb-0">{{ user.first_name }} {{ user.last_name }}</h6>
+                                            <small class="text-muted">{{ user.email }}</small>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td>{{ user.email }}</td>
+                                <td>
+                                    {% if user.role|lower == 'admin' %}
+                                        <span class="badge bg-danger">
+                                    {% elif user.role|lower == 'processor' %}
+                                        <span class="badge bg-primary">
+                                    {% elif user.role|lower == 'farmer' %}
+                                        <span class="badge bg-success">
+                                    {% else %}
+                                        <span class="badge bg-secondary">
+                                    {% endif %}
+                                        {{ user.role|title }}
+                                    </span>
+                                </td>
+                                <td>
+                                    {% if user.status|lower == 'active' %}
+                                        <span class="badge bg-success">
+                                    {% elif user.status|lower == 'suspended' %}
+                                        <span class="badge bg-danger">
+                                    {% else %}
+                                        <span class="badge bg-warning">
+                                    {% endif %}
+                                        {{ user.status|title }}
+                                    </span>
+                                </td>
+                                <td>{{ user.date_joined|date:"M d, Y" }}</td>
+                                <td>${user.last_login ? new Date(user.last_login).toLocaleString() : 'Never'}</td>
+                                <td>
+                                    <div class="btn-group" role="group">
+                                        <button class="btn btn-sm btn-outline-primary" onclick="viewUser({{ user.id }})" title="View Details">
+                                            <i class="fas fa-eye"></i>
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-secondary" onclick="editUser({{ user.id }})" title="Edit User">
+                                            <i class="fas fa-edit"></i>
+                                        </button>
+                                        {% if user.status == 'active' %}
+                                        <button class="btn btn-sm btn-outline-warning" onclick="suspendUser({{ user.id }})" title="Suspend User">
+                                            <i class="fas fa-ban"></i>
+                                        </button>
+                                        {% else %}
+                                        <button class="btn btn-sm btn-outline-success" onclick="unsuspendUser({{ user.id }})" title="Unsuspend User">
+                                            <i class="fas fa-check"></i>
+                                        </button>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="7" class="text-center py-4">
+                                    <i class="fas fa-users fa-2x text-muted mb-2"></i>
+                                    <p class="text-muted">No users found</p>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Pagination -->
+                <nav aria-label="Users pagination" class="mt-3">
+                    <ul class="pagination justify-content-center" id="usersPagination">
+                        <!-- Pagination will be generated by JavaScript -->
+                    </ul>
+                </nav>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add User Modal -->
+<div class="modal fade" id="addUserModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Add New User</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="addUserForm">
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">First Name</label>
+                            <input type="text" class="form-control" name="first_name" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Last Name</label>
+                            <input type="text" class="form-control" name="last_name" required>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Email</label>
+                            <input type="email" class="form-control" name="email" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Role</label>
+                            <select class="form-select" name="role" required>
+                                <option value="">Select Role</option>
+                                <option value="farmer">Farmer</option>
+                                <option value="processor">Processor</option>
+                                <option value="shop_owner">Shop Owner</option>
+                                <option value="admin">Admin</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Phone</label>
+                            <input type="tel" class="form-control" name="phone">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Temporary Password</label>
+                            <input type="password" class="form-control" name="password" required>
+                            <small class="text-muted">User will be prompted to change password on first login</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create User</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- User Details Modal -->
+<div class="modal fade" id="userDetailsModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">User Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="userDetailsContent">
+                <!-- User details will be loaded here -->
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let currentPage = 1;
+let currentFilters = {};
+
+document.addEventListener('DOMContentLoaded', function() {
+    initializeEventListeners();
+    loadUsers();
+});
+
+function initializeEventListeners() {
+    // Search input
+    document.getElementById('searchInput').addEventListener('input', debounce(filterUsers, 300));
+
+    // Filters
+    document.getElementById('roleFilter').addEventListener('change', filterUsers);
+    document.getElementById('statusFilter').addEventListener('change', filterUsers);
+
+    // Add user form
+    document.getElementById('addUserForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        addUser(new FormData(this));
+    });
+}
+
+function loadUsers(page = 1, filters = {}) {
+    showLoading();
+    currentPage = page;
+    currentFilters = filters;
+
+    const params = new URLSearchParams({
+        page: page,
+        ...filters
+    });
+
+    fetch(`/api/v2/admin/users/list/?${params}`)
+        .then(response => response.json())
+        .then(data => {
+            updateUsersTable(data);
+            updatePagination(data);
+            updateStats(data.stats);
+            hideLoading();
+        })
+        .catch(error => {
+            showError('Failed to load users');
+            hideLoading();
+        });
+}
+
+function updateUsersTable(data) {
+    const tbody = document.getElementById('usersTableBody');
+    if (data.users && data.users.length > 0) {
+        tbody.innerHTML = data.users.map(user => `
+            <tr data-user-id="${user.id}">
+                <td>
+                    <div class="d-flex align-items-center">
+                        <div class="avatar-circle me-3" style="width: 40px; height: 40px; border-radius: 50%; background: #667eea; color: white; display: flex; align-items: center; justify-content: center; font-weight: bold;">
+                            ${user.first_name.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                            <h6 class="mb-0">${user.first_name} ${user.last_name}</h6>
+                            <small class="text-muted">${user.email}</small>
+                        </div>
+                    </div>
+                </td>
+                <td>${user.email}</td>
+                <td>
+                    <span class="badge bg-${getRoleBadgeClass(user.role)}">
+                        ${user.role.charAt(0).toUpperCase() + user.role.slice(1)}
+                    </span>
+                </td>
+                <td>
+                    <span class="badge bg-${getStatusBadgeClass(user.status)}">
+                        ${user.status.charAt(0).toUpperCase() + user.status.slice(1)}
+                                <td>
+                                    {% if user.last_login %}
+                                        {{ user.last_login|date:"M d, Y H:i" }}
+                                    {% else %}
+                                        Never
+                                    {% endif %}
+                                </td>
+                </td>
+                <td>${new Date(user.date_joined).toLocaleDateString()}</td>
+                <td>${user.last_login ? new Date(user.last_login).toLocaleDateString() : 'Never'}</td>
+                <td>
+                    <div class="btn-group" role="group">
+                        <button class="btn btn-sm btn-outline-primary" onclick="viewUser(${user.id})" title="View Details">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="editUser(${user.id})" title="Edit User">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        ${user.status === 'active' ?
+                            `<button class="btn btn-sm btn-outline-warning" onclick="suspendUser(${user.id})" title="Suspend User">
+                                <i class="fas fa-ban"></i>
+                            </button>` :
+                            `<button class="btn btn-sm btn-outline-success" onclick="unsuspendUser(${user.id})" title="Unsuspend User">
+                                <i class="fas fa-check"></i>
+                            </button>`
+                        }
+                    </div>
+                </td>
+            </tr>
+        `).join('');
+    } else {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="7" class="text-center py-4">
+                    <i class="fas fa-users fa-2x text-muted mb-2"></i>
+                    <p class="text-muted">No users found</p>
+                </td>
+            </tr>
+        `;
+    }
+}
+
+function updatePagination(data) {
+    const pagination = document.getElementById('usersPagination');
+    const totalPages = Math.ceil(data.total / data.per_page);
+
+    if (totalPages <= 1) {
+        pagination.innerHTML = '';
+        return;
+    }
+
+    let html = '';
+    if (currentPage > 1) {
+        html += `<li class="page-item"><a class="page-link" href="#" onclick="loadUsers(${currentPage - 1}, currentFilters)">Previous</a></li>`;
+    }
+
+    for (let i = Math.max(1, currentPage - 2); i <= Math.min(totalPages, currentPage + 2); i++) {
+        html += `<li class="page-item ${i === currentPage ? 'active' : ''}">
+            <a class="page-link" href="#" onclick="loadUsers(${i}, currentFilters)">${i}</a>
+        </li>`;
+    }
+
+    if (currentPage < totalPages) {
+        html += `<li class="page-item"><a class="page-link" href="#" onclick="loadUsers(${currentPage + 1}, currentFilters)">Next</a></li>`;
+    }
+
+    pagination.innerHTML = html;
+}
+
+function updateStats(stats) {
+    document.getElementById('totalUsersCount').textContent = stats.total || 0;
+    document.getElementById('activeUsersCount').textContent = stats.active || 0;
+    document.getElementById('pendingUsersCount').textContent = stats.pending || 0;
+    document.getElementById('suspendedUsersCount').textContent = stats.suspended || 0;
+}
+
+function filterUsers() {
+    const search = document.getElementById('searchInput').value;
+    const role = document.getElementById('roleFilter').value;
+    const status = document.getElementById('statusFilter').value;
+
+    const filters = {};
+    if (search) filters.search = search;
+    if (role) filters.role = role;
+    if (status) filters.status = status;
+
+    loadUsers(1, filters);
+}
+
+function clearFilters() {
+    document.getElementById('searchInput').value = '';
+    document.getElementById('roleFilter').value = '';
+    document.getElementById('statusFilter').value = '';
+    loadUsers(1, {});
+}
+
+function addUser(formData) {
+    showLoading();
+    fetch('/api/v2/admin/users/create/', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            bootstrap.Modal.getInstance(document.getElementById('addUserModal')).hide();
+            document.getElementById('addUserForm').reset();
+            loadUsers();
+            showSuccess('User created successfully');
+        } else {
+            showError(data.message || 'Failed to create user');
+        }
+        hideLoading();
+    })
+    .catch(error => {
+        showError('Failed to create user');
+        hideLoading();
+    });
+}
+
+function viewUser(userId) {
+    showLoading();
+    fetch(`/api/v2/admin/users/${userId}/`)
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('userDetailsContent').innerHTML = generateUserDetailsHTML(data);
+            new bootstrap.Modal(document.getElementById('userDetailsModal')).show();
+            hideLoading();
+        })
+        .catch(error => {
+            showError('Failed to load user details');
+            hideLoading();
+        });
+}
+
+function editUser(userId) {
+    // Implementation for editing user
+    showError('Edit functionality coming soon');
+}
+
+function suspendUser(userId) {
+    if (confirm('Are you sure you want to suspend this user?')) {
+        showLoading();
+        fetch(`/api/v2/admin/users/${userId}/suspend/`, {
+            method: 'POST'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                loadUsers(currentPage, currentFilters);
+                showSuccess('User suspended successfully');
+            } else {
+                showError(data.message || 'Failed to suspend user');
+            }
+            hideLoading();
+        })
+        .catch(error => {
+            showError('Failed to suspend user');
+            hideLoading();
+        });
+    }
+}
+
+function unsuspendUser(userId) {
+    showLoading();
+    fetch(`/api/v2/admin/users/${userId}/unsuspend/`, {
+        method: 'POST'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            loadUsers(currentPage, currentFilters);
+            showSuccess('User unsuspended successfully');
+        } else {
+            showError(data.message || 'Failed to unsuspend user');
+        }
+        hideLoading();
+    })
+    .catch(error => {
+        showError('Failed to unsuspend user');
+        hideLoading();
+    });
+}
+
+function exportUsers() {
+    showLoading();
+    const params = new URLSearchParams(currentFilters);
+    fetch(`/api/v2/admin/users/export/?${params}`)
+        .then(response => response.blob())
+        .then(blob => {
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'users_export.csv';
+            a.click();
+            window.URL.revokeObjectURL(url);
+            hideLoading();
+        })
+        .catch(error => {
+            showError('Failed to export users');
+            hideLoading();
+        });
+}
+
+function getRoleBadgeClass(role) {
+    const classes = {
+        'admin': 'danger',
+        'processor': 'primary',
+        'farmer': 'success',
+        'shop_owner': 'info'
+    };
+    return classes[role] || 'secondary';
+}
+
+function getStatusBadgeClass(status) {
+    const classes = {
+        'active': 'success',
+        'suspended': 'danger',
+        'pending': 'warning'
+    };
+    return classes[status] || 'secondary';
+}
+
+function generateUserDetailsHTML(user) {
+    return `
+        <div class="row">
+            <div class="col-md-4 text-center">
+                <div class="avatar-circle mx-auto mb-3" style="width: 100px; height: 100px; border-radius: 50%; background: #667eea; color: white; display: flex; align-items: center; justify-content: center; font-size: 2rem; font-weight: bold;">
+                    ${user.first_name.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
+                </div>
+                <h5>${user.first_name} ${user.last_name}</h5>
+                <p class="text-muted">${user.email}</p>
+            </div>
+            <div class="col-md-8">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <strong>Role:</strong> <span class="badge bg-${getRoleBadgeClass(user.role)}">${user.role.charAt(0).toUpperCase() + user.role.slice(1)}</span>
+                    </div>
+                    <div class="col-md-6">
+                        <strong>Status:</strong> <span class="badge bg-${getStatusBadgeClass(user.status)}">${user.status.charAt(0).toUpperCase() + user.status.slice(1)}</span>
+                    </div>
+                    <div class="col-md-6">
+                        <strong>Join Date:</strong> ${new Date(user.date_joined).toLocaleDateString()}
+                    </div>
+                    <div class="col-md-6">
+                        <strong>Last Login:</strong> ${user.last_login ? new Date(user.last_login).toLocaleDateString() : 'Never'}
+                    </div>
+                    ${user.phone ? `<div class="col-12"><strong>Phone:</strong> ${user.phone}</div>` : ''}
+                    ${user.organization ? `<div class="col-12"><strong>Organization:</strong> ${user.organization}</div>` : ''}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+function showSuccess(message) {
+    // Add success message display logic
+    console.log('Success:', message);
+}
+</script>
+{% endblock %}

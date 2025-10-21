@@ -63,9 +63,35 @@ class AnimalSerializer(serializers.ModelSerializer):
             'transferred_to_name', 'transferred_at', 'received_by',
             'received_by_username', 'received_at', 'processed', 'animal_id',
             'animal_name', 'breed', 'health_status', 'abbatoir_name', 'photo',
-            'is_split_carcass', 'has_slaughter_parts', 'slaughter_parts', 'carcass_measurement'
+            'gender', 'notes',
+            'is_split_carcass', 'has_slaughter_parts', 'slaughter_parts', 'carcass_measurement',
+            'age_in_years', 'age_in_days'
         ]
-        read_only_fields = ['id', 'created_at', 'farmer_username', 'transferred_to_name', 'received_by_username', 'is_split_carcass', 'has_slaughter_parts']
+        read_only_fields = ['id', 'created_at', 'farmer_username', 'transferred_to_name', 'received_by_username', 'is_split_carcass', 'has_slaughter_parts', 'age_in_years', 'age_in_days', 'farmer']
+
+    def validate_health_status(self, value):
+        # Optional: enforce health status normalization (allow any but trim)
+        if value is None:
+            return value
+        return value.strip()
+
+    def validate_age(self, value):
+        """Validate age is reasonable (not negative, not too old for livestock)"""
+        if value is not None:
+            if value < 0:
+                raise serializers.ValidationError("Age cannot be negative")
+            if value > 1200:  # 100 years in months
+                raise serializers.ValidationError("Age seems unreasonably high (more than 100 years)")
+        return value
+
+    def validate_live_weight(self, value):
+        """Validate live weight is reasonable"""
+        if value is not None:
+            if value < 0:
+                raise serializers.ValidationError("Live weight cannot be negative")
+            if value > 5000:  # 5 tons - very heavy for livestock
+                raise serializers.ValidationError("Live weight seems unreasonably high")
+        return value
     
     def get_slaughter_parts(self, obj):
         """Include slaughter parts if they exist"""
@@ -77,10 +103,12 @@ class AnimalSerializer(serializers.ModelSerializer):
     
     def get_carcass_measurement(self, obj):
         """Include carcass measurement if it exists"""
-        if hasattr(obj, 'carcass_measurement'):
-            from .serializers import CarcassMeasurementSerializer
-            return CarcassMeasurementSerializer(obj.carcass_measurement).data
-        return None
+        try:
+            measurement = obj.carcass_measurement
+        except CarcassMeasurement.DoesNotExist:
+            return None
+        from .serializers import CarcassMeasurementSerializer
+        return CarcassMeasurementSerializer(measurement).data
 
 
 class ProductSerializer(serializers.ModelSerializer):
@@ -88,7 +116,7 @@ class ProductSerializer(serializers.ModelSerializer):
     processing_unit_name = serializers.CharField(source='processing_unit.name', read_only=True)
     animal_animal_id = serializers.CharField(source='animal.animal_id', read_only=True)
     animal_species = serializers.CharField(source='animal.species', read_only=True)
-    transferred_to_username = serializers.CharField(source='transferred_to.username', read_only=True, allow_null=True)
+    transferred_to_name = serializers.CharField(source='transferred_to.name', read_only=True, allow_null=True)
     received_by_username = serializers.CharField(source='received_by.username', read_only=True, allow_null=True)
     slaughter_part_name = serializers.SerializerMethodField()
     slaughter_part_type = serializers.CharField(source='slaughter_part.part_type', read_only=True, allow_null=True)
@@ -107,20 +135,22 @@ class ProductSerializer(serializers.ModelSerializer):
             'animal_species', 'slaughter_part', 'slaughter_part_name', 'slaughter_part_type',
             'name', 'product_type', 'quantity', 'weight', 'weight_unit',
             'price', 'description', 'manufacturer', 'batch_number', 'category', 'created_at',
-            'transferred_to', 'transferred_to_username', 'transferred_at', 'received_by',
+                'transferred_to', 'transferred_to_name', 'transferred_at', 'received_by',
             'received_by_username', 'received_at', 'qr_code'
         ]
-        read_only_fields = ['id', 'created_at', 'processing_unit_name', 'animal_animal_id', 'animal_species', 
-                            'slaughter_part_name', 'slaughter_part_type', 'transferred_to_username', 'received_by_username']
+        read_only_fields = [
+            'id', 'created_at', 'processing_unit_name', 'animal_animal_id', 'animal_species',
+            'slaughter_part_name', 'slaughter_part_type', 'transferred_to_name', 'received_by_username'
+        ]
 
 
 class ReceiptSerializer(serializers.ModelSerializer):
-    shop_username = serializers.CharField(source='shop.username', read_only=True)
+    shop_name = serializers.CharField(source='shop.name', read_only=True)
 
     class Meta:
         model = Receipt
-        fields = ['id', 'product', 'shop', 'shop_username', 'received_quantity', 'received_at']
-        read_only_fields = ['id', 'received_at', 'shop_username']
+        fields = ['id', 'product', 'shop', 'shop_name', 'received_quantity', 'received_at']
+        read_only_fields = ['id', 'received_at', 'shop_name']
 
 
 class ProductCategorySerializer(serializers.ModelSerializer):
@@ -213,6 +243,11 @@ class SlaughterPartSerializer(serializers.ModelSerializer):
 
 
 class ProcessingUnitSerializer(serializers.ModelSerializer):
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        print(f"[PROCESSING_UNIT_SERIALIZER] Serializing unit ID {instance.id}: {instance.name}")
+        return data
+
     class Meta:
         model = ProcessingUnit
         fields = [
@@ -307,6 +342,40 @@ class ActivitySerializer(serializers.ModelSerializer):
         if 'user' not in validated_data:
             validated_data['user'] = self.context['request'].user
         return super().create(validated_data)
+
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    user_username = serializers.CharField(source='user.username', read_only=True)
+    user_email = serializers.CharField(source='user.email', read_only=True)
+    user_first_name = serializers.CharField(source='user.first_name', read_only=True)
+    user_last_name = serializers.CharField(source='user.last_name', read_only=True)
+
+    class Meta:
+        model = UserProfile
+        fields = [
+            'id', 'user', 'user_username', 'user_email', 'user_first_name', 'user_last_name',
+            'role', 'processing_unit', 'shop', 'is_profile_complete', 'profile_completion_step',
+            'avatar', 'phone', 'address', 'bio', 'preferred_species', 'notification_preferences',
+            'is_email_verified', 'is_phone_verified', 'verification_token', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at', 'user_username', 'user_email',
+                           'user_first_name', 'user_last_name', 'verification_token']
+
+    def validate_role(self, value):
+        """Ensure role is one of the valid choices"""
+        valid_roles = ['farmer', 'processing_unit', 'shop']
+        if value not in valid_roles:
+            raise serializers.ValidationError(f"Role must be one of: {', '.join(valid_roles)}")
+        return value
+
+    def validate_phone(self, value):
+        """Validate phone number format"""
+        if value:
+            import re
+            # Basic phone validation - allow digits, spaces, hyphens, plus signs
+            if not re.match(r'^[\d\s\-\+\(\)]+$', value):
+                raise serializers.ValidationError("Phone number contains invalid characters")
+        return value
 
 
 # ══════════════════════════════════════════════════════════════════════════════

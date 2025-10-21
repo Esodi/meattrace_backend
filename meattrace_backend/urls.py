@@ -16,9 +16,11 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
+from django.views.generic import RedirectView
 from django.conf import settings
 from django.conf.urls.static import static
 from rest_framework import permissions
+from rest_framework.authtoken import views as authtoken_views
 from drf_yasg.views import get_schema_view
 from drf_yasg import openapi
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
@@ -38,7 +40,10 @@ schema_view = get_schema_view(
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    # Backwards-compatibility redirect: old app-level admin dashboard paths
+    path('admin/dashboard/', RedirectView.as_view(url='/site-admin/dashboard/', permanent=False)),
     path('', include('meat_trace.urls')),
+    path('api-token-auth/', authtoken_views.obtain_auth_token),
     # Legacy drf-yasg documentation (keeping for backward compatibility)
     path('swagger/', schema_view.with_ui('swagger', cache_timeout=0), name='schema-swagger-ui'),
     path('redoc/', schema_view.with_ui('redoc', cache_timeout=0), name='schema-redoc'),

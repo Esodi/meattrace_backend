@@ -1,173 +1,29 @@
+{% load static %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>QR Code - {{ product.name }}</title>
+    <link rel="stylesheet" href="{% static 'meat_trace/css/print.css' %}">
     <style>
-        @page {
-            size: A4;
-            margin: 0.5in;
-        }
-
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            margin: 0;
-            padding: 20px;
-            background: white;
-            color: #333;
-            line-height: 1.4;
-        }
-
-        .print-container {
-            max-width: 100%;
-            margin: 0 auto;
-        }
-
-        .header {
-            text-align: center;
-            border-bottom: 2px solid #333;
-            padding-bottom: 15px;
-            margin-bottom: 20px;
-        }
-
-        .header h1 {
-            margin: 0;
-            font-size: 24px;
-            color: #333;
-        }
-
-        .header p {
-            margin: 5px 0;
-            font-size: 14px;
-            color: #666;
-        }
-
-        .qr-section {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin: 30px 0;
-            padding: 20px;
-            border: 2px solid #333;
-            border-radius: 10px;
-            background: #f9f9f9;
-        }
-
-        .qr-code {
-            text-align: center;
-            margin-right: 30px;
-        }
-
+        /* Keep size and layout conditionals inline (image sizes / grid vs single) */
         .qr-code img {
             width: {% if size == 'small' %}150px{% elif size == 'medium' %}200px{% else %}250px{% endif %};
             height: {% if size == 'small' %}150px{% elif size == 'medium' %}200px{% else %}250px{% endif %};
-            border: 2px solid #333;
-            border-radius: 5px;
         }
 
-        .product-info {
-            flex: 1;
-            max-width: 400px;
-        }
-
-        .product-info h2 {
-            margin: 0 0 15px 0;
-            font-size: 20px;
-            color: #333;
-        }
-
-        .info-grid {
-            display: grid;
-            grid-template-columns: auto 1fr;
-            gap: 8px 15px;
-            font-size: 14px;
-        }
-
-        .info-label {
-            font-weight: bold;
-            color: #555;
-        }
-
-        .info-value {
-            color: #333;
-        }
-
-        .copies-section {
-            text-align: center;
-            margin: 20px 0;
-            font-size: 12px;
-            color: #666;
-        }
-
-        .footer {
-            text-align: center;
-            margin-top: 30px;
-            padding-top: 15px;
-            border-top: 1px solid #ccc;
-            font-size: 12px;
-            color: #666;
-        }
-
-        /* Grid layout for multiple copies */
         {% if layout == 'grid' %}
-        .print-container {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 20px;
-        }
-
-        .qr-section {
-            margin: 15px 0;
-            padding: 15px;
-        }
-
-        .qr-code img {
-            width: 120px;
-            height: 120px;
-        }
-
-        .product-info {
-            max-width: none;
-        }
-
-        .product-info h2 {
-            font-size: 16px;
-        }
-
-        .info-grid {
-            font-size: 12px;
-        }
+        .print-container { display:grid; grid-template-columns:repeat(2,1fr); gap:20px }
+        .qr-section { margin:15px 0; padding:12px }
+        .qr-code img { width:120px; height:120px }
+        .product-info { max-width:none }
+        .product-info h2 { font-size:16px }
+        .info-grid { font-size:12px }
         {% endif %}
 
-        /* Print-specific styles */
-        @media print {
-            body {
-                padding: 0;
-            }
-
-            .print-container {
-                page-break-inside: avoid;
-            }
-
-            .qr-section {
-                break-inside: avoid;
-            }
-
-            .copies-section {
-                display: none;
-            }
-        }
-
-        /* Hide elements for multiple copies */
         {% if copies > 1 %}
-        .header {
-            display: none;
-        }
-
-        .footer {
-            display: none;
-        }
+        .header, .footer { display:none }
         {% endif %}
     </style>
 </head>

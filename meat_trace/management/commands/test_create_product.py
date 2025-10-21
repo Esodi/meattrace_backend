@@ -18,7 +18,7 @@ class Command(BaseCommand):
 
         # Create processing unit user
         pu_user = User.objects.create_user(username='pu_test', password='test')
-        pu = ProcessingUnit.objects.create(name='PU Test')
+        pu, _ = ProcessingUnit.objects.get_or_create(name='PU Test')
         # Ensure profile exists and link processing unit
         try:
             profile = pu_user.profile
