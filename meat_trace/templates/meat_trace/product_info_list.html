@@ -1,0 +1,85 @@
+{% extends "meat_trace/base.html" %}
+{% block title %}All Product Information{% endblock %}
+
+{% block content %}
+<div class="header-hero">
+    <h1>All Product Information</h1>
+    <p class="mt-2">Complete list of all product information records</p>
+</div>
+
+<div class="card mt-4">
+    <h2>Product Information Records</h2>
+    {% if product_infos %}
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Product ID</th>
+                    <th>Product Name</th>
+                    <th>Product Type</th>
+                    <th>Batch Number</th>
+                    <th>Weight</th>
+                    <th>Quantity</th>
+                    <th>Price</th>
+                    <th>Processing Unit</th>
+                    <th>Animal ID</th>
+                    <th>Farmer</th>
+                    <th>Inventory Count</th>
+                    <th>Receipts Count</th>
+                    <th>Orders Count</th>
+                    <th>Created At</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for info in product_infos %}
+                <tr>
+                    <td>{{ info.product.id }}</td>
+                    <td>{{ info.product_name }}</td>
+                    <td>{{ info.product_type }}</td>
+                    <td>{{ info.batch_number }}</td>
+                    <td>{% if info.weight %}{{ info.weight }} {{ info.weight_unit }}{% else %}N/A{% endif %}</td>
+                    <td>{{ info.quantity }}</td>
+                    <td>${{ info.price }}</td>
+                    <td>{{ info.processing_unit_name|default:"N/A" }}</td>
+                    <td>{{ info.animal_id|default:"N/A" }}</td>
+                    <td>{{ info.farmer_username|default:"N/A" }}</td>
+                    <td>{{ info.inventory_count }}</td>
+                    <td>{{ info.receipts_count }}</td>
+                    <td>{{ info.orders_count }}</td>
+                    <td>{{ info.created_at|date:"M d, Y H:i" }}</td>
+                    <td>
+                        <a href="{% url 'product_info_view' info.product.id %}" class="btn btn-sm btn-primary">View Details</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p class="not-recorded">No product information records found.</p>
+    {% endif %}
+</div>
+
+{% if product_infos %}
+<div class="card mt-4">
+    <h2>Summary Statistics</h2>
+    <div class="summary-grid">
+        <div class="summary-item">
+            <h3>Total Products</h3>
+            <p><strong>{{ product_infos|length }}</strong> product records</p>
+        </div>
+        <div class="summary-item">
+            <h3>Total Inventory</h3>
+            <p><strong>{% widthratio product_infos|length 1 1 %}</strong> locations tracked</p>
+        </div>
+        <div class="summary-item">
+            <h3>Total Receipts</h3>
+            <p><strong>{% for info in product_infos %}{{ info.receipts_count }}{% if not forloop.last %} + {% endif %}{% endfor %}</strong> receipts recorded</p>
+        </div>
+        <div class="summary-item">
+            <h3>Total Orders</h3>
+            <p><strong>{% for info in product_infos %}{{ info.orders_count }}{% if not forloop.last %} + {% endif %}{% endfor %}</strong> orders placed</p>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

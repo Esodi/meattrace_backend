@@ -242,6 +242,12 @@ class Animal(models.Model):
     def age_in_days(self):
         """Calculate age in days from months (approximate)"""
         return self.age * Decimal('30.44') if self.age else 0  # Average days per month
+
+    @property
+    def weight_kg(self):
+        """Alias for live_weight to maintain compatibility"""
+        return self.live_weight
+
     live_weight = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0)], null=True, blank=True, help_text="Live weight in kg before slaughter")
     # Gender and notes - added to align with frontend register screen
     GENDER_CHOICES = [
@@ -1242,6 +1248,180 @@ class TransferRequest(models.Model):
 
     def __str__(self):
         return f"{self.request_type} from {self.from_processing_unit.name} to {self.to_processing_unit.name} ({self.status})"
+
+
+class ProductInfo(models.Model):
+    """Aggregated model for product information display - combines product, animal, and related data"""
+    product = models.OneToOneField(Product, on_delete=models.CASCADE, related_name='info')
+
+    # Product basic info (denormalized for performance)
+    product_name = models.CharField(max_length=200)
+    product_type = models.CharField(max_length=20)
+    batch_number = models.CharField(max_length=100)
+    weight = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    weight_unit = models.CharField(max_length=10, null=True, blank=True)
+    quantity = models.DecimalField(max_digits=10, decimal_places=2)
+    price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    description = models.TextField(blank=True, null=True)
+    manufacturer = models.CharField(max_length=200, blank=True, null=True)
+    qr_code_url = models.CharField(max_length=500, blank=True, null=True)
+
+    # Processing unit info
+    processing_unit_name = models.CharField(max_length=200, null=True, blank=True)
+    processing_unit_location = models.CharField(max_length=200, null=True, blank=True)
+
+    # Category info
+    category_name = models.CharField(max_length=100, null=True, blank=True)
+
+    # Animal info (if exists)
+    animal_id = models.CharField(max_length=50, null=True, blank=True)
+    animal_name = models.CharField(max_length=100, null=True, blank=True)
+    animal_species = models.CharField(max_length=20, null=True, blank=True)
+    farmer_username = models.CharField(max_length=150, null=True, blank=True)
+    animal_live_weight = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    animal_slaughtered = models.BooleanField(default=False)
+    animal_slaughtered_at = models.DateTimeField(null=True, blank=True)
+    animal_transferred_at = models.DateTimeField(null=True, blank=True)
+    animal_transferred_to_name = models.CharField(max_length=200, null=True, blank=True)
+
+    # Timeline events (stored as JSON)
+    timeline_events = models.JSONField(default=list, blank=True)
+
+    # Inventory, receipts, orders counts
+    inventory_count = models.IntegerField(default=0)
+    receipts_count = models.IntegerField(default=0)
+    orders_count = models.IntegerField(default=0)
+
+    # Carcass measurement data (if exists)
+    carcass_measurement_data = models.JSONField(null=True, blank=True)
+
+    # Metadata
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"ProductInfo for {self.product_name}"
+
+    def update_from_product(self):
+        """Update this ProductInfo instance from the related Product"""
+        product = self.product
+
+        # Basic product info
+        self.product_name = product.name
+        self.product_type = product.product_type
+        self.batch_number = product.batch_number
+        self.weight = product.weight
+        self.weight_unit = product.weight_unit
+        self.quantity = product.quantity
+        self.price = product.price
+        self.description = product.description
+        self.manufacturer = product.manufacturer
+        self.qr_code_url = product.qr_code
+
+        # Processing unit info
+        if product.processing_unit:
+            self.processing_unit_name = product.processing_unit.name
+            self.processing_unit_location = product.processing_unit.location
+
+        # Category info
+        if product.category:
+            self.category_name = product.category.name
+
+        # Animal info
+        if product.animal:
+            animal = product.animal
+            self.animal_id = animal.animal_id
+            self.animal_name = animal.animal_name
+            self.animal_species = animal.species
+            self.farmer_username = animal.farmer.username
+            self.animal_live_weight = getattr(animal, 'live_weight', None)
+            self.animal_slaughtered = animal.slaughtered
+            self.animal_slaughtered_at = animal.slaughtered_at
+            self.animal_transferred_at = animal.transferred_at
+            if animal.transferred_to:
+                self.animal_transferred_to_name = animal.transferred_to.name
+
+        # Build timeline events
+        timeline = []
+
+        # Product creation event
+        timeline.append({
+            'stage': 'Product Created',
+            'timestamp': product.created_at.isoformat(),
+            'location': self.processing_unit_name or 'Unknown',
+            'action': f'Product {self.product_name} created',
+            'details': {
+                'Product Type': self.product_type,
+                'Batch Number': self.batch_number,
+                'Weight': f"{self.weight} {self.weight_unit}" if self.weight else 'Not recorded',
+                'Quantity': f"{self.quantity} {self.weight_unit}" if self.quantity else 'Not recorded'
+            }
+        })
+
+        # Add animal-related events if animal exists
+        if product.animal:
+            # Animal registration
+            timeline.append({
+                'stage': 'Source Animal',
+                'timestamp': product.animal.created_at.isoformat(),
+                'location': self.farmer_username,
+                'action': f'Animal {self.animal_id} registered',
+                'details': {
+                    'Species': self.animal_species,
+                    'Farmer': self.farmer_username,
+                    'Weight': 'Not recorded'  # Temporarily disable weight display
+                }
+            })
+
+            # Slaughter event if applicable
+            if self.animal_slaughtered and self.animal_slaughtered_at:
+                timeline.append({
+                    'stage': 'Slaughter',
+                    'timestamp': self.animal_slaughtered_at.isoformat(),
+                    'location': 'Processing Unit',
+                    'action': f'Animal {self.animal_id} slaughtered',
+                    'details': {
+                        'Species': self.animal_species,
+                        'Slaughter Date': self.animal_slaughtered_at.strftime('%Y-%m-%d %H:%M')
+                    }
+                })
+
+            # Transfer event if applicable
+            if self.animal_transferred_at:
+                timeline.append({
+                    'stage': 'Transfer',
+                    'timestamp': self.animal_transferred_at.isoformat(),
+                    'location': self.animal_transferred_to_name or 'Unknown',
+                    'action': f'Animal transferred to {self.animal_transferred_to_name or "processing unit"}',
+                    'details': {
+                        'From': self.farmer_username,
+                        'To': self.animal_transferred_to_name or 'Processing Unit',
+                        'Transfer Mode': 'Whole carcass' if not hasattr(product.animal, 'slaughter_parts') or not product.animal.slaughter_parts.exists() else 'Parts'
+                    }
+                })
+
+        # Sort timeline by timestamp
+        timeline.sort(key=lambda x: x['timestamp'])
+        self.timeline_events = timeline
+
+        # Count related records
+        self.inventory_count = Inventory.objects.filter(product=product).count()
+        self.receipts_count = Receipt.objects.filter(product=product).count()
+        self.orders_count = OrderItem.objects.filter(product=product).count()
+
+        # Carcass measurement data
+        if product.animal and hasattr(product.animal, 'carcass_measurement'):
+            carcass_measurement = product.animal.carcass_measurement
+            self.carcass_measurement_data = {
+                'carcass_type': carcass_measurement.carcass_type,
+                'measurements': carcass_measurement.get_all_measurements() if hasattr(carcass_measurement, 'get_all_measurements') else []
+            }
+
+        self.updated_at = timezone.now()
+        self.save()
 
 
 class BackupSchedule(models.Model):

@@ -120,9 +120,11 @@ urlpatterns = [
     path('api/v2/product-info/view/<int:product_id>/', views.product_info_view, name='product_info_view'),
 
     # Processing Unit dashboard endpoints
+    path('processor/add-product-category/', views.add_product_category, name='add_product_category'),
+    # Processing Unit dashboard endpoints
     # HTML product info view (renders detailed product page)
     path('api/v2/product-info/view/<int:product_id>/', views.product_info_view, name='product_info'),
-    path('processor/add-product-category/', views.add_product_category, name='add_product_category'),
+    path('api/v2/product-info/list/', views.product_info_list_view, name='product_info_list'),
     # Legacy/compat endpoint for frontend settings screen to list processing unit users
     path('api/v2/processing-unit-users/<int:unit_id>/', views.ProcessingUnitViewSet.as_view({'get': 'users'}), name='processing-unit-users'),
 

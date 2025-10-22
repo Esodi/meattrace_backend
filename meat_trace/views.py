@@ -14,6 +14,7 @@ from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
 from django.utils import timezone
+from django.conf import settings
 from django.db import models
 
 from .models import Animal, Product, Receipt, UserProfile, ProductCategory, ProcessingStage, ProductTimelineEvent, Inventory, Order, OrderItem, CarcassMeasurement, SlaughterPart, ProcessingUnit, ProcessingUnitUser, Shop, ShopUser, UserAuditLog, JoinRequest, Notification, Activity, SystemAlert, PerformanceMetric, ComplianceAudit, Certification, SystemHealth, SecurityLog, TransferRequest, BackupSchedule
@@ -1421,131 +1422,136 @@ def product_info_view(request, product_id):
     HTML view for displaying detailed product information.
     Accessible at /api/v2/product-info/view/{product_id}/
     """
-    print(f"[DEBUG] product_info_view called with product_id: {product_id}")
-
     try:
-        # Get the product with related data
-        product = Product.objects.select_related(
-            'animal', 'processing_unit', 'category'
-        ).get(id=product_id)
-        print(f"[DEBUG] Found product: {product.name} (ID: {product.id})")
+        # Try to get ProductInfo first (aggregated model)
+        from .models import ProductInfo
+        product_info = ProductInfo.objects.select_related('product').filter(product_id=product_id).first()
 
-        # Get animal information if available
-        animal = product.animal if product.animal else None
-        print(f"[DEBUG] Product has animal: {animal.animal_id if animal else 'None'}")
+        if not product_info:
+            # Fallback to original logic if ProductInfo doesn't exist
+            product = Product.objects.select_related(
+                'animal', 'processing_unit', 'category'
+            ).get(id=product_id)
 
-        # Get QR code URL if available
-        qr_code_url = product.qr_code if product.qr_code else None
-        print(f"[DEBUG] Product QR code: {qr_code_url}")
-
-        # Build timeline events
-        timeline = []
-        print("[DEBUG] Building timeline...")
-
-        # Product creation event
-        timeline.append({
-            'stage': 'Product Created',
-            'timestamp': product.created_at,
-            'location': product.processing_unit.name if product.processing_unit else 'Unknown',
-            'action': f'Product {product.name} created',
-            'details': {
-                'Product Type': product.product_type,
-                'Batch Number': product.batch_number,
-                'Weight': f"{product.weight} {product.weight_unit}" if product.weight else 'Not recorded',
-                'Quantity': f"{product.quantity} {product.weight_unit}" if product.quantity else 'Not recorded'
+            # Safely create ProductInfo using defaults so required non-null
+            # fields are populated and get_or_create doesn't raise IntegrityError
+            defaults = {
+                'product_name': product.name or '',
+                'product_type': product.product_type or '',
+                'batch_number': product.batch_number or '',
+                'weight': product.weight or None,
+                'weight_unit': product.weight_unit or None,
+                'quantity': product.quantity or 0,
+                'price': product.price or 0,
+                'description': product.description,
+                'manufacturer': product.manufacturer,
+                'qr_code_url': product.qr_code,
+                'processing_unit_name': product.processing_unit.name if product.processing_unit else None,
+                'processing_unit_location': product.processing_unit.location if product.processing_unit else None,
+                'category_name': product.category.name if product.category else None,
             }
-        })
 
-        # Add animal-related events if animal exists
-        if animal:
-            # Animal registration
-            timeline.append({
-                'stage': 'Source Animal',
-                'timestamp': animal.created_at,
-                'location': animal.farmer.username,
-                'action': f'Animal {animal.animal_id} registered',
-                'details': {
-                    'Species': animal.species,
-                    'Farmer': animal.farmer.username,
-                    'Weight': f"{animal.weight_kg} kg" if animal.weight_kg else 'Not recorded'
-                }
-            })
+            product_info, created = ProductInfo.objects.get_or_create(product=product, defaults=defaults)
+            # Ensure denormalized/related fields and timeline are up-to-date
+            try:
+                product_info.update_from_product()
+            except Exception:
+                # If update_from_product fails for any reason, continue and
+                # let the outer exception handler surface a useful error.
+                pass
 
-            # Slaughter event if applicable
-            if animal.slaughtered and animal.slaughtered_at:
-                timeline.append({
-                    'stage': 'Slaughter',
-                    'timestamp': animal.slaughtered_at,
-                    'location': 'Processing Unit',
-                    'action': f'Animal {animal.animal_id} slaughtered',
-                    'details': {
-                        'Species': animal.species,
-                        'Slaughter Date': animal.slaughtered_at.strftime('%Y-%m-%d %H:%M')
-                    }
-                })
-
-            # Transfer event if applicable
-            if animal.transferred_at:
-                timeline.append({
-                    'stage': 'Transfer',
-                    'timestamp': animal.transferred_at,
-                    'location': animal.transferred_to.name if animal.transferred_to else 'Unknown',
-                    'action': f'Animal transferred to {animal.transferred_to.name if animal.transferred_to else "processing unit"}',
-                    'details': {
-                        'From': animal.farmer.username,
-                        'To': animal.transferred_to.name if animal.transferred_to else 'Processing Unit',
-                        'Transfer Mode': 'Whole carcass' if not hasattr(animal, 'slaughter_parts') or not animal.slaughter_parts.exists() else 'Parts'
-                    }
-                })
-
-        # Sort timeline by timestamp
-        timeline.sort(key=lambda x: x['timestamp'])
-        print(f"[DEBUG] Timeline built with {len(timeline)} events")
-
-        # Get inventory items for this product
-        inventory_items = Inventory.objects.filter(product=product).select_related('shop')
-        print(f"[DEBUG] Found {inventory_items.count()} inventory items")
-
-        # Get receipts for this product
-        receipts = Receipt.objects.filter(product=product).select_related('shop')
-        print(f"[DEBUG] Found {receipts.count()} receipts")
-
-        # Get order items for this product
-        order_items = OrderItem.objects.filter(product=product).select_related('order', 'order__customer', 'order__shop')
-        print(f"[DEBUG] Found {order_items.count()} order items")
-
-        # Get carcass measurement if available
-        carcass_measurement = None
-        if animal and hasattr(animal, 'carcass_measurement'):
-            carcass_measurement = animal.carcass_measurement
-            print(f"[DEBUG] Found carcass measurement: {carcass_measurement}")
-
+        # Convert ProductInfo to context format expected by template
         context = {
-            'product': product,
-            'animal': animal,
-            'qr_code_url': qr_code_url,
-            'timeline': timeline,
-            'inventory_items': inventory_items,
-            'receipts': receipts,
-            'order_items': order_items,
-            'carcass_measurement': carcass_measurement,
+            'product': product_info.product,
+            'animal': product_info.product.animal if product_info.product.animal else None,
+            'qr_code_url': product_info.qr_code_url,
+            'timeline': product_info.timeline_events,
+            'inventory_items': [],  # Will be populated if needed
+            'receipts': [],  # Will be populated if needed
+            'order_items': [],  # Will be populated if needed
+            'carcass_measurement': product_info.carcass_measurement_data,
         }
 
-        print(f"[DEBUG] Rendering product_info.html template for product {product_id}")
+        # Add counts for display
+        context.update({
+            'inventory_count': product_info.inventory_count,
+            'receipts_count': product_info.receipts_count,
+            'orders_count': product_info.orders_count,
+        })
+
+        # Optional debug JSON for console logging. Enabled if settings.DEBUG
+        # or by passing ?debug=1 in the URL. We serialize key fields to avoid
+        # JSON serialization errors for model instances.
+        try:
+            debug_enabled = settings.DEBUG or request.GET.get('debug') == '1'
+        except Exception:
+            debug_enabled = request.GET.get('debug') == '1'
+
+        if debug_enabled:
+            # Build a small serializable payload
+            debug_payload = {
+                'product': {
+                    'id': getattr(product_info.product, 'id', None),
+                    'name': getattr(product_info.product, 'name', None),
+                    'batch_number': getattr(product_info.product, 'batch_number', None),
+                    'product_type': getattr(product_info.product, 'product_type', None),
+                    'weight': str(getattr(product_info.product, 'weight', None)),
+                    'weight_unit': getattr(product_info.product, 'weight_unit', None),
+                    'price': str(getattr(product_info.product, 'price', None)),
+                    'created_at': getattr(product_info.product, 'created_at', None),
+                },
+                'animal': None,
+                'timeline': product_info.timeline_events,
+                'carcass_measurement': product_info.carcass_measurement_data,
+                'inventory_count': product_info.inventory_count,
+                'receipts_count': product_info.receipts_count,
+                'orders_count': product_info.orders_count,
+            }
+
+            if product_info.product and getattr(product_info.product, 'animal', None):
+                a = product_info.product.animal
+                debug_payload['animal'] = {
+                    'id': getattr(a, 'id', None),
+                    'animal_id': getattr(a, 'animal_id', None),
+                    'animal_name': getattr(a, 'animal_name', None),
+                    'species': getattr(a, 'species', None),
+                    'farmer': getattr(getattr(a, 'farmer', None), 'username', None),
+                    'live_weight': str(getattr(a, 'live_weight', None)),
+                    'weight_kg': str(getattr(a, 'weight_kg', None)),  # This will show the property value
+                }
+
+            # Add the JSON string to context (mark safe in template usage)
+            context['debug_json'] = json.dumps(debug_payload, default=str)
+
         return render(request, 'meat_trace/product_info.html', context)
 
     except Product.DoesNotExist:
-        print(f"[DEBUG] Product with ID {product_id} not found")
         return render(request, 'meat_trace/product_info.html', {
             'error': f'Product with ID {product_id} not found',
             'product_id': product_id
         })
     except Exception as e:
-        print(f"[DEBUG] Error in product_info_view: {str(e)}")
-        import traceback
-        traceback.print_exc()
         return render(request, 'meat_trace/product_info.html', {
             'error': f'An error occurred: {str(e)}',
             'product_id': product_id
         })
-    return render(request, 'meat_trace/processor_dashboard/add_product_category.html')
+def product_info_list_view(request):
+    """
+    HTML view for displaying all product information records.
+    Accessible at /api/v2/product-info/list/
+    """
+    try:
+        from .models import ProductInfo
+        product_infos = ProductInfo.objects.select_related('product').all().order_by('-created_at')
+
+        context = {
+            'product_infos': product_infos,
+        }
+
+        return render(request, 'meat_trace/product_info_list.html', context)
+
+    except Exception as e:
+        return render(request, 'meat_trace/product_info_list.html', {
+            'error': f'An error occurred: {str(e)}',
+        })
+

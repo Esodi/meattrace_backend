@@ -1,10 +1,15 @@
 {% extends "meat_trace/base.html" %}
-{% block title %}Product Information - {{ product.name }}{% endblock %}
+{% block title %}Product Information - {{ product.name|default:"Unknown Product" }}{% endblock %}
 
 {% block content %}
+    {% if error %}
+    <div class="alert alert-danger mt-3">
+        <strong>Error:</strong> {{ error }}
+    </div>
+    {% endif %}
 <div class="header-hero">
-    <h1>{{ product.name }}</h1>
-    <p class="mt-2">Product ID: {{ product.id }} | Batch: {{ product.batch_number }}</p>
+    <h1>{{ product.name|default:"Unknown Product" }}</h1>
+    <p class="mt-2">Product ID: {{ product.id|default:"N/A" }} | Batch: {{ product.batch_number|default:"N/A" }}</p>
 </div>
 
 <div class="card mt-4 product-summary">
@@ -12,18 +17,18 @@
     <div class="summary-grid">
             <div class="summary-item">
                 <h3>Product Details</h3>
-                <p><strong>Type:</strong> {{ product.product_type }}</p>
-                <p><strong>Quantity:</strong> {{ product.quantity }} {{ product.weight_unit }}</p>
+                <p><strong>Type:</strong> {{ product.product_type|default:"N/A" }}</p>
+                <p><strong>Quantity:</strong> {{ product.quantity|default:"N/A" }} {{ product.weight_unit|default:"" }}</p>
                 <p><strong>Weight:</strong> {% if product.weight %}{{ product.weight }} {{ product.weight_unit }}{% else %}Not recorded{% endif %}</p>
                 <p><strong>Price:</strong> {% if product.price %}${{ product.price }}{% else %}Not set{% endif %}</p>
             </div>
 
             <div class="summary-item">
                 <h3>Processing Information</h3>
-                <p><strong>Processing Unit:</strong> {{ product.processing_unit.name }}</p>
+                <p><strong>Processing Unit:</strong> {{ product.processing_unit.name|default:"N/A" }}</p>
                 <p><strong>Category:</strong> {% if product.category %}{{ product.category.name }}{% else %}Not categorized{% endif %}</p>
                 <p><strong>Manufacturer:</strong> {% if product.manufacturer %}{{ product.manufacturer }}{% else %}Not specified{% endif %}</p>
-                <p><strong>Created:</strong> {{ product.created_at|date:"M d, Y H:i" }}</p>
+                <p><strong>Created:</strong> {{ product.created_at|date:"M d, Y H:i"|default:"N/A" }}</p>
             </div>
 
             {% if animal %}
@@ -186,7 +191,7 @@
                 </tr>
             </thead>
             <tbody>
-                {% for measurement in carcass_measurement.get_all_measurements %}
+                {% for measurement in carcass_measurement %}
                 <tr>
                     <td>{{ measurement.name|title }}</td>
                     <td>{{ measurement.value }}</td>
@@ -197,6 +202,43 @@
         </table>
     </div>
     {% endif %}
+
+    {% if inventory_count or receipts_count or orders_count %}
+    <div class="section">
+        <h2>Product Statistics</h2>
+        <div class="summary-grid">
+            <div class="summary-item">
+                <h3>Inventory</h3>
+                <p><strong>Current Stock:</strong> {{ inventory_count|default:0 }} locations</p>
+            </div>
+            <div class="summary-item">
+                <h3>Receipts</h3>
+                <p><strong>Total Received:</strong> {{ receipts_count|default:0 }} receipts</p>
+            </div>
+            <div class="summary-item">
+                <h3>Sales</h3>
+                <p><strong>Total Orders:</strong> {{ orders_count|default:0 }} orders</p>
+            </div>
+        </div>
+    </div>
+    {% endif %}
 {% endblock %}
 </body>
 </html>
+
+{% if debug_json %}
+<script>
+    try {
+        var _meatTraceDebug = JSON.parse('{{ debug_json|escapejs }}');
+        console.group('meat_trace: product_info debug');
+        console.log('Product payload:', _meatTraceDebug.product);
+        console.log('Animal payload:', _meatTraceDebug.animal);
+        console.log('Timeline events:', _meatTraceDebug.timeline);
+        console.log('Carcass measurement:', _meatTraceDebug.carcass_measurement);
+        console.log('Counts: inventory=%s receipts=%s orders=%s', _meatTraceDebug.inventory_count, _meatTraceDebug.receipts_count, _meatTraceDebug.orders_count);
+        console.groupEnd();
+    } catch (e) {
+        console.error('Failed to parse meat_trace debug JSON', e);
+    }
+</script>
+{% endif %}
