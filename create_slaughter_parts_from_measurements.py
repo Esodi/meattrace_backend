@@ -55,16 +55,17 @@ def create_slaughter_parts_from_measurements():
             continue
         
         # Map of measurement keys to part types (must match PART_CHOICES in models.py)
+        # Valid choices: whole_carcass, left_side, right_side, head, feet, internal_organs, other
         part_type_map = {
             'head_weight': 'head',
             'left_side_weight': 'left_side',
             'right_side_weight': 'right_side',
             'internal_organs_weight': 'internal_organs',
             'feet_weight': 'feet',
-            # Legacy/custom mappings - will use 'other' if not in PART_CHOICES
+            # Map split carcass fields to valid part types
             'torso_weight': 'other',
-            'front_legs_weight': 'other',
-            'hind_legs_weight': 'other',
+            'front_legs_weight': 'left_side',  # Map front legs to left_side
+            'hind_legs_weight': 'right_side',  # Map hind legs to right_side
             'organs_weight': 'internal_organs',
         }
         

@@ -97,6 +97,10 @@ urlpatterns = [
     path('api/v2/register/', RegisterView.as_view(), name='register'),
     path('api/v2/auth/register/', RegisterView.as_view(), name='auth_register'),
     path('api/v2/auth/login/', CustomAuthLoginView.as_view(), name='auth_login'),
+    
+    # Public endpoints for registration (no authentication required)
+    path('api/v2/public/processing-units/', views.public_processing_units_list, name='public_processing_units'),
+    path('api/v2/public/shops/', views.public_shops_list, name='public_shops'),
 
     # Custom join-request endpoints
     path('api/v2/join-requests/create/<int:entity_id>/<str:request_type>/', views.JoinRequestCreateView.as_view(), name='join_request_create'),

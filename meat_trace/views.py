@@ -5,11 +5,11 @@ from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.views import View
 import json
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status as status_module
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
@@ -30,7 +30,7 @@ def user_profile_view(request):
     user = request.user
     
     if not user.is_authenticated:
-        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+        return Response({'error': 'Authentication required'}, status=status_module.HTTP_401_UNAUTHORIZED)
     
     try:
         profile = UserProfile.objects.get(user=user)
@@ -52,7 +52,7 @@ def user_profile_view(request):
                 'name': profile.shop.name,
             } if profile.shop else None,
         }
-        return Response({'profile': profile_data}, status=status.HTTP_200_OK)
+        return Response({'profile': profile_data}, status=status_module.HTTP_200_OK)
     except UserProfile.DoesNotExist:
         # Return basic user info if no profile exists
         return Response({'profile': {
@@ -62,7 +62,7 @@ def user_profile_view(request):
             'first_name': user.first_name,
             'last_name': user.last_name,
             'role': 'unknown',
-        }}, status=status.HTTP_200_OK)
+        }}, status=status_module.HTTP_200_OK)
 
 
 # Admin Dashboard Views
@@ -456,17 +456,79 @@ class AnimalViewSet(viewsets.ModelViewSet):
         if hasattr(user, 'profile') and user.profile.role == 'farmer':
             queryset = queryset.filter(farmer=user)
 
-        # ProcessingUnit users should see animals transferred to their unit
+        # ProcessingUnit users see animals transferred to ANY processing unit they belong to
         if hasattr(user, 'profile') and user.profile.role == 'processing_unit':
-            pu = user.profile.processing_unit
-            if pu:
+            # Get all processing units the user is a member of
+            user_processing_units = ProcessingUnitUser.objects.filter(
+                user=user,
+                is_active=True,
+                is_suspended=False
+            ).values_list('processing_unit_id', flat=True)
+            
+            if user_processing_units:
+                # Show animals transferred to any of the user's processing units
                 queryset = queryset.filter(
-                    Q(transferred_to=pu) | Q(slaughter_parts__transferred_to=pu)
+                    Q(transferred_to_id__in=user_processing_units) |
+                    Q(slaughter_parts__transferred_to_id__in=user_processing_units)
                 ).distinct()
             else:
                 queryset = queryset.none()
 
         return queryset.order_by('-created_at')
+    
+    @action(detail=False, methods=['get'], url_path='by-status')
+    def filter_by_status(self, request):
+        """
+        Filter animals by lifecycle status.
+        Query params:
+        - status: HEALTHY, SLAUGHTERED, TRANSFERRED, SEMI-TRANSFERRED
+        """
+        status = request.query_params.get('status', '').upper()
+        valid_statuses = ['HEALTHY', 'SLAUGHTERED', 'TRANSFERRED', 'SEMI-TRANSFERRED']
+        
+        if status and status not in valid_statuses:
+            return Response(
+                {'error': f'Invalid status. Must be one of: {", ".join(valid_statuses)}'},
+                status=status_module.HTTP_400_BAD_REQUEST
+            )
+        
+        queryset = self.get_queryset()
+        
+        # Filter based on status
+        if status:
+            filtered_animals = [animal for animal in queryset if animal.lifecycle_status == status]
+        else:
+            filtered_animals = list(queryset)
+        
+        serializer = self.get_serializer(filtered_animals, many=True)
+        return Response({
+            'count': len(filtered_animals),
+            'status_filter': status if status else 'ALL',
+            'animals': serializer.data
+        })
+    
+    @action(detail=False, methods=['get'], url_path='status-summary')
+    def status_summary(self, request):
+        """
+        Get a summary count of animals by lifecycle status.
+        Returns counts for each status category.
+        """
+        queryset = self.get_queryset()
+        
+        summary = {
+            'HEALTHY': 0,
+            'SLAUGHTERED': 0,
+            'TRANSFERRED': 0,
+            'SEMI-TRANSFERRED': 0,
+            'total': queryset.count()
+        }
+        
+        for animal in queryset:
+            status = animal.lifecycle_status
+            if status in summary:
+                summary[status] += 1
+        
+        return Response(summary)
 
     @action(detail=False, methods=['post'], url_path='transfer')
     def transfer(self, request):
@@ -483,9 +545,9 @@ class AnimalViewSet(viewsets.ModelViewSet):
         part_transfers = data.get('part_transfers', []) or []
 
         if not animal_ids and not part_transfers:
-            return Response({'error': 'animal_ids or part_transfers are required'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'animal_ids or part_transfers are required'}, status=status_module.HTTP_400_BAD_REQUEST)
         if not processing_unit_id:
-            return Response({'error': 'processing_unit_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'processing_unit_id is required'}, status=status_module.HTTP_400_BAD_REQUEST)
 
         # Determine transfer mode
         if 'transfer_mode' in data and data['transfer_mode'] in ['whole', 'parts']:
@@ -496,7 +558,7 @@ class AnimalViewSet(viewsets.ModelViewSet):
         try:
             processing_unit = ProcessingUnit.objects.get(id=processing_unit_id)
         except ProcessingUnit.DoesNotExist:
-            return Response({'error': 'Processing unit not found'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'error': 'Processing unit not found'}, status=status_module.HTTP_404_NOT_FOUND)
 
         transferred_animals_count = 0
         transferred_parts_count = 0
@@ -506,12 +568,12 @@ class AnimalViewSet(viewsets.ModelViewSet):
             try:
                 animal = Animal.objects.get(id=aid, farmer=request.user)
             except Animal.DoesNotExist:
-                return Response({'error': f'Animal {aid} not found or not owned by you'}, status=status.HTTP_404_NOT_FOUND)
+                return Response({'error': f'Animal {aid} not found or not owned by you'}, status=status_module.HTTP_404_NOT_FOUND)
 
             if animal.processed:
-                return Response({'error': f'Animal {animal.animal_id} has already been processed'}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({'error': f'Animal {animal.animal_id} has already been processed'}, status=status_module.HTTP_400_BAD_REQUEST)
             if animal.transferred_to is not None:
-                return Response({'error': f'Animal {animal.animal_id} has already been transferred'}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({'error': f'Animal {animal.animal_id} has already been transferred'}, status=status_module.HTTP_400_BAD_REQUEST)
 
             animal.transferred_to = processing_unit
             animal.transferred_at = timezone.now()
@@ -546,24 +608,24 @@ class AnimalViewSet(viewsets.ModelViewSet):
             animal_id = pt.get('animal_id')
             part_ids = pt.get('part_ids', [])
             if not animal_id or not part_ids:
-                return Response({'error': 'Each part_transfer must have animal_id and part_ids'}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({'error': 'Each part_transfer must have animal_id and part_ids'}, status=status_module.HTTP_400_BAD_REQUEST)
 
             try:
                 animal = Animal.objects.get(id=animal_id, farmer=request.user)
             except Animal.DoesNotExist:
-                return Response({'error': f'Animal {animal_id} not found or not owned by you'}, status=status.HTTP_404_NOT_FOUND)
+                return Response({'error': f'Animal {animal_id} not found or not owned by you'}, status=status_module.HTTP_404_NOT_FOUND)
 
             if not animal.slaughtered:
-                return Response({'error': f'Animal {animal.animal_id} must be slaughtered before transferring parts'}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({'error': f'Animal {animal.animal_id} must be slaughtered before transferring parts'}, status=status_module.HTTP_400_BAD_REQUEST)
 
             for pid in part_ids:
                 try:
                     part = SlaughterPart.objects.get(id=pid, animal=animal)
                 except SlaughterPart.DoesNotExist:
-                    return Response({'error': f'Part {pid} not found for animal {animal_id}'}, status=status.HTTP_404_NOT_FOUND)
+                    return Response({'error': f'Part {pid} not found for animal {animal_id}'}, status=status_module.HTTP_404_NOT_FOUND)
 
                 if part.transferred_to is not None:
-                    return Response({'error': f'Part {part.part_type} of animal {animal.animal_id} has already been transferred'}, status=status.HTTP_400_BAD_REQUEST)
+                    return Response({'error': f'Part {part.part_type} of animal {animal.animal_id} has already been transferred'}, status=status_module.HTTP_400_BAD_REQUEST)
 
                 part.transferred_to = processing_unit
                 part.transferred_at = timezone.now()
@@ -603,24 +665,45 @@ class AnimalViewSet(viewsets.ModelViewSet):
             'transferred_animals_count': transferred_animals_count,
             'transferred_parts_count': transferred_parts_count,
             'transfer_mode': transfer_mode
-        }, status=status.HTTP_200_OK)
+        }, status=status_module.HTTP_200_OK)
 
     @action(detail=False, methods=['post'], url_path='receive_animals')
     def receive_animals(self, request):
-        """Endpoint for processing units to receive transferred animals/parts"""
+        """Endpoint for processing units to receive transferred animals/parts
+        
+        All users of a processing unit can receive animals on behalf of the unit.
+        """
         user = request.user
         if not hasattr(user, 'profile') or user.profile.role != 'processing_unit':
-            return Response({'error': 'Only processing unit users can receive animals'}, status=status.HTTP_403_FORBIDDEN)
+            return Response({'error': 'Only processing unit users can receive animals'}, status=status_module.HTTP_403_FORBIDDEN)
 
-        processing_unit = user.profile.processing_unit
-        if not processing_unit:
-            return Response({'error': 'User not associated with a processing unit'}, status=status.HTTP_400_BAD_REQUEST)
+        # Get the processing unit from request or user's primary unit
+        processing_unit_id = request.data.get('processing_unit_id')
+        
+        if processing_unit_id:
+            # Verify user is a member of this processing unit
+            membership = ProcessingUnitUser.objects.filter(
+                user=user,
+                processing_unit_id=processing_unit_id,
+                is_active=True,
+                is_suspended=False
+            ).first()
+            
+            if not membership:
+                return Response({'error': 'You are not a member of this processing unit'}, status=status_module.HTTP_403_FORBIDDEN)
+            
+            processing_unit = membership.processing_unit
+        else:
+            # Use user's primary processing unit
+            processing_unit = user.profile.processing_unit
+            if not processing_unit:
+                return Response({'error': 'User not associated with a processing unit'}, status=status_module.HTTP_400_BAD_REQUEST)
 
         animal_ids = request.data.get('animal_ids', []) or []
         part_receives = request.data.get('part_receives', []) or []
 
         if not animal_ids and not part_receives:
-            return Response({'error': 'animal_ids or part_receives are required'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'animal_ids or part_receives are required'}, status=status_module.HTTP_400_BAD_REQUEST)
 
         received_animals_count = 0
         received_parts_count = 0
@@ -630,41 +713,85 @@ class AnimalViewSet(viewsets.ModelViewSet):
             try:
                 animal = Animal.objects.get(id=aid, transferred_to=processing_unit)
             except Animal.DoesNotExist:
-                return Response({'error': f'Animal {aid} not found or not transferred to your processing unit'}, status=status.HTTP_404_NOT_FOUND)
+                return Response({'error': f'Animal {aid} not found or not transferred to your processing unit'}, status=status_module.HTTP_404_NOT_FOUND)
 
             if animal.received_by is not None:
-                return Response({'error': f'Animal {animal.animal_id} has already been received'}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({'error': f'Animal {animal.animal_id} has already been received'}, status=status_module.HTTP_400_BAD_REQUEST)
 
             animal.received_by = user
             animal.received_at = timezone.now()
             animal.save()
             received_animals_count += 1
 
+            # Create activity for receiving animal
+            Activity.objects.create(
+                user=user,
+                activity_type='transfer',
+                title=f'Animal {animal.animal_id} received',
+                description=f'Received animal {animal.animal_id}',
+                entity_id=str(animal.id),
+                entity_type='animal',
+                metadata={'animal_id': animal.animal_id}
+            )
+            UserAuditLog.objects.create(
+                performed_by=user,
+                affected_user=animal.farmer,
+                processing_unit=processing_unit,
+                action='animal_received',
+                description=f'Animal {animal.animal_id} received by processing unit {processing_unit.name}',
+                old_values={'received_by': None},
+                new_values={'received_by': user.id, 'received_at': animal.received_at.isoformat()},
+                ip_address=request.META.get('REMOTE_ADDR'),
+                user_agent=request.META.get('HTTP_USER_AGENT', '')
+            )
+
         # receive parts
         for pr in part_receives:
             animal_id = pr.get('animal_id')
             part_ids = pr.get('part_ids', [])
             if not animal_id or not part_ids:
-                return Response({'error': 'Each part receive must include animal_id and part_ids'}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({'error': 'Each part receive must include animal_id and part_ids'}, status=status_module.HTTP_400_BAD_REQUEST)
 
             try:
                 animal = Animal.objects.get(id=animal_id)
             except Animal.DoesNotExist:
-                return Response({'error': f'Animal {animal_id} not found'}, status=status.HTTP_404_NOT_FOUND)
+                return Response({'error': f'Animal {animal_id} not found'}, status=status_module.HTTP_404_NOT_FOUND)
 
             for pid in part_ids:
                 try:
                     part = SlaughterPart.objects.get(id=pid, animal=animal, transferred_to=processing_unit)
                 except SlaughterPart.DoesNotExist:
-                    return Response({'error': f'Part {pid} not found or not transferred to your processing unit'}, status=status.HTTP_404_NOT_FOUND)
+                    return Response({'error': f'Part {pid} not found or not transferred to your processing unit'}, status=status_module.HTTP_404_NOT_FOUND)
 
                 if part.received_by is not None:
-                    return Response({'error': f'Part {part.part_type} already received'}, status=status.HTTP_400_BAD_REQUEST)
+                    return Response({'error': f'Part {part.part_type} already received'}, status=status_module.HTTP_400_BAD_REQUEST)
 
                 part.received_by = user
                 part.received_at = timezone.now()
                 part.save()
                 received_parts_count += 1
+
+                # Create activity for part receive
+                Activity.objects.create(
+                    user=user,
+                    activity_type='transfer',
+                    title=f'Part {part.part_type} of animal {animal.animal_id} received',
+                    description=f'Received part {part.part_type} of animal {animal.animal_id}',
+                    entity_id=str(part.id),
+                    entity_type='slaughter_part',
+                    metadata={'animal_id': animal.animal_id, 'part_id': part.id}
+                )
+                UserAuditLog.objects.create(
+                    performed_by=user,
+                    affected_user=animal.farmer,
+                    processing_unit=processing_unit,
+                    action='part_received',
+                    description=f'Part {part.part_type} of animal {animal.animal_id} received by processing unit {processing_unit.name}',
+                    old_values={'received_by': None},
+                    new_values={'received_by': user.id, 'received_at': part.received_at.isoformat()},
+                    ip_address=request.META.get('REMOTE_ADDR'),
+                    user_agent=request.META.get('HTTP_USER_AGENT', '')
+                )
                 # If all parts are received, mark the animal as received
                 all_parts = SlaughterPart.objects.filter(animal=animal, transferred_to=processing_unit)
                 if all_parts.exists() and all(pt.received_by is not None for pt in all_parts):
@@ -676,7 +803,7 @@ class AnimalViewSet(viewsets.ModelViewSet):
             'message': f'Received {received_animals_count} animals and {received_parts_count} parts',
             'received_animals_count': received_animals_count,
             'received_parts_count': received_parts_count
-        }, status=status.HTTP_200_OK)
+        }, status=status_module.HTTP_200_OK)
 
 
 class ActivityViewSet(viewsets.ModelViewSet):
@@ -708,7 +835,7 @@ def farmer_dashboard(request):
 
     # Ensure user is a farmer
     if not hasattr(user, 'profile') or user.profile.role != 'farmer':
-        return Response({'error': 'Only farmers can access this endpoint'}, status=status.HTTP_403_FORBIDDEN)
+        return Response({'error': 'Only farmers can access this endpoint'}, status=status_module.HTTP_403_FORBIDDEN)
 
     # Get animal statistics
     total_animals = Animal.objects.filter(farmer=user).count()
@@ -778,7 +905,7 @@ def dashboard_view(request):
     user = request.user
     
     if not user.is_authenticated:
-        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+        return Response({'error': 'Authentication required'}, status=status_module.HTTP_401_UNAUTHORIZED)
     
     # Route to appropriate dashboard based on user role
     if hasattr(user, 'profile'):
@@ -809,7 +936,7 @@ def activities_view(request):
     user = request.user
     
     if not user.is_authenticated:
-        return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+        return Response({'error': 'Authentication required'}, status=status_module.HTTP_401_UNAUTHORIZED)
     
     # Get recent activities for the user
     limit = int(request.query_params.get('limit', 10))
@@ -874,7 +1001,7 @@ class UserProfileViewSet(viewsets.ModelViewSet):
             )
 
             return Response(serializer.data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        return Response(serializer.errors, status=status_module.HTTP_400_BAD_REQUEST)
 
 
     @action(detail=False, methods=['get'], url_path='transferred_animals')
@@ -882,33 +1009,33 @@ class UserProfileViewSet(viewsets.ModelViewSet):
         """Return animals transferred to the processing unit of the current user"""
         user = request.user
         if not hasattr(user, 'profile') or user.profile.role != 'processing_unit':
-            return Response({'error': 'Only processing unit users can access this endpoint'}, status=status.HTTP_403_FORBIDDEN)
+            return Response({'error': 'Only processing unit users can access this endpoint'}, status=status_module.HTTP_403_FORBIDDEN)
 
         processing_unit = user.profile.processing_unit
         if not processing_unit:
-            return Response({'error': 'User not associated with a processing unit'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'User not associated with a processing unit'}, status=status_module.HTTP_400_BAD_REQUEST)
 
         animals = Animal.objects.filter(transferred_to=processing_unit).select_related('farmer', 'transferred_to')
         serializer = self.get_serializer(animals, many=True)
-        return Response({'animals': serializer.data, 'count': len(serializer.data), 'processing_unit': {'id': processing_unit.id, 'name': processing_unit.name}}, status=status.HTTP_200_OK)
+        return Response({'animals': serializer.data, 'count': len(serializer.data), 'processing_unit': {'id': processing_unit.id, 'name': processing_unit.name}}, status=status_module.HTTP_200_OK)
 
     @action(detail=False, methods=['get'], url_path='my_transferred_animals')
     def my_transferred_animals(self, request):
         """Return animals transferred by the current farmer"""
         user = request.user
         if not hasattr(user, 'profile') or user.profile.role != 'farmer':
-            return Response({'error': 'Only farmers can access this endpoint'}, status=status.HTTP_403_FORBIDDEN)
+            return Response({'error': 'Only farmers can access this endpoint'}, status=status_module.HTTP_403_FORBIDDEN)
 
         animals = Animal.objects.filter(farmer=user, transferred_to__isnull=False).select_related('farmer', 'transferred_to')
         serializer = self.get_serializer(animals, many=True)
-        return Response({'animals': serializer.data, 'count': len(serializer.data)}, status=status.HTTP_200_OK)
+        return Response({'animals': serializer.data, 'count': len(serializer.data)}, status=status_module.HTTP_200_OK)
 
     @action(detail=True, methods=['put', 'patch'], url_path='slaughter')
     def slaughter(self, request, pk=None):
         """Mark an animal as slaughtered"""
         animal = get_object_or_404(Animal, pk=pk)
         if animal.slaughtered:
-            return Response({'error': 'Animal already slaughtered'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'Animal already slaughtered'}, status=status_module.HTTP_400_BAD_REQUEST)
 
         animal.slaughtered = True
         animal.slaughtered_at = timezone.now()
@@ -925,7 +1052,7 @@ class UserProfileViewSet(viewsets.ModelViewSet):
             metadata={'animal_id': animal.animal_id, 'species': animal.species}
         )
 
-        return Response(self.get_serializer(animal).data, status=status.HTTP_200_OK)
+        return Response(self.get_serializer(animal).data, status=status_module.HTTP_200_OK)
 
 
 class CarcassMeasurementViewSet(viewsets.ModelViewSet):
@@ -983,6 +1110,74 @@ class CarcassMeasurementViewSet(viewsets.ModelViewSet):
         )
 
 
+@api_view(['GET'])
+@permission_classes([AllowAny])  # Allow unauthenticated access
+def public_processing_units_list(request):
+    """
+    Public endpoint to list all processing units for registration purposes.
+    Does not require authentication.
+    Returns basic information about processing units for users to select during signup.
+    """
+    try:
+        print('[PUBLIC_API] Fetching processing units for public endpoint')
+        processing_units = ProcessingUnit.objects.all().order_by('name')
+        units_data = []
+        
+        for unit in processing_units:
+            units_data.append({
+                'id': unit.id,
+                'name': unit.name,
+                'location': unit.location,
+                'license_number': unit.license_number,
+                'description': unit.description,
+            })
+        
+        print(f'[PUBLIC_API] Returning {len(units_data)} processing units')
+        return Response({
+            'results': units_data,
+            'count': len(units_data)
+        }, status=status_module.HTTP_200_OK)
+    except Exception as e:
+        print(f'[PUBLIC_API] Error fetching processing units: {e}')
+        return Response({
+            'error': f'Failed to fetch processing units: {str(e)}'
+        }, status=status_module.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])  # Allow unauthenticated access
+def public_shops_list(request):
+    """
+    Public endpoint to list all shops for registration purposes.
+    Does not require authentication.
+    Returns basic information about shops for users to select during signup.
+    """
+    try:
+        print('[PUBLIC_API] Fetching shops for public endpoint')
+        shops = Shop.objects.all().order_by('name')
+        shops_data = []
+        
+        for shop in shops:
+            shops_data.append({
+                'id': shop.id,
+                'name': shop.name,
+                'location': shop.location,
+                'phone': shop.phone,
+                'description': shop.description,
+            })
+        
+        print(f'[PUBLIC_API] Returning {shops_data.length} shops')
+        return Response({
+            'results': shops_data,
+            'count': len(shops_data)
+        }, status=status_module.HTTP_200_OK)
+    except Exception as e:
+        print(f'[PUBLIC_API] Error fetching shops: {e}')
+        return Response({
+            'error': f'Failed to fetch shops: {str(e)}'
+        }, status=status_module.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 class ProcessingUnitViewSet(viewsets.ModelViewSet):
     """ViewSet for managing Processing Units."""
     queryset = ProcessingUnit.objects.all()
@@ -1007,8 +1202,8 @@ class ProcessingUnitViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """
-        Optionally restricts the returned purchases to a given user,
-        by filtering against a `username` query parameter in the URL.
+        Return processing units based on user role and membership.
+        Processing unit users see all units they are members of.
         """
         user = self.request.user
         print(f"[PROCESSING_UNIT_VIEWSET] get_queryset called for user {user.username} (ID: {user.id})")
@@ -1023,24 +1218,26 @@ class ProcessingUnitViewSet(viewsets.ModelViewSet):
             print(f"[PROCESSING_UNIT_VIEWSET] User is staff, returning all processing units")
             return ProcessingUnit.objects.all()
 
-        # Farmers should see all processing units
+        # Farmers should see all processing units (for transfer purposes)
         if hasattr(user, 'profile') and user.profile.role == 'farmer':
             print(f"[PROCESSING_UNIT_VIEWSET] User is farmer, returning all processing units")
             return ProcessingUnit.objects.all()
 
-        # If the user is a processing unit user, they should see their unit
+        # Processing unit users see all units they are members of
         if hasattr(user, 'profile') and user.profile.role == 'processing_unit':
-            if user.profile.processing_unit:
-                print(f"[PROCESSING_UNIT_VIEWSET] User is processing_unit, returning their unit (ID: {user.profile.processing_unit.pk})")
-                return ProcessingUnit.objects.filter(pk=user.profile.processing_unit.pk)
+            # Get all processing units the user is a member of
+            user_processing_unit_ids = ProcessingUnitUser.objects.filter(
+                user=user,
+                is_active=True,
+                is_suspended=False
+            ).values_list('processing_unit_id', flat=True)
+            
+            if user_processing_unit_ids:
+                print(f"[PROCESSING_UNIT_VIEWSET] User is member of {len(user_processing_unit_ids)} processing unit(s)")
+                return ProcessingUnit.objects.filter(pk__in=user_processing_unit_ids)
             else:
-                print(f"[PROCESSING_UNIT_VIEWSET] User is processing_unit but has no associated unit")
+                print(f"[PROCESSING_UNIT_VIEWSET] User is processing_unit but has no active memberships")
                 return ProcessingUnit.objects.none()
-
-        # Allow farmers to view all processing units
-        if hasattr(user, 'profile') and user.profile.role == 'farmer':
-            print(f"[PROCESSING_UNIT_VIEWSET] User is farmer, returning all processing units")
-            return ProcessingUnit.objects.all()
 
         print(f"[PROCESSING_UNIT_VIEWSET] User role not recognized or no profile, returning none")
         return ProcessingUnit.objects.none()
@@ -1051,13 +1248,13 @@ class ProcessingUnitViewSet(viewsets.ModelViewSet):
         processing_unit = self.get_object()
         user_id = request.data.get('user_id')
         if not user_id:
-            return Response({'error': 'User ID is required'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'User ID is required'}, status=status_module.HTTP_400_BAD_REQUEST)
 
         pu_user = get_object_or_404(ProcessingUnitUser, user_id=user_id, processing_unit=processing_unit)
         pu_user.is_active = False
         pu_user.save()
 
-        return Response({'status': 'user suspended'}, status=status.HTTP_200_OK)
+        return Response({'status': 'user suspended'}, status=status_module.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], url_path='activate-user')
     def activate_user(self, request, pk=None):
@@ -1065,13 +1262,13 @@ class ProcessingUnitViewSet(viewsets.ModelViewSet):
         processing_unit = self.get_object()
         user_id = request.data.get('user_id')
         if not user_id:
-            return Response({'error': 'User ID is required'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'User ID is required'}, status=status_module.HTTP_400_BAD_REQUEST)
 
         pu_user = get_object_or_404(ProcessingUnitUser, user_id=user_id, processing_unit=processing_unit)
         pu_user.is_active = True
         pu_user.save()
 
-        return Response({'status': 'user activated'}, status=status.HTTP_200_OK)
+        return Response({'status': 'user activated'}, status=status_module.HTTP_200_OK)
 
     @action(detail=True, methods=['get'], url_path='users')
     def users(self, request, pk=None):
@@ -1101,7 +1298,7 @@ class ProcessingUnitViewSet(viewsets.ModelViewSet):
                 'joined_at': pu.joined_at.isoformat() if getattr(pu, 'joined_at', None) else None,
             })
 
-        return Response({'processing_unit': {'id': processing_unit.id, 'name': processing_unit.name}, 'users': users_list, 'count': len(users_list)}, status=status.HTTP_200_OK)
+        return Response({'processing_unit': {'id': processing_unit.id, 'name': processing_unit.name}, 'users': users_list, 'count': len(users_list)}, status=status_module.HTTP_200_OK)
 
 
 # Custom endpoints for join request creation and review
@@ -1111,7 +1308,7 @@ class JoinRequestCreateView(APIView):
     def post(self, request, entity_id, request_type):
         # Validate request type
         if request_type not in ['processing_unit', 'shop']:
-            return Response({'error': 'Invalid request type'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'Invalid request type'}, status=status_module.HTTP_400_BAD_REQUEST)
 
         data = request.data
         requested_role = data.get('requested_role')
@@ -1119,7 +1316,7 @@ class JoinRequestCreateView(APIView):
         qualifications = data.get('qualifications', '')
 
         if not requested_role:
-            return Response({'error': 'requested_role is required'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'requested_role is required'}, status=status_module.HTTP_400_BAD_REQUEST)
 
         # Determine entity and create join request
         if request_type == 'processing_unit':
@@ -1167,7 +1364,7 @@ class JoinRequestCreateView(APIView):
                     data={'join_request_id': join_request.id}
                 )
 
-        return Response(status=status.HTTP_201_CREATED)
+        return Response(status=status_module.HTTP_201_CREATED)
 
 class JoinRequestReviewView(APIView):
     permission_classes = [IsAuthenticated]
@@ -1179,18 +1376,18 @@ class JoinRequestReviewView(APIView):
 
         join_request = get_object_or_404(JoinRequest, pk=request_id)
         if join_request.status != 'pending':
-            return Response({'error': 'Join request has already been reviewed'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'Join request has already been reviewed'}, status=status_module.HTTP_400_BAD_REQUEST)
 
         # Authorization
         if join_request.request_type == 'processing_unit':
             if not ProcessingUnitUser.objects.filter(user=request.user, processing_unit=join_request.processing_unit).exists():
-                return Response({'error': 'Not authorized to review this join request'}, status=status.HTTP_403_FORBIDDEN)
+                return Response({'error': 'Not authorized to review this join request'}, status=status_module.HTTP_403_FORBIDDEN)
         else:
             if not ShopUser.objects.filter(user=request.user, shop=join_request.shop).exists():
-                return Response({'error': 'Not authorized to review this join request'}, status=status.HTTP_403_FORBIDDEN)
+                return Response({'error': 'Not authorized to review this join request'}, status=status_module.HTTP_403_FORBIDDEN)
 
         if new_status not in ['approved', 'rejected']:
-            return Response({'error': 'Invalid status'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'Invalid status'}, status=status_module.HTTP_400_BAD_REQUEST)
 
         join_request.status = new_status
         join_request.response_message = response_message
@@ -1233,7 +1430,7 @@ class JoinRequestReviewView(APIView):
             data={'join_request_id': join_request.id}
         )
 
-        return Response(status=status.HTTP_200_OK)
+        return Response(status=status_module.HTTP_200_OK)
 
 class JoinRequestViewSet(viewsets.ModelViewSet):
     """
@@ -1263,11 +1460,11 @@ class JoinRequestViewSet(viewsets.ModelViewSet):
         join_request = self.get_object()
 
         if join_request.request_type != 'processing_unit' or not join_request.processing_unit:
-            return Response({'error': 'Only processing unit join requests can be approved'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'Only processing unit join requests can be approved'}, status=status_module.HTTP_400_BAD_REQUEST)
 
         # Ensure approver is a member of the target processing unit
         if not ProcessingUnitUser.objects.filter(user=request.user, processing_unit=join_request.processing_unit).exists():
-            return Response({'error': 'Not authorized to approve this join request'}, status=status.HTTP_403_FORBIDDEN)
+            return Response({'error': 'Not authorized to approve this join request'}, status=status_module.HTTP_403_FORBIDDEN)
 
         # Update request status
         join_request.status = 'approved'
@@ -1282,7 +1479,7 @@ class JoinRequestViewSet(viewsets.ModelViewSet):
             defaults={'role': join_request.requested_role or 'worker'}
         )
 
-        return Response({'message': 'Join request approved.'}, status=status.HTTP_200_OK)
+        return Response({'message': 'Join request approved.'}, status=status_module.HTTP_200_OK)
 
 
 class ShopViewSet(viewsets.ModelViewSet):
@@ -1294,21 +1491,38 @@ class ShopViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """
         Return shops based on user role and permissions.
+        Processing unit users can see all active shops for transfer purposes.
         """
         user = self.request.user
+        print(f"[SHOP_VIEWSET] get_queryset called for user {user.username} (ID: {user.id})")
+        
         if user.is_staff:
+            print(f"[SHOP_VIEWSET] User is staff, returning all shops")
             return Shop.objects.all()
-        
+
+        # Check if user has profile
+        if hasattr(user, 'profile'):
+            print(f"[SHOP_VIEWSET] User has profile with role: {user.profile.role}")
+        else:
+            print(f"[SHOP_VIEWSET] User has no profile")
+            return Shop.objects.none()
+
         # If the user is a shop user, they should see their shop
-        if hasattr(user, 'profile') and user.profile.role == 'shop':
+        if user.profile.role == 'shop':
             if user.profile.shop:
+                print(f"[SHOP_VIEWSET] User is shop user, returning their shop: {user.profile.shop.name}")
                 return Shop.objects.filter(pk=user.profile.shop.pk)
-        
-        # If the user is a shop user, they should see their shop
-        if hasattr(user, 'profile') and user.profile.role == 'shop':
-            if user.profile.shop:
-                return Shop.objects.filter(pk=user.profile.shop.pk)
-        
+            else:
+                print(f"[SHOP_VIEWSET] User is shop role but has no shop assigned")
+                return Shop.objects.none()
+
+        # Processing unit users should see all active shops for transfer purposes
+        if user.profile.role == 'processing_unit':
+            shops = Shop.objects.filter(is_active=True)
+            print(f"[SHOP_VIEWSET] User is processing_unit, returning {shops.count()} active shops")
+            return shops
+
+        print(f"[SHOP_VIEWSET] User role not recognized, returning none")
         return Shop.objects.none()
 
 
@@ -1345,15 +1559,236 @@ class ProductViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """
         Return products with optional filtering by processing_unit.
+        All users of a processing unit see the same products.
+        
+        Query parameters:
+        - processing_unit: Filter by processing unit ID
+        - pending_receipt: If 'true', show only products not yet received (for shop users)
         """
         queryset = Product.objects.all().select_related('processing_unit', 'animal')
-        
+        user = self.request.user
+
         # Filter by processing_unit if provided
         processing_unit_id = self.request.query_params.get('processing_unit')
         if processing_unit_id:
             queryset = queryset.filter(processing_unit_id=processing_unit_id)
-        
+        else:
+            # Filter by user's processing units for processing_unit role
+            if hasattr(user, 'profile') and user.profile.role == 'processing_unit':
+                # Get all processing units the user is a member of
+                user_processing_units = ProcessingUnitUser.objects.filter(
+                    user=user,
+                    is_active=True,
+                    is_suspended=False
+                ).values_list('processing_unit_id', flat=True)
+                
+                if user_processing_units:
+                    # Show products from any of the user's processing units
+                    queryset = queryset.filter(processing_unit_id__in=user_processing_units)
+                else:
+                    queryset = queryset.none()
+            # Filter by user's shop for shop role - show products transferred to their shop
+            elif hasattr(user, 'profile') and user.profile.role == 'shop':
+                shop = user.profile.shop
+                if shop:
+                    queryset = queryset.filter(transferred_to=shop)
+                    
+                    # If pending_receipt parameter is true, show only unreceived products
+                    pending_receipt = self.request.query_params.get('pending_receipt', '').lower()
+                    if pending_receipt == 'true':
+                        queryset = queryset.filter(received_by_shop__isnull=True)
+                        print(f"[PRODUCTS_QUERYSET] Filtering for pending receipt, found {queryset.count()} products")
+                else:
+                    queryset = queryset.none()
+
         return queryset.order_by('-created_at')
+
+    @action(detail=False, methods=['get'], url_path='pending_receipt')
+    def pending_receipt(self, request):
+        """Get products that are transferred to the shop but not yet received"""
+        user = request.user
+        
+        if not hasattr(user, 'profile') or user.profile.role != 'shop':
+            return Response({'error': 'Only shop users can access this endpoint'}, status=status_module.HTTP_403_FORBIDDEN)
+        
+        shop = user.profile.shop
+        if not shop:
+            return Response({'error': 'User not associated with a shop'}, status=status_module.HTTP_400_BAD_REQUEST)
+        
+        # Get products transferred to this shop but not yet received
+        pending_products = Product.objects.filter(
+            transferred_to=shop,
+            received_by_shop__isnull=True
+        ).select_related('processing_unit', 'animal')
+        
+        serializer = self.get_serializer(pending_products, many=True)
+        return Response({
+            'products': serializer.data,
+            'count': len(serializer.data)
+        }, status=status_module.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], url_path='transfer')
+    def transfer_products(self, request):
+        """Endpoint for processing units to transfer products to shops"""
+        user = request.user
+        if not hasattr(user, 'profile') or user.profile.role != 'processing_unit':
+            return Response({'error': 'Only processing unit users can transfer products'}, status=status_module.HTTP_403_FORBIDDEN)
+
+        # Get the processing unit from user's profile
+        processing_unit = user.profile.processing_unit
+        if not processing_unit:
+            return Response({'error': 'User not associated with a processing unit'}, status=status_module.HTTP_400_BAD_REQUEST)
+
+        product_ids = request.data.get('product_ids', []) or []
+        shop_id = request.data.get('shop_id')
+
+        if not product_ids:
+            return Response({'error': 'product_ids are required'}, status=status_module.HTTP_400_BAD_REQUEST)
+        
+        if not shop_id:
+            return Response({'error': 'shop_id is required'}, status=status_module.HTTP_400_BAD_REQUEST)
+
+        try:
+            shop = Shop.objects.get(id=shop_id)
+        except Shop.DoesNotExist:
+            return Response({'error': 'Shop not found'}, status=status_module.HTTP_404_NOT_FOUND)
+
+        transferred_products_count = 0
+
+        for pid in product_ids:
+            try:
+                product = Product.objects.get(id=pid, processing_unit=processing_unit)
+            except Product.DoesNotExist:
+                return Response({'error': f'Product {pid} not found or not owned by your processing unit'}, status=status_module.HTTP_404_NOT_FOUND)
+
+            if product.transferred_to is not None:
+                return Response({'error': f'Product {product.name} has already been transferred'}, status=status_module.HTTP_400_BAD_REQUEST)
+
+            product.transferred_to = shop
+            product.transferred_at = timezone.now()
+            product.save()
+            transferred_products_count += 1
+
+            # Create activity for transfer
+            Activity.objects.create(
+                user=user,
+                activity_type='transfer',
+                title=f'Product {product.name} transferred',
+                description=f'Transferred product {product.name} (Batch: {product.batch_number}) to {shop.name}',
+                entity_id=str(product.id),
+                entity_type='product',
+                metadata={'product_id': product.id, 'batch_number': product.batch_number, 'shop_name': shop.name}
+            )
+
+            # Log audit
+            UserAuditLog.objects.create(
+                performed_by=user,
+                affected_user=user,
+                processing_unit=processing_unit,
+                shop=shop,
+                action='product_transferred',
+                description=f'Product {product.name} transferred to shop {shop.name}',
+                old_values={'transferred_to': None},
+                new_values={'transferred_to': shop.id, 'transferred_at': product.transferred_at.isoformat()},
+                ip_address=request.META.get('REMOTE_ADDR'),
+                user_agent=request.META.get('HTTP_USER_AGENT', '')
+            )
+
+        return Response({
+            'message': f'Successfully transferred {transferred_products_count} product(s) to {shop.name}',
+            'transferred_products_count': transferred_products_count
+        }, status=status_module.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], url_path='receive_products')
+    def receive_products(self, request):
+        """Endpoint for shops to receive transferred products"""
+        user = request.user
+        
+        # Log the incoming request for debugging
+        print(f"[RECEIVE_PRODUCTS] User: {user.username}, Data: {request.data}")
+        
+        if not hasattr(user, 'profile') or user.profile.role != 'shop':
+            print(f"[RECEIVE_PRODUCTS] User role check failed. Has profile: {hasattr(user, 'profile')}, Role: {user.profile.role if hasattr(user, 'profile') else 'N/A'}")
+            return Response({'error': 'Only shop users can receive products'}, status=status_module.HTTP_403_FORBIDDEN)
+
+        shop = user.profile.shop
+        if not shop:
+            print(f"[RECEIVE_PRODUCTS] User not associated with a shop")
+            return Response({'error': 'User not associated with a shop'}, status=status_module.HTTP_400_BAD_REQUEST)
+
+        product_ids = request.data.get('product_ids', [])
+        
+        # Handle both empty list and None
+        if not product_ids or len(product_ids) == 0:
+            print(f"[RECEIVE_PRODUCTS] No product_ids provided: {product_ids}")
+            return Response({'error': 'product_ids are required and must not be empty'}, status=status_module.HTTP_400_BAD_REQUEST)
+
+        print(f"[RECEIVE_PRODUCTS] Processing {len(product_ids)} products for shop {shop.name}")
+        received_products_count = 0
+
+        for pid in product_ids:
+            try:
+                product = Product.objects.get(id=pid, transferred_to=shop)
+                print(f"[RECEIVE_PRODUCTS] Found product {pid}: {product.name}")
+            except Product.DoesNotExist:
+                print(f"[RECEIVE_PRODUCTS] Product {pid} not found or not transferred to shop {shop.name}")
+                return Response({'error': f'Product {pid} not found or not transferred to your shop'}, status=status_module.HTTP_404_NOT_FOUND)
+
+            if product.received_by_shop is not None:
+                print(f"[RECEIVE_PRODUCTS] Product {product.name} already received")
+                return Response({
+                    'error': f'Product {product.name} has already been received',
+                    'product_id': pid,
+                    'product_name': product.name,
+                    'received_at': product.received_at.isoformat() if product.received_at else None,
+                    'suggestion': 'This product was already received. Please refresh your product list to see only pending products.'
+                }, status=status_module.HTTP_400_BAD_REQUEST)
+
+            product.received_by_shop = shop
+            product.received_at = timezone.now()
+            product.save()
+            received_products_count += 1
+            print(f"[RECEIVE_PRODUCTS] Marked product {product.name} as received")
+
+            # Create activity for receiving product
+            Activity.objects.create(
+                user=user,
+                activity_type='transfer',
+                title=f'Product {product.name} received',
+                description=f'Received product {product.name} (Batch: {product.batch_number})',
+                entity_id=str(product.id),
+                entity_type='product',
+                metadata={'product_id': product.id, 'batch_number': product.batch_number}
+            )
+
+            # Create or update inventory record for the received product
+            try:
+                inventory, created = Inventory.objects.get_or_create(
+                    product=product,
+                    shop=shop,
+                    defaults={
+                        'quantity': product.quantity,
+                        'min_stock_level': 0
+                    }
+                )
+                
+                # If inventory already exists, update the quantity
+                if not created:
+                    inventory.quantity += product.quantity
+                    inventory.last_updated = timezone.now()
+                    inventory.save()
+                    print(f"[RECEIVE_PRODUCTS] Updated inventory for product {product.name}, new quantity: {inventory.quantity}")
+                else:
+                    print(f"[RECEIVE_PRODUCTS] Created new inventory for product {product.name}, quantity: {inventory.quantity}")
+            except Exception as e:
+                print(f"[RECEIVE_PRODUCTS] Error creating/updating inventory: {str(e)}")
+                # Continue processing other products even if inventory update fails
+
+        print(f"[RECEIVE_PRODUCTS] Successfully received {received_products_count} products")
+        return Response({
+            'message': f'Successfully received {received_products_count} product(s)',
+            'received_products_count': received_products_count
+        }, status=status_module.HTTP_200_OK)
 
 class ProductCategoryViewSet(viewsets.ModelViewSet):
     """ViewSet for managing Product Categories."""

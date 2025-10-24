@@ -223,22 +223,22 @@
     </div>
     {% endif %}
 {% endblock %}
-</body>
-</html>
 
-{% if debug_json %}
-<script>
-    try {
-        var _meatTraceDebug = JSON.parse('{{ debug_json|escapejs }}');
-        console.group('meat_trace: product_info debug');
-        console.log('Product payload:', _meatTraceDebug.product);
-        console.log('Animal payload:', _meatTraceDebug.animal);
-        console.log('Timeline events:', _meatTraceDebug.timeline);
-        console.log('Carcass measurement:', _meatTraceDebug.carcass_measurement);
-        console.log('Counts: inventory=%s receipts=%s orders=%s', _meatTraceDebug.inventory_count, _meatTraceDebug.receipts_count, _meatTraceDebug.orders_count);
-        console.groupEnd();
-    } catch (e) {
-        console.error('Failed to parse meat_trace debug JSON', e);
-    }
-</script>
-{% endif %}
+{% block extra_js %}
+    {% if debug_json %}
+    <script>
+        try {
+            var _meatTraceDebug = JSON.parse('{{ debug_json|escapejs }}');
+            console.group('meat_trace: product_info debug');
+            console.log('Product payload:', _meatTraceDebug.product);
+            console.log('Animal payload:', _meatTraceDebug.animal);
+            console.log('Timeline events:', _meatTraceDebug.timeline);
+            console.log('Carcass measurement:', _meatTraceDebug.carcass_measurement);
+            console.log('Counts: inventory=%s receipts=%s orders=%s', _meatTraceDebug.inventory_count, _meatTraceDebug.receipts_count, _meatTraceDebug.orders_count);
+            console.groupEnd();
+        } catch (e) {
+            console.error('Failed to parse meat_trace debug JSON', e);
+        }
+    </script>
+    {% endif %}
+{% endblock %}

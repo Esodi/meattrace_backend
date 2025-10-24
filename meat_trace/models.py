@@ -311,6 +311,65 @@ class Animal(models.Model):
     def has_slaughter_parts(self):
         """Check if this animal has individual slaughter parts defined"""
         return self.slaughter_parts.exists()
+    
+    @property
+    def lifecycle_status(self):
+        """
+        Determine the animal's lifecycle status based on four distinct categories:
+        1. HEALTHY - Alive, in good condition, no transfers or processing
+        2. SLAUGHTERED - Processed and no longer alive (but NOT transferred)
+        3. TRANSFERRED - Entire body/all parts completely transferred
+        4. SEMI-TRANSFERRED - Partially transferred (some parts moved, others remain)
+        
+        Priority order:
+        1. Check transfer status first (whole animal or all parts)
+        2. Check for partial transfers
+        3. Check if slaughtered (but not transferred)
+        4. Default to healthy
+        """
+        # Priority 1: Check if whole animal is transferred
+        if self.transferred_to is not None:
+            return 'TRANSFERRED'
+        
+        # Priority 2: Check for partial or complete part transfers
+        if self.has_slaughter_parts:
+            parts = self.slaughter_parts.all()
+            transferred_parts = [p for p in parts if p.transferred_to is not None]
+            
+            if transferred_parts:
+                # All parts transferred
+                if len(transferred_parts) == len(parts):
+                    return 'TRANSFERRED'
+                # Some parts transferred but not all
+                else:
+                    return 'SEMI-TRANSFERRED'
+        
+        # Priority 3: Check if slaughtered (but not transferred)
+        if self.slaughtered:
+            return 'SLAUGHTERED'
+        
+        # Default: Animal is healthy and on the farm
+        return 'HEALTHY'
+    
+    @property
+    def is_healthy(self):
+        """Check if animal is in HEALTHY status"""
+        return self.lifecycle_status == 'HEALTHY'
+    
+    @property
+    def is_slaughtered_status(self):
+        """Check if animal is in SLAUGHTERED status"""
+        return self.lifecycle_status == 'SLAUGHTERED'
+    
+    @property
+    def is_transferred_status(self):
+        """Check if animal is in TRANSFERRED status"""
+        return self.lifecycle_status == 'TRANSFERRED'
+    
+    @property
+    def is_semi_transferred_status(self):
+        """Check if animal is in SEMI-TRANSFERRED status"""
+        return self.lifecycle_status == 'SEMI-TRANSFERRED'
 
     def __str__(self):
         display_name = self.animal_name or self.animal_id
@@ -525,11 +584,11 @@ class Product(models.Model):
     # QR code field for traceability
     qr_code = models.CharField(max_length=500, blank=True, null=True)
 
-    # Transfer fields (products are transferred to ProcessingUnit/Shop-level entities)
-    transferred_to = models.ForeignKey(ProcessingUnit, on_delete=models.SET_NULL, null=True, blank=True, related_name='transferred_products')
+    # Transfer fields (products are transferred to Shop-level entities)
+    transferred_to = models.ForeignKey(Shop, on_delete=models.SET_NULL, null=True, blank=True, related_name='transferred_products')
     transferred_at = models.DateTimeField(null=True, blank=True)
-    # Receive fields
-    received_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='received_products')
+    # Receive fields (shop receives products, not individual users)
+    received_by_shop = models.ForeignKey(Shop, on_delete=models.SET_NULL, null=True, blank=True, related_name='received_products_as_shop')
     received_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):

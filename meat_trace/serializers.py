@@ -54,6 +54,13 @@ class AnimalSerializer(serializers.ModelSerializer):
     has_slaughter_parts = serializers.BooleanField(read_only=True)
     slaughter_parts = serializers.SerializerMethodField()
     carcass_measurement = serializers.SerializerMethodField()
+    
+    # Lifecycle status fields
+    lifecycle_status = serializers.CharField(read_only=True)
+    is_healthy = serializers.BooleanField(read_only=True)
+    is_slaughtered_status = serializers.BooleanField(read_only=True)
+    is_transferred_status = serializers.BooleanField(read_only=True)
+    is_semi_transferred_status = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = Animal
@@ -65,9 +72,14 @@ class AnimalSerializer(serializers.ModelSerializer):
             'animal_name', 'breed', 'health_status', 'abbatoir_name', 'photo',
             'gender', 'notes',
             'is_split_carcass', 'has_slaughter_parts', 'slaughter_parts', 'carcass_measurement',
-            'age_in_years', 'age_in_days'
+            'age_in_years', 'age_in_days',
+            'lifecycle_status', 'is_healthy', 'is_slaughtered_status',
+            'is_transferred_status', 'is_semi_transferred_status'
         ]
-        read_only_fields = ['id', 'created_at', 'farmer_username', 'transferred_to_name', 'received_by_username', 'is_split_carcass', 'has_slaughter_parts', 'age_in_years', 'age_in_days', 'farmer']
+        read_only_fields = ['id', 'created_at', 'farmer_username', 'transferred_to_name', 'received_by_username',
+                           'is_split_carcass', 'has_slaughter_parts', 'age_in_years', 'age_in_days', 'farmer',
+                           'lifecycle_status', 'is_healthy', 'is_slaughtered_status',
+                           'is_transferred_status', 'is_semi_transferred_status']
 
     def validate_health_status(self, value):
         # Optional: enforce health status normalization (allow any but trim)
@@ -117,7 +129,7 @@ class ProductSerializer(serializers.ModelSerializer):
     animal_animal_id = serializers.CharField(source='animal.animal_id', read_only=True)
     animal_species = serializers.CharField(source='animal.species', read_only=True)
     transferred_to_name = serializers.CharField(source='transferred_to.name', read_only=True, allow_null=True)
-    received_by_username = serializers.CharField(source='received_by.username', read_only=True, allow_null=True)
+    received_by_shop_name = serializers.CharField(source='received_by_shop.name', read_only=True, allow_null=True)
     slaughter_part_name = serializers.SerializerMethodField()
     slaughter_part_type = serializers.CharField(source='slaughter_part.part_type', read_only=True, allow_null=True)
 
@@ -135,12 +147,12 @@ class ProductSerializer(serializers.ModelSerializer):
             'animal_species', 'slaughter_part', 'slaughter_part_name', 'slaughter_part_type',
             'name', 'product_type', 'quantity', 'weight', 'weight_unit',
             'price', 'description', 'manufacturer', 'batch_number', 'category', 'created_at',
-                'transferred_to', 'transferred_to_name', 'transferred_at', 'received_by',
-            'received_by_username', 'received_at', 'qr_code'
+            'transferred_to', 'transferred_to_name', 'transferred_at', 'received_by_shop',
+            'received_by_shop_name', 'received_at', 'qr_code'
         ]
         read_only_fields = [
             'id', 'created_at', 'processing_unit_name', 'animal_animal_id', 'animal_species',
-            'slaughter_part_name', 'slaughter_part_type', 'transferred_to_name', 'received_by_username'
+            'slaughter_part_name', 'slaughter_part_type', 'transferred_to_name', 'received_by_shop_name'
         ]
 
 
