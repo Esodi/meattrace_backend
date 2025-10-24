@@ -5,6 +5,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.views import View
 import json
+from decimal import Decimal
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import viewsets, status as status_module
@@ -17,9 +18,9 @@ from django.utils import timezone
 from django.conf import settings
 from django.db import models
 
-from .models import Animal, Product, Receipt, UserProfile, ProductCategory, ProcessingStage, ProductTimelineEvent, Inventory, Order, OrderItem, CarcassMeasurement, SlaughterPart, ProcessingUnit, ProcessingUnitUser, Shop, ShopUser, UserAuditLog, JoinRequest, Notification, Activity, SystemAlert, PerformanceMetric, ComplianceAudit, Certification, SystemHealth, SecurityLog, TransferRequest, BackupSchedule
+from .models import Animal, Product, Receipt, UserProfile, ProductCategory, ProcessingStage, ProductTimelineEvent, Inventory, Order, OrderItem, CarcassMeasurement, SlaughterPart, ProcessingUnit, ProcessingUnitUser, Shop, ShopUser, UserAuditLog, JoinRequest, Notification, Activity, SystemAlert, PerformanceMetric, ComplianceAudit, Certification, SystemHealth, SecurityLog, TransferRequest, BackupSchedule, Sale, SaleItem
 from .farmer_dashboard_serializer import FarmerDashboardSerializer
-from .serializers import AnimalSerializer, ProductSerializer, OrderSerializer, ShopSerializer, SlaughterPartSerializer, ActivitySerializer, ProcessingUnitSerializer, JoinRequestSerializer, ProductCategorySerializer, CarcassMeasurementSerializer
+from .serializers import AnimalSerializer, ProductSerializer, OrderSerializer, ShopSerializer, SlaughterPartSerializer, ActivitySerializer, ProcessingUnitSerializer, JoinRequestSerializer, ProductCategorySerializer, CarcassMeasurementSerializer, SaleSerializer, SaleItemSerializer
 
 @api_view(['GET'])
 def user_profile_view(request):
@@ -1988,5 +1989,223 @@ def product_info_list_view(request):
     except Exception as e:
         return render(request, 'meat_trace/product_info_list.html', {
             'error': f'An error occurred: {str(e)}',
+        })
+
+
+class SaleViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing Sales."""
+    queryset = Sale.objects.all()
+    serializer_class = SaleSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        """
+        Return sales based on user role and permissions.
+        Shop employees see only their shop's sales.
+        """
+        user = self.request.user
+        queryset = Sale.objects.all().select_related('shop', 'sold_by').prefetch_related('items__product')
+        
+        # Shop users see only their shop's sales
+        if hasattr(user, 'profile') and user.profile.role == 'shop':
+            shop = user.profile.shop
+            if shop:
+                queryset = queryset.filter(shop=shop)
+            else:
+                queryset = queryset.none()
+        
+        return queryset.order_by('-created_at')
+
+    def create(self, request, *args, **kwargs):
+        """
+        Create a new sale with validation for inventory availability and synchronous inventory updates.
+        """
+        print(f"[SALE_CREATE] Starting sale creation for user {request.user.username}")
+
+        user = request.user
+
+        # Verify user is a shop employee
+        if not hasattr(user, 'profile') or user.profile.role != 'shop':
+            print(f"[SALE_CREATE] User role check failed: has_profile={hasattr(user, 'profile')}, role={user.profile.role if hasattr(user, 'profile') else 'None'}")
+            return Response(
+                {'error': 'Only shop users can create sales'},
+                status=status_module.HTTP_403_FORBIDDEN
+            )
+
+        shop = user.profile.shop
+        if not shop:
+            print(f"[SALE_CREATE] User not associated with a shop")
+            return Response(
+                {'error': 'User not associated with a shop'},
+                status=status_module.HTTP_400_BAD_REQUEST
+            )
+
+        print(f"[SALE_CREATE] User validation passed: shop={shop.name}")
+
+        # Extract data
+        items_data = request.data.get('items', [])
+        print(f"[SALE_CREATE] Received items: {items_data}")
+
+        if not items_data:
+            print(f"[SALE_CREATE] No items provided")
+            return Response(
+                {'error': 'At least one item is required'},
+                status=status_module.HTTP_400_BAD_REQUEST
+            )
+
+        # Validate inventory availability for each item and update synchronously
+        from django.db import transaction
+
+        try:
+            print(f"[SALE_CREATE] Starting transaction")
+            with transaction.atomic():
+                # Check inventory for all items first
+                for item_data in items_data:
+                    product_id = item_data.get('product')
+                    quantity = item_data.get('quantity', 0)
+
+                    print(f"[SALE_CREATE] Checking inventory for product {product_id}, quantity {quantity}")
+
+                    try:
+                        product = Product.objects.get(id=product_id)
+                        print(f"[SALE_CREATE] Found product: {product.name}")
+                    except Product.DoesNotExist:
+                        print(f"[SALE_CREATE] Product {product_id} not found")
+                        return Response(
+                            {'error': f'Product {product_id} not found'},
+                            status=status_module.HTTP_404_NOT_FOUND
+                        )
+
+                    # Check inventory
+                    try:
+                        inventory = Inventory.objects.get(shop=shop, product=product)
+                        print(f"[SALE_CREATE] Found inventory: {inventory.quantity} available")
+
+                        if inventory.quantity < quantity:
+                            print(f"[SALE_CREATE] Insufficient inventory: {inventory.quantity} < {quantity}")
+                            return Response(
+                                {
+                                    'error': f'Insufficient inventory for {product.name}',
+                                    'product': product.name,
+                                    'available': float(inventory.quantity),
+                                    'requested': float(quantity)
+                                },
+                                status=status_module.HTTP_400_BAD_REQUEST
+                            )
+                    except Inventory.DoesNotExist:
+                        print(f"[SALE_CREATE] No inventory found for {product.name}")
+                        return Response(
+                            {
+                                'error': f'No inventory found for {product.name}',
+                                'product': product.name
+                            },
+                            status=status_module.HTTP_400_BAD_REQUEST
+                        )
+
+                print(f"[SALE_CREATE] All inventory checks passed")
+
+                # Create the sale
+                sale_data = {
+                    'shop': shop,
+                    'sold_by': user,
+                    'customer_name': request.data.get('customer_name', ''),
+                    'customer_phone': request.data.get('customer_phone', ''),
+                    'total_amount': request.data.get('total_amount', 0),
+                    'payment_method': request.data.get('payment_method', 'cash'),
+                }
+
+                print(f"[SALE_CREATE] Creating sale with data: {sale_data}")
+                sale = Sale.objects.create(**sale_data)
+                print(f"[SALE_CREATE] Sale created: ID {sale.id}")
+
+                # Create sale items and update inventory synchronously
+                for item_data in items_data:
+                    product_id = item_data.get('product')
+                    quantity = item_data.get('quantity')
+                    unit_price = item_data.get('unit_price')
+
+                    print(f"[SALE_CREATE] Processing item: product {product_id}, quantity {quantity}")
+
+                    # Get product first
+                    try:
+                        product = Product.objects.get(id=product_id)
+                        print(f"[SALE_CREATE] Retrieved product: {product.name}")
+                    except Product.DoesNotExist:
+                        print(f"[SALE_CREATE] Product {product_id} not found during item creation")
+                        raise Exception(f'Product {product_id} not found')
+
+                    # Get inventory
+                    try:
+                        inventory = Inventory.objects.get(shop=shop, product=product)
+                        print(f"[SALE_CREATE] Retrieved inventory: {inventory.quantity}")
+                    except Inventory.DoesNotExist:
+                        print(f"[SALE_CREATE] No inventory found for {product.name} during item creation")
+                        raise Exception(f'No inventory found for {product.name}')
+
+                    # Create sale item
+                    print(f"[SALE_CREATE] Creating sale item")
+                    SaleItem.objects.create(
+                        sale=sale,
+                        product=product,
+                        quantity=quantity,
+                        unit_price=unit_price,
+                    )
+                    print(f"[SALE_CREATE] Sale item created")
+
+                    # Update inventory quantity
+                    old_inventory_qty = inventory.quantity
+                    inventory.quantity -= Decimal(str(quantity))
+                    inventory.last_updated = timezone.now()
+                    inventory.save()
+                    print(f"[SALE_CREATE] Updated inventory: {old_inventory_qty} -> {inventory.quantity}")
+
+                    # Update product quantity
+                    old_product_qty = product.quantity
+                    product.quantity -= Decimal(str(quantity))
+                    product.save(update_fields=['quantity'])
+                    print(f"[SALE_CREATE] Updated product: {old_product_qty} -> {product.quantity}")
+
+                print(f"[SALE_CREATE] All items processed successfully")
+
+                # Serialize and return
+                print(f"[SALE_CREATE] Serializing response")
+                serializer = self.get_serializer(sale)
+                print(f"[SALE_CREATE] Sale creation completed successfully")
+                return Response(serializer.data, status=status_module.HTTP_201_CREATED)
+
+        except Exception as e:
+            print(f"[SALE_CREATE] Exception occurred: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': f'Failed to create sale: {str(e)}'},
+                status=status_module.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+def sale_info_view(request, sale_id):
+    """
+    HTML view for displaying detailed sale information.
+    Accessible at /api/v2/sale-info/view/{sale_id}/
+    """
+    try:
+        sale = Sale.objects.select_related('shop', 'sold_by').prefetch_related('items__product').get(id=sale_id)
+        
+        context = {
+            'sale': sale,
+            'items': sale.items.all(),
+        }
+        
+        return render(request, 'meat_trace/sale_info.html', context)
+        
+    except Sale.DoesNotExist:
+        return render(request, 'meat_trace/sale_info.html', {
+            'error': f'Sale with ID {sale_id} not found',
+            'sale_id': sale_id
+        })
+    except Exception as e:
+        return render(request, 'meat_trace/sale_info.html', {
+            'error': f'An error occurred: {str(e)}',
+            'sale_id': sale_id
         })
 

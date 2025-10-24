@@ -78,6 +78,13 @@ except Exception:
     # Optional registration
     pass
 
+try:
+    from .views import SaleViewSet
+    router.register(r'sales', SaleViewSet, basename='sales')
+except Exception:
+    # Optional registration
+    pass
+
 urlpatterns = [
     # App-level admin-like template views. Use 'site-admin/' prefix to avoid
     # colliding with Django's built-in admin site which is mounted at '/admin/'.
@@ -129,6 +136,9 @@ urlpatterns = [
     # HTML product info view (renders detailed product page)
     path('api/v2/product-info/view/<int:product_id>/', views.product_info_view, name='product_info'),
     path('api/v2/product-info/list/', views.product_info_list_view, name='product_info_list'),
+    
+    # Sale info HTML view
+    path('api/v2/sale-info/view/<int:sale_id>/', views.sale_info_view, name='sale_info_view'),
     # Legacy/compat endpoint for frontend settings screen to list processing unit users
     path('api/v2/processing-unit-users/<int:unit_id>/', views.ProcessingUnitViewSet.as_view({'get': 'users'}), name='processing-unit-users'),
 

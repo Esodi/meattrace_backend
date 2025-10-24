@@ -7,7 +7,7 @@ from .models import (
     SlaughterPart, ProcessingUnit, ProcessingUnitUser, ProductIngredient,
     Shop, ShopUser, UserAuditLog, JoinRequest, Notification, Activity,
     SystemAlert, PerformanceMetric, ComplianceAudit, Certification,
-    SystemHealth, SecurityLog, TransferRequest, BackupSchedule
+    SystemHealth, SecurityLog, TransferRequest, BackupSchedule, Sale, SaleItem
 )
 
 
@@ -509,4 +509,37 @@ class BackupScheduleSerializer(serializers.ModelSerializer):
             'next_run', 'include_database', 'include_files', 'include_media',
             'retention_days', 'is_active', 'last_status', 'metadata', 'created_at', 'updated_at'
         ]
+
+
+class SaleItemSerializer(serializers.ModelSerializer):
+    product_name = serializers.CharField(source='product.name', read_only=True)
+    
+    class Meta:
+        model = SaleItem
+        fields = ['id', 'sale', 'product', 'product_name', 'quantity', 'unit_price', 'subtotal']
+        read_only_fields = ['id', 'subtotal', 'sale']
+
+
+class SaleSerializer(serializers.ModelSerializer):
+    shop_name = serializers.CharField(source='shop.name', read_only=True)
+    sold_by_username = serializers.CharField(source='sold_by.username', read_only=True)
+    items = SaleItemSerializer(many=True)
+    
+    class Meta:
+        model = Sale
+        fields = [
+            'id', 'shop', 'shop_name', 'sold_by', 'sold_by_username',
+            'customer_name', 'customer_phone', 'total_amount', 'payment_method',
+            'created_at', 'qr_code', 'items'
+        ]
+        read_only_fields = ['id', 'created_at', 'qr_code', 'shop_name', 'sold_by_username']
+    
+    def create(self, validated_data):
+        items_data = validated_data.pop('items')
+        sale = Sale.objects.create(**validated_data)
+        
+        for item_data in items_data:
+            SaleItem.objects.create(sale=sale, **item_data)
+        
+        return sale
         read_only_fields = ['id', 'created_at', 'updated_at']

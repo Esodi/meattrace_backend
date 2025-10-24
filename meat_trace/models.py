@@ -1530,3 +1530,94 @@ class BackupSchedule(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.frequency} {self.backup_type})"
+
+
+class Sale(models.Model):
+    """Model for sales transactions at shops"""
+    PAYMENT_METHOD_CHOICES = [
+        ('cash', 'Cash'),
+        ('card', 'Card'),
+        ('mobile_money', 'Mobile Money'),
+    ]
+
+    shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name='sales')
+    sold_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='sales_made')
+    customer_name = models.CharField(max_length=200, blank=True, null=True)
+    customer_phone = models.CharField(max_length=20, blank=True, null=True)
+    total_amount = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
+    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default='cash')
+    created_at = models.DateTimeField(default=timezone.now)
+    qr_code = models.CharField(max_length=500, blank=True)
+
+    def __str__(self):
+        return f"Sale #{self.id} - {self.shop.name} - {self.total_amount}"
+
+    class Meta:
+        ordering = ['-created_at']
+
+
+class SaleItem(models.Model):
+    """Model for individual items in a sale"""
+    sale = models.ForeignKey(Sale, on_delete=models.CASCADE, related_name='items')
+    product = models.ForeignKey(Product, on_delete=models.CASCADE)
+    quantity = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
+    unit_price = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
+    subtotal = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
+
+    def __str__(self):
+        return f"{self.product.name} x {self.quantity}"
+
+    def save(self, *args, **kwargs):
+        # Auto-calculate subtotal
+        self.subtotal = self.quantity * self.unit_price
+        super().save(*args, **kwargs)
+
+
+@receiver(post_save, sender=Sale)
+def generate_sale_qr_code(sender, instance, created, **kwargs):
+    """Generate QR code for new sales that links to the sale info page"""
+    if created and not instance.qr_code:
+        try:
+            # Generate the URL for the sale info HTML page
+            url = f"{getattr(settings, 'SITE_URL', 'http://localhost:8000')}/api/v2/sale-info/view/{instance.id}/"
+
+            # Create QR code
+            qr = qrcode.QRCode(
+                version=1,
+                error_correction=qrcode.constants.ERROR_CORRECT_L,
+                box_size=10,
+                border=4,
+            )
+            qr.add_data(url)
+            qr.make(fit=True)
+
+            # Create the image
+            img = qr.make_image(fill_color="black", back_color="white")
+
+            # Ensure the qr_codes directory exists
+            qr_dir = os.path.join(settings.MEDIA_ROOT, 'qr_codes')
+            os.makedirs(qr_dir, exist_ok=True)
+
+            # Save the image
+            filename = f"sale_qr_{instance.id}.png"
+            filepath = os.path.join(qr_dir, filename)
+            img.save(filepath)
+
+            # Update the instance with the relative path
+            instance.qr_code = f"qr_codes/{filename}"
+            instance.save(update_fields=['qr_code'])
+
+        except Exception as e:
+            # Log the error but don't fail the sale creation
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to generate QR code for sale {instance.id}: {str(e)}")
+
+
+@receiver(post_save, sender=SaleItem)
+def update_inventory_on_sale(sender, instance, created, **kwargs):
+    """
+    DISABLED: Inventory updates are now handled synchronously in the SaleViewSet.create() method.
+    This signal is kept for backward compatibility but does nothing.
+    """
+    pass

@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.models import User
-from .models import UserProfile, Animal, Product, Receipt
+from .models import UserProfile, Animal, Product, Receipt, Sale, SaleItem
 
 # Register your models here.
 
@@ -34,3 +34,17 @@ class ReceiptAdmin(admin.ModelAdmin):
     list_display = ('id', 'shop', 'product', 'received_quantity', 'received_at')
     search_fields = ('shop__username', 'product__product_type')
     list_filter = ('received_at',)
+
+@admin.register(Sale)
+class SaleAdmin(admin.ModelAdmin):
+    list_display = ('id', 'shop', 'sold_by', 'customer_name', 'total_amount', 'payment_method', 'created_at')
+    search_fields = ('shop__name', 'sold_by__username', 'customer_name', 'customer_phone')
+    list_filter = ('payment_method', 'created_at', 'shop')
+    readonly_fields = ('qr_code', 'created_at')
+
+@admin.register(SaleItem)
+class SaleItemAdmin(admin.ModelAdmin):
+    list_display = ('id', 'sale', 'product', 'quantity', 'unit_price', 'subtotal')
+    search_fields = ('sale__id', 'product__name')
+    list_filter = ('sale__created_at',)
+    readonly_fields = ('subtotal',)

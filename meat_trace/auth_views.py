@@ -65,6 +65,36 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 class CustomTokenObtainPairView(TokenObtainPairView):
     """Custom token view that returns user profile data along with tokens"""
     serializer_class = CustomTokenObtainPairSerializer
+    
+    def post(self, request, *args, **kwargs):
+        """Override post to add logging without breaking the response"""
+        username = request.data.get('username', '')
+        
+        try:
+            # Call parent's post method
+            response = super().post(request, *args, **kwargs)
+            
+            # Log successful login (only if response is successful)
+            if response.status_code == 200:
+                try:
+                    user = User.objects.get(username=username)
+                    log_login_success(user, request)
+                except Exception as log_error:
+                    # Don't let logging errors break the login
+                    print(f"Warning: Failed to log login success: {log_error}")
+            
+            return response
+            
+        except Exception as e:
+            # Log failed login attempt
+            try:
+                log_login_failure(username, request, reason=str(e))
+            except Exception as log_error:
+                # Don't let logging errors break the error response
+                print(f"Warning: Failed to log login failure: {log_error}")
+            
+            # Re-raise the original exception
+            raise
 
 class RegisterView(APIView):
     """User registration endpoint"""
