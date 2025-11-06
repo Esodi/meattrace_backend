@@ -276,6 +276,32 @@ class Animal(models.Model):
     processed = models.BooleanField(default=False, help_text="Indicates if the animal has been processed into products")
     photo = models.ImageField(upload_to='animal_photos/', blank=True, null=True, help_text="Animal photo")
 
+    # Rejection fields
+    REJECTION_STATUS_CHOICES = [
+        ('pending', 'Pending Review'),
+        ('rejected', 'Rejected'),
+        ('appealed', 'Appealed'),
+        ('resolved', 'Resolved'),
+    ]
+    rejection_status = models.CharField(max_length=20, choices=REJECTION_STATUS_CHOICES, blank=True, null=True, help_text="Current rejection status")
+    rejection_reason_category = models.CharField(max_length=20, blank=True, null=True, help_text="Category of rejection reason")
+    rejection_reason_specific = models.CharField(max_length=30, blank=True, null=True, help_text="Specific rejection reason")
+    rejection_notes = models.TextField(blank=True, null=True, help_text="Additional notes about the rejection")
+    rejected_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='rejected_animals', help_text="User who rejected the animal")
+    rejected_at = models.DateTimeField(null=True, blank=True, help_text="Date and time when the animal was rejected")
+
+    # Appeal fields
+    APPEAL_STATUS_CHOICES = [
+        ('pending', 'Pending Review'),
+        ('approved', 'Approved'),
+        ('denied', 'Denied'),
+        ('resolved', 'Resolved'),
+    ]
+    appeal_status = models.CharField(max_length=20, choices=APPEAL_STATUS_CHOICES, blank=True, null=True, help_text="Current appeal status")
+    appeal_notes = models.TextField(blank=True, null=True, help_text="Notes about the appeal")
+    appealed_at = models.DateTimeField(null=True, blank=True, help_text="Date and time when the appeal was submitted")
+    appeal_resolved_at = models.DateTimeField(null=True, blank=True, help_text="Date and time when the appeal was resolved")
+
     def save(self, *args, **kwargs):
         # Ensure photo field is properly handled
         if self.photo and hasattr(self.photo, 'name'):
@@ -289,7 +315,7 @@ class Animal(models.Model):
             if self.photo.size > 5 * 1024 * 1024:
                 raise ValueError("File size too large. Maximum allowed size is 5MB.")
 
-        # Ensure animal_id exists
+        # Ensure animal_id exists only if not manually set
         if not self.animal_id:
             self.animal_id = self._generate_animal_id()
 
@@ -375,14 +401,19 @@ class Animal(models.Model):
         display_name = self.animal_name or self.animal_id
         return f"{display_name} ({self.species}) - {self.farmer.username}"
 class SlaughterPart(models.Model):
+    part_id = models.CharField(max_length=50, unique=True, editable=False, default='', help_text="Auto-generated unique part identifier")
     PART_CHOICES = [
         ('whole_carcass', 'Whole Carcass'),
         ('left_side', 'Left Side'),
         ('right_side', 'Right Side'),
+        ('left_carcass', 'Left Carcass'),
+        ('right_carcass', 'Right Carcass'),
         ('head', 'Head'),
         ('feet', 'Feet'),
         ('internal_organs', 'Internal Organs'),
-        ('other', 'Other'),
+        ('torso', 'Torso'),
+        ('front_legs', 'Front Legs'),
+        ('hind_legs', 'Hind Legs'),
     ]
 
     animal = models.ForeignKey(Animal, on_delete=models.CASCADE, related_name='slaughter_parts')
@@ -405,11 +436,47 @@ class SlaughterPart(models.Model):
     # Track whether part is selected for transfer/receive (for split carcass workflow)
     is_selected_for_transfer = models.BooleanField(default=False, help_text="Whether this part is selected for the current transfer")
 
+    # Rejection fields
+    REJECTION_STATUS_CHOICES = [
+        ('pending', 'Pending Review'),
+        ('rejected', 'Rejected'),
+        ('appealed', 'Appealed'),
+        ('resolved', 'Resolved'),
+    ]
+    rejection_status = models.CharField(max_length=20, choices=REJECTION_STATUS_CHOICES, blank=True, null=True, help_text="Current rejection status")
+    rejection_reason_category = models.CharField(max_length=20, blank=True, null=True, help_text="Category of rejection reason")
+    rejection_reason_specific = models.CharField(max_length=30, blank=True, null=True, help_text="Specific rejection reason")
+    rejection_notes = models.TextField(blank=True, null=True, help_text="Additional notes about the rejection")
+    rejected_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='rejected_parts', help_text="User who rejected the part")
+    rejected_at = models.DateTimeField(null=True, blank=True, help_text="Date and time when the part was rejected")
+
+    # Appeal fields
+    APPEAL_STATUS_CHOICES = [
+        ('pending', 'Pending Review'),
+        ('approved', 'Approved'),
+        ('denied', 'Denied'),
+        ('resolved', 'Resolved'),
+    ]
+    appeal_status = models.CharField(max_length=20, choices=APPEAL_STATUS_CHOICES, blank=True, null=True, help_text="Current appeal status")
+    appeal_notes = models.TextField(blank=True, null=True, help_text="Notes about the appeal")
+    appealed_at = models.DateTimeField(null=True, blank=True, help_text="Date and time when the appeal was submitted")
+    appeal_resolved_at = models.DateTimeField(null=True, blank=True, help_text="Date and time when the appeal was resolved")
+
     def __str__(self):
         return f"{self.part_type} of {self.animal.animal_id} ({self.weight} {self.weight_unit})"
 
     class Meta:
         unique_together = ['animal', 'part_type']  # Prevent duplicate parts for same animal
+
+    def save(self, *args, **kwargs):
+        # Ensure part_id exists
+        if not self.part_id:
+            self.part_id = self._generate_part_id()
+        super().save(*args, **kwargs)
+
+    def _generate_part_id(self):
+        """Generate a unique part ID using UUID"""
+        return f"PART_{uuid.uuid4().hex[:12].upper()}"
 
 
 class ProductIngredient(models.Model):
@@ -442,12 +509,13 @@ class CarcassMeasurement(models.Model):
     animal = models.OneToOneField(Animal, on_delete=models.CASCADE, related_name='carcass_measurement')
     carcass_type = models.CharField(max_length=20, choices=CARCASS_TYPE_CHOICES, default='whole', help_text="Type of carcass measurement")
     # Whole carcass fields
-    head_weight = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(0)], null=True, blank=True, help_text="Weight of head")
+    head_weight = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text="Weight of head")
     torso_weight = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(0)], null=True, blank=True, help_text="Weight of torso")
     # Split carcass fields (aligned with frontend naming)
-    front_legs_weight = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(0)], null=True, blank=True, help_text="Weight of front legs")
-    hind_legs_weight = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(0)], null=True, blank=True, help_text="Weight of hind legs")
-    feet_weight = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(0)], null=True, blank=True, help_text="Weight of feet")
+    left_carcass_weight = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(0)], null=True, blank=True, help_text="Weight of left carcass")
+    right_carcass_weight = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(0)], null=True, blank=True, help_text="Weight of right carcass")
+    feet_weight = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text="Weight of feet")
+    whole_carcass_weight = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text="Weight of whole carcass")
     organs_weight = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(0)], null=True, blank=True, help_text="Weight of organs")
     weight_unit = models.CharField(max_length=10, choices=UNIT_CHOICES, default='kg', help_text="Unit for weight measurements")
     measurements = models.JSONField(blank=True, help_text="JSON object containing measurement data: {'head_weight': {'value': 5.2, 'unit': 'kg'}, 'torso_weight': {'value': 45.8, 'unit': 'kg'}}")
@@ -464,34 +532,48 @@ class CarcassMeasurement(models.Model):
             if self.head_weight is not None and self.torso_weight is not None:
                 return self.head_weight + self.torso_weight
         elif self.carcass_type == 'split':
-            if (self.front_legs_weight is not None and self.hind_legs_weight is not None and
+            if (self.left_carcass_weight is not None and self.right_carcass_weight is not None and
                 self.feet_weight is not None and self.organs_weight is not None):
-                return (self.front_legs_weight + self.hind_legs_weight +
-                       self.feet_weight + self.organs_weight)
+                return (self.left_carcass_weight + self.right_carcass_weight +
+                        self.feet_weight + self.organs_weight)
         return None
 
     def clean(self):
         """Validate carcass measurement data"""
         from django.core.exceptions import ValidationError
 
-        # Validate all weights are positive
-        weight_fields = ['head_weight', 'torso_weight', 'front_legs_weight',
-                        'hind_legs_weight', 'feet_weight', 'organs_weight']
+        # Validate all weights are positive and within realistic ranges
+        weight_fields = ['head_weight', 'torso_weight', 'left_carcass_weight',
+                        'right_carcass_weight', 'feet_weight', 'whole_carcass_weight', 'organs_weight']
         for field_name in weight_fields:
             weight = getattr(self, field_name)
-            if weight is not None and weight <= 0:
-                raise ValidationError(f"{field_name.replace('_', ' ').title()} must be positive.")
+            if weight is not None:
+                if weight <= 0:
+                    raise ValidationError(f"{field_name.replace('_', ' ').title()} must be positive.")
+                # Check for unrealistic weights (too large for typical livestock)
+                if weight > 2000:
+                    raise ValidationError(f"{field_name.replace('_', ' ').title()} seems unusually large. Please verify the measurement.")
 
         # Validate required fields based on carcass_type
         if self.carcass_type == 'whole':
-            if self.head_weight is None or self.torso_weight is None:
-                raise ValidationError("For whole carcass, both head_weight and torso_weight are required.")
+            if self.whole_carcass_weight is None:
+                raise ValidationError("For whole carcass, whole_carcass_weight is required.")
         elif self.carcass_type == 'split':
-            # Use the declared split field names
-            required_fields = ['front_legs_weight', 'hind_legs_weight', 'feet_weight', 'organs_weight']
-            for field_name in required_fields:
-                if getattr(self, field_name) is None:
-                    raise ValidationError(f"For split carcass, {field_name.replace('_', ' ')} is required.")
+            # For split carcass, at least torso_weight is required, others are optional but if provided must be valid
+            if self.torso_weight is None:
+                raise ValidationError("For split carcass, torso_weight is required.")
+
+            # Validate that total weight makes sense (not too small for any animal)
+            total_weight = 0.0
+            if self.head_weight: total_weight += self.head_weight
+            if self.torso_weight: total_weight += self.torso_weight
+            if self.left_carcass_weight: total_weight += self.left_carcass_weight
+            if self.right_carcass_weight: total_weight += self.right_carcass_weight
+            if self.feet_weight: total_weight += self.feet_weight
+            if self.organs_weight: total_weight += self.organs_weight
+
+            if total_weight > 0 and total_weight < 0.5:
+                raise ValidationError("Total carcass weight seems too small. Please verify measurements.")
 
     def get_measurement(self, key):
         """Get a specific measurement by key"""
@@ -852,6 +934,11 @@ class Notification(models.Model):
         ('role_change', 'Role Changed'),
         ('profile_update', 'Profile Update Required'),
         ('verification', 'Account Verification'),
+        ('animal_rejected', 'Animal Rejected'),
+        ('part_rejected', 'Slaughter Part Rejected'),
+        ('appeal_submitted', 'Appeal Submitted'),
+        ('appeal_approved', 'Appeal Approved'),
+        ('appeal_denied', 'Appeal Denied'),
     ]
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
@@ -1554,6 +1641,93 @@ class Sale(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+
+
+class RejectionReason(models.Model):
+    """Model for storing rejection reasons for animals and parts during receive process"""
+
+    REJECTION_CATEGORY_CHOICES = [
+        ('quality', 'Quality Issues'),
+        ('documentation', 'Documentation Issues'),
+        ('health_safety', 'Health & Safety'),
+        ('compliance', 'Compliance Issues'),
+        ('logistics', 'Logistics Issues'),
+        ('other', 'Other'),
+    ]
+
+    SPECIFIC_REASON_CHOICES = [
+        # Quality Issues
+        ('poor_condition', 'Poor Physical Condition'),
+        ('contamination', 'Contamination'),
+        ('incorrect_weight', 'Incorrect Weight'),
+        ('damage', 'Physical Damage'),
+        ('expired', 'Expired/Outdated'),
+
+        # Documentation Issues
+        ('missing_docs', 'Missing Documentation'),
+        ('invalid_docs', 'Invalid Documentation'),
+        ('incomplete_records', 'Incomplete Records'),
+        ('wrong_animal', 'Wrong Animal ID'),
+
+        # Health & Safety
+        ('disease_symptoms', 'Disease Symptoms'),
+        ('parasites', 'Parasites/Insects'),
+        ('chemical_residues', 'Chemical Residues'),
+        ('temperature_issues', 'Temperature Issues'),
+
+        # Compliance Issues
+        ('certification_missing', 'Missing Certification'),
+        ('traceability_breach', 'Traceability Breach'),
+        ('regulatory_violation', 'Regulatory Violation'),
+
+        # Logistics Issues
+        ('transport_damage', 'Transport Damage'),
+        ('delayed_delivery', 'Delayed Delivery'),
+        ('packaging_issues', 'Packaging Issues'),
+
+        # Other
+        ('other', 'Other (Specify in Notes)'),
+    ]
+
+    # What was rejected
+    animal = models.ForeignKey(Animal, on_delete=models.CASCADE, null=True, blank=True, related_name='rejection_reasons')
+    slaughter_part = models.ForeignKey(SlaughterPart, on_delete=models.CASCADE, null=True, blank=True, related_name='rejection_reasons')
+
+    # Rejection details
+    category = models.CharField(max_length=20, choices=REJECTION_CATEGORY_CHOICES)
+    specific_reason = models.CharField(max_length=30, choices=SPECIFIC_REASON_CHOICES)
+    notes = models.TextField(blank=True, null=True, help_text="Additional notes about the rejection")
+
+    # Processing details
+    rejected_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='rejections_made')
+    processing_unit = models.ForeignKey(ProcessingUnit, on_delete=models.SET_NULL, null=True, related_name='rejections')
+    rejected_at = models.DateTimeField(default=timezone.now)
+
+    # Metadata
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ['-rejected_at']
+        indexes = [
+            models.Index(fields=['animal', 'rejected_at']),
+            models.Index(fields=['slaughter_part', 'rejected_at']),
+            models.Index(fields=['category', 'rejected_at']),
+            models.Index(fields=['processing_unit', 'rejected_at']),
+        ]
+
+    def __str__(self):
+        target = self.animal.animal_id if self.animal else f"Part {self.slaughter_part.part_id}"
+        return f"Rejection of {target}: {self.get_category_display()} - {self.get_specific_reason_display()}"
+
+    def clean(self):
+        """Validate that either animal or slaughter_part is set, but not both"""
+        from django.core.exceptions import ValidationError
+
+        if not self.animal and not self.slaughter_part:
+            raise ValidationError("Either animal or slaughter_part must be specified")
+
+        if self.animal and self.slaughter_part:
+            raise ValidationError("Cannot specify both animal and slaughter_part - choose one")
 
 
 class SaleItem(models.Model):

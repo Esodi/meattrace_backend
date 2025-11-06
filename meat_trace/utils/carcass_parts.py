@@ -21,14 +21,12 @@ def create_slaughter_parts_from_measurement(animal: Animal, measurement: Carcass
     parts_to_create = []
     
     # Map of measurement fields to SlaughterPart part_type
-    # Must match PART_CHOICES in models.py: whole_carcass, left_side, right_side, head, feet, internal_organs, other
+    # Must match PART_CHOICES in models.py: whole_carcass, left_side, right_side, head, feet, internal_organs, torso, front_legs, hind_legs, other
     measurement_to_part_map = {
-        'head_weight': 'head',
-        'torso_weight': 'other',  # No 'torso' in PART_CHOICES, use 'other'
-        'front_legs_weight': 'left_side',  # Map front legs to left_side
-        'hind_legs_weight': 'right_side',  # Map hind legs to right_side
-        'feet_weight': 'feet',
-        'organs_weight': 'internal_organs',
+        'head': 'head',
+        'feet': 'feet',
+        'left_carcass': 'left_carcass',
+        'right_carcass': 'right_carcass',
     }
     
     # Standard parts from fixed fields

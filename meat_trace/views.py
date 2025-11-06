@@ -17,10 +17,12 @@ from django.db.models import Q
 from django.utils import timezone
 from django.conf import settings
 from django.db import models
+from django.db import transaction
 
-from .models import Animal, Product, Receipt, UserProfile, ProductCategory, ProcessingStage, ProductTimelineEvent, Inventory, Order, OrderItem, CarcassMeasurement, SlaughterPart, ProcessingUnit, ProcessingUnitUser, Shop, ShopUser, UserAuditLog, JoinRequest, Notification, Activity, SystemAlert, PerformanceMetric, ComplianceAudit, Certification, SystemHealth, SecurityLog, TransferRequest, BackupSchedule, Sale, SaleItem
+from .models import Animal, Product, Receipt, UserProfile, ProductCategory, ProcessingStage, ProductTimelineEvent, Inventory, Order, OrderItem, CarcassMeasurement, SlaughterPart, ProcessingUnit, ProcessingUnitUser, Shop, ShopUser, UserAuditLog, JoinRequest, Notification, Activity, SystemAlert, PerformanceMetric, ComplianceAudit, Certification, SystemHealth, SecurityLog, TransferRequest, BackupSchedule, Sale, SaleItem, RejectionReason
 from .farmer_dashboard_serializer import FarmerDashboardSerializer
 from .serializers import AnimalSerializer, ProductSerializer, OrderSerializer, ShopSerializer, SlaughterPartSerializer, ActivitySerializer, ProcessingUnitSerializer, JoinRequestSerializer, ProductCategorySerializer, CarcassMeasurementSerializer, SaleSerializer, SaleItemSerializer
+from .utils.rejection_service import RejectionService
 
 @api_view(['GET'])
 def user_profile_view(request):
@@ -576,40 +578,103 @@ class AnimalViewSet(viewsets.ModelViewSet):
             if animal.transferred_to is not None:
                 return Response({'error': f'Animal {animal.animal_id} has already been transferred'}, status=status_module.HTTP_400_BAD_REQUEST)
 
-            animal.transferred_to = processing_unit
-            animal.transferred_at = timezone.now()
-            animal.save()
-            transferred_animals_count += 1
+            # Check if this is a split carcass animal (has slaughter parts)
+            if animal.has_slaughter_parts:
+                # For split carcass animals, transfer all parts instead of the whole animal
+                all_parts = animal.slaughter_parts.all()
+                for part in all_parts:
+                    if part.transferred_to is not None:
+                        return Response({'error': f'Part {part.part_type} of animal {animal.animal_id} has already been transferred'}, status=status_module.HTTP_400_BAD_REQUEST)
 
-            # Create activity for transfer
-            Activity.objects.create(
-                user=request.user,
-                activity_type='transfer',
-                title=f'Animal {animal.animal_name or animal.animal_id} transferred',
-                description=f'Transferred {animal.species} to {processing_unit.name}',
-                entity_id=str(animal.id),
-                entity_type='animal',
-                metadata={'animal_id': animal.animal_id, 'processing_unit': processing_unit.name, 'transfer_mode': transfer_mode}
-            )
+                    part.transferred_to = processing_unit
+                    part.transferred_at = timezone.now()
+                    part.is_selected_for_transfer = True
+                    part.save()
+                    transferred_parts_count += 1
 
-            UserAuditLog.objects.create(
-                performed_by=request.user,
-                affected_user=animal.farmer,
-                processing_unit=processing_unit,
-                action='animal_transferred',
-                description=f'Animal {animal.animal_id} transferred to processing unit {processing_unit.name}',
-                old_values={'transferred_to': None},
-                new_values={'transferred_to': processing_unit.id, 'transferred_at': animal.transferred_at.isoformat()},
-                ip_address=request.META.get('REMOTE_ADDR'),
-                user_agent=request.META.get('HTTP_USER_AGENT', '')
-            )
+                    # Log audit for part transfer
+                    UserAuditLog.objects.create(
+                        performed_by=request.user,
+                        affected_user=animal.farmer,
+                        processing_unit=processing_unit,
+                        action='part_transferred',
+                        description=f'Part {part.part_type} of animal {animal.animal_id} transferred (split carcass whole transfer)',
+                        old_values={'transferred_to': None},
+                        new_values={'transferred_to': processing_unit.id},
+                        metadata={'transfer_mode': transfer_mode, 'split_carcass_transfer': True},
+                        ip_address=request.META.get('REMOTE_ADDR'),
+                        user_agent=request.META.get('HTTP_USER_AGENT', '')
+                    )
+
+                # Mark the animal as transferred since all parts are transferred
+                animal.transferred_to = processing_unit
+                animal.transferred_at = timezone.now()
+                animal.save()
+                transferred_animals_count += 1
+
+                # Create activity for split carcass transfer
+                Activity.objects.create(
+                    user=request.user,
+                    activity_type='transfer',
+                    title=f'Split carcass animal {animal.animal_name or animal.animal_id} transferred',
+                    description=f'Transferred all parts of {animal.species} (split carcass) to {processing_unit.name}',
+                    entity_id=str(animal.id),
+                    entity_type='animal',
+                    metadata={'animal_id': animal.animal_id, 'processing_unit': processing_unit.name, 'transfer_mode': transfer_mode, 'split_carcass': True, 'parts_transferred': len(all_parts)}
+                )
+
+                UserAuditLog.objects.create(
+                    performed_by=request.user,
+                    affected_user=animal.farmer,
+                    processing_unit=processing_unit,
+                    action='animal_transferred',
+                    description=f'Split carcass animal {animal.animal_id} transferred to processing unit {processing_unit.name} (all parts)',
+                    old_values={'transferred_to': None},
+                    new_values={'transferred_to': processing_unit.id, 'transferred_at': animal.transferred_at.isoformat()},
+                    metadata={'transfer_mode': transfer_mode, 'split_carcass_transfer': True, 'parts_count': len(all_parts)},
+                    ip_address=request.META.get('REMOTE_ADDR'),
+                    user_agent=request.META.get('HTTP_USER_AGENT', '')
+                )
+            else:
+                # Standard whole animal transfer for non-split carcass animals
+                animal.transferred_to = processing_unit
+                animal.transferred_at = timezone.now()
+                animal.save()
+                transferred_animals_count += 1
+
+                # Create activity for transfer
+                Activity.objects.create(
+                    user=request.user,
+                    activity_type='transfer',
+                    title=f'Animal {animal.animal_name or animal.animal_id} transferred',
+                    description=f'Transferred {animal.species} to {processing_unit.name}',
+                    entity_id=str(animal.id),
+                    entity_type='animal',
+                    metadata={'animal_id': animal.animal_id, 'processing_unit': processing_unit.name, 'transfer_mode': transfer_mode}
+                )
+
+                UserAuditLog.objects.create(
+                    performed_by=request.user,
+                    affected_user=animal.farmer,
+                    processing_unit=processing_unit,
+                    action='animal_transferred',
+                    description=f'Animal {animal.animal_id} transferred to processing unit {processing_unit.name}',
+                    old_values={'transferred_to': None},
+                    new_values={'transferred_to': processing_unit.id, 'transferred_at': animal.transferred_at.isoformat()},
+                    ip_address=request.META.get('REMOTE_ADDR'),
+                    user_agent=request.META.get('HTTP_USER_AGENT', '')
+                )
 
         # Handle part transfers
         for pt in part_transfers:
             animal_id = pt.get('animal_id')
-            part_ids = pt.get('part_ids', [])
-            if not animal_id or not part_ids:
-                return Response({'error': 'Each part_transfer must have animal_id and part_ids'}, status=status_module.HTTP_400_BAD_REQUEST)
+            # Backwards-compatible support: either 'part_ids' (list of ints) or
+            # 'parts' (list of objects like {id/part_id, weight, weight_unit}).
+            part_ids = pt.get('part_ids', []) or []
+            parts = pt.get('parts', []) or []
+
+            if not animal_id or (not part_ids and not parts):
+                return Response({'error': 'Each part_transfer must include animal_id and part_ids or parts'}, status=status_module.HTTP_400_BAD_REQUEST)
 
             try:
                 animal = Animal.objects.get(id=animal_id, farmer=request.user)
@@ -619,22 +684,37 @@ class AnimalViewSet(viewsets.ModelViewSet):
             if not animal.slaughtered:
                 return Response({'error': f'Animal {animal.animal_id} must be slaughtered before transferring parts'}, status=status_module.HTTP_400_BAD_REQUEST)
 
-            for pid in part_ids:
-                try:
-                    part = SlaughterPart.objects.get(id=pid, animal=animal)
-                except SlaughterPart.DoesNotExist:
-                    return Response({'error': f'Part {pid} not found for animal {animal_id}'}, status=status_module.HTTP_404_NOT_FOUND)
-
+            # Helper to process a single SlaughterPart instance given optional incoming weight
+            def _process_part(part, incoming_weight=None, incoming_unit=None):
                 if part.transferred_to is not None:
                     return Response({'error': f'Part {part.part_type} of animal {animal.animal_id} has already been transferred'}, status=status_module.HTTP_400_BAD_REQUEST)
+
+                # If caller provided a weight, validate and persist it
+                if incoming_weight is not None:
+                    try:
+                        w = Decimal(str(incoming_weight))
+                    except Exception:
+                        return Response({'error': f'Invalid weight for part {part.id}'}, status=status_module.HTTP_400_BAD_REQUEST)
+
+                    if w <= 0 or w > Decimal('2000'):
+                        return Response({'error': f'Weight for part {part.id} must be a positive number <= 2000'}, status=status_module.HTTP_400_BAD_REQUEST)
+
+                    part.weight = float(w)
+                    if incoming_unit:
+                        part.weight_unit = incoming_unit
 
                 part.transferred_to = processing_unit
                 part.transferred_at = timezone.now()
                 part.is_selected_for_transfer = True
                 part.save()
-                transferred_parts_count += 1
 
-                # Log audit for part transfer
+                # Log audit for part transfer and include weight if present
+                new_values = {'transferred_to': processing_unit.id}
+                metadata = {'transfer_mode': transfer_mode}
+                if incoming_weight is not None:
+                    new_values.update({'weight': float(Decimal(str(incoming_weight)))})
+                    metadata.update({'weight': float(Decimal(str(incoming_weight))), 'weight_unit': incoming_unit or part.weight_unit})
+
                 UserAuditLog.objects.create(
                     performed_by=request.user,
                     affected_user=animal.farmer,
@@ -642,11 +722,55 @@ class AnimalViewSet(viewsets.ModelViewSet):
                     action='part_transferred',
                     description=f'Part {part.part_type} of animal {animal.animal_id} transferred',
                     old_values={'transferred_to': None},
-                    new_values={'transferred_to': processing_unit.id},
-                    metadata={'transfer_mode': transfer_mode},
+                    new_values=new_values,
+                    metadata=metadata,
                     ip_address=request.META.get('REMOTE_ADDR'),
                     user_agent=request.META.get('HTTP_USER_AGENT', '')
                 )
+
+                return None
+
+            # Process legacy 'part_ids' list (integers)
+            for pid in part_ids:
+                try:
+                    part = SlaughterPart.objects.get(id=pid, animal=animal)
+                except SlaughterPart.DoesNotExist:
+                    return Response({'error': f'Part {pid} not found for animal {animal_id}'}, status=status_module.HTTP_404_NOT_FOUND)
+
+                resp = _process_part(part)
+                if isinstance(resp, Response):
+                    return resp
+
+                transferred_parts_count += 1
+
+            # Process new 'parts' list which may include weight info
+            for p in parts:
+                # p can be an int (id) or a dict with id/part_id, weight, weight_unit
+                pid = None
+                incoming_weight = None
+                incoming_unit = None
+
+                if isinstance(p, (int,)):
+                    pid = p
+                elif isinstance(p, str) and p.isdigit():
+                    pid = int(p)
+                elif isinstance(p, dict):
+                    pid = p.get('id') or p.get('part_id')
+                    incoming_weight = p.get('weight')
+                    incoming_unit = p.get('weight_unit')
+                else:
+                    return Response({'error': 'Invalid part entry in parts list'}, status=status_module.HTTP_400_BAD_REQUEST)
+
+                try:
+                    part = SlaughterPart.objects.get(id=pid, animal=animal)
+                except SlaughterPart.DoesNotExist:
+                    return Response({'error': f'Part {pid} not found for animal {animal_id}'}, status=status_module.HTTP_404_NOT_FOUND)
+
+                resp = _process_part(part, incoming_weight=incoming_weight, incoming_unit=incoming_unit)
+                if isinstance(resp, Response):
+                    return resp
+
+                transferred_parts_count += 1
 
             # If all parts are transferred, mark animal transferred
             all_parts = animal.slaughter_parts.all()
@@ -670,9 +794,17 @@ class AnimalViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], url_path='receive_animals')
     def receive_animals(self, request):
-        """Endpoint for processing units to receive transferred animals/parts
-        
-        All users of a processing unit can receive animals on behalf of the unit.
+        """Endpoint for processing units to receive or reject transferred animals/parts
+
+        All users of a processing unit can receive/reject animals on behalf of the unit.
+        Special handling for split carcass animals ensures all parts (head, feet, left_carcass, right_carcass) are properly received.
+        Supports mixed accept/reject decisions with detailed rejection reasons.
+
+        Request format:
+        - accept_items: array of items to accept [{'type': 'animal'|'part', 'id': item_id}, ...]
+        - reject_items: array of items to reject [{'type': 'animal'|'part', 'id': item_id, 'category': reason_category, 'specific_reason': reason, 'notes': notes}, ...]
+
+        Legacy format still supported for backward compatibility.
         """
         user = request.user
         if not hasattr(user, 'profile') or user.profile.role != 'processing_unit':
@@ -680,7 +812,7 @@ class AnimalViewSet(viewsets.ModelViewSet):
 
         # Get the processing unit from request or user's primary unit
         processing_unit_id = request.data.get('processing_unit_id')
-        
+
         if processing_unit_id:
             # Verify user is a member of this processing unit
             membership = ProcessingUnitUser.objects.filter(
@@ -689,10 +821,10 @@ class AnimalViewSet(viewsets.ModelViewSet):
                 is_active=True,
                 is_suspended=False
             ).first()
-            
+
             if not membership:
                 return Response({'error': 'You are not a member of this processing unit'}, status=status_module.HTTP_403_FORBIDDEN)
-            
+
             processing_unit = membership.processing_unit
         else:
             # Use user's primary processing unit
@@ -700,51 +832,216 @@ class AnimalViewSet(viewsets.ModelViewSet):
             if not processing_unit:
                 return Response({'error': 'User not associated with a processing unit'}, status=status_module.HTTP_400_BAD_REQUEST)
 
+        # Log incoming request for easier debugging and parse acceptance/rejection data
+        try:
+            print(f"[RECEIVE_ANIMALS] User: {getattr(user, 'username', None)}, Data: {request.data}")
+            print(f"[RECEIVE_ANIMALS] User profile: {getattr(user, 'profile', None)}")
+            print(f"[RECEIVE_ANIMALS] User role: {getattr(getattr(user, 'profile', None), 'role', None)}")
+        except Exception as e:
+            # Defensive: don't let logging break the endpoint
+            print(f"[RECEIVE_ANIMALS] Logging error: {e}")
+            pass
+
+        # Parse acceptance and rejection data - support both old and new formats for backward compatibility
+        accept_items = request.data.get('accept_items', []) or []
+        reject_items = request.data.get('reject_items', []) or []
+
+        # Legacy format support
         animal_ids = request.data.get('animal_ids', []) or []
         part_receives = request.data.get('part_receives', []) or []
+        animal_rejections = request.data.get('animal_rejections', []) or []
+        part_rejections = request.data.get('part_rejections', []) or []
 
-        if not animal_ids and not part_receives:
-            return Response({'error': 'animal_ids or part_receives are required'}, status=status_module.HTTP_400_BAD_REQUEST)
+        # Convert legacy format to new format if needed
+        if not accept_items and not reject_items:
+            # Convert legacy animal_ids to accept_items
+            for aid in animal_ids:
+                accept_items.append({'type': 'animal', 'id': aid})
+
+            # Convert legacy part_receives to accept_items
+            for pr in part_receives:
+                animal_id = pr.get('animal_id')
+                part_ids = pr.get('part_ids', [])
+                for pid in part_ids:
+                    accept_items.append({'type': 'part', 'id': pid, 'animal_id': animal_id})
+
+            # Convert legacy animal_rejections to reject_items
+            for ar in animal_rejections:
+                reject_items.append({
+                    'type': 'animal',
+                    'id': ar.get('animal_id'),
+                    'category': ar.get('category'),
+                    'specific_reason': ar.get('specific_reason'),
+                    'notes': ar.get('notes', '')
+                })
+
+            # Convert legacy part_rejections to reject_items
+            for pr in part_rejections:
+                reject_items.append({
+                    'type': 'part',
+                    'id': pr.get('part_id'),
+                    'category': pr.get('category'),
+                    'specific_reason': pr.get('specific_reason'),
+                    'notes': pr.get('notes', '')
+                })
+
+        if not accept_items and not reject_items:
+            # Provide a clearer error payload to help clients (and mobile apps) fix the request
+            return Response({
+                'error': 'At least one of accept_items or reject_items is required',
+                'required_fields': [
+                    'accept_items',
+                    'reject_items',
+                    'animal_ids',
+                    'part_receives',
+                    'animal_rejections',
+                    'part_rejections'
+                ],
+                'hint': 'For split carcass reception use "part_receives": [{"animal_id": <id>, "part_ids": [<part_id>, ...]}] or use "accept_items" with type="part".'
+            }, status=status_module.HTTP_400_BAD_REQUEST)
 
         received_animals_count = 0
         received_parts_count = 0
+        rejected_animals_count = 0
+        rejected_parts_count = 0
 
-        animals = []
-        for aid in animal_ids:
-            try:
-                animal = Animal.objects.get(id=aid, transferred_to=processing_unit)
-            except Animal.DoesNotExist:
-                return Response({'error': f'Animal {aid} not found or not transferred to your processing unit'}, status=status_module.HTTP_404_NOT_FOUND)
+        # Process acceptances
+        for item in accept_items:
+            item_type = item.get('type')
+            item_id = item.get('id')
 
-            if animal.received_by is not None:
-                return Response({'error': f'Animal {animal.animal_id} has already been received'}, status=status_module.HTTP_400_BAD_REQUEST)
+            if item_type == 'animal':
+                try:
+                    animal = Animal.objects.get(id=item_id, transferred_to=processing_unit)
+                except Animal.DoesNotExist:
+                    return Response({'error': f'Animal {item_id} not found or not transferred to your processing unit'}, status=status_module.HTTP_404_NOT_FOUND)
 
-            animal.received_by = user
-            animal.received_at = timezone.now()
-            animal.save()
-            received_animals_count += 1
+                if animal.received_by is not None:
+                    return Response({'error': f'Animal {animal.animal_id} has already been received'}, status=status_module.HTTP_400_BAD_REQUEST)
 
-            # Create activity for receiving animal
-            Activity.objects.create(
-                user=user,
-                activity_type='transfer',
-                title=f'Animal {animal.animal_id} received',
-                description=f'Received animal {animal.animal_id}',
-                entity_id=str(animal.id),
-                entity_type='animal',
-                metadata={'animal_id': animal.animal_id}
-            )
-            UserAuditLog.objects.create(
-                performed_by=user,
-                affected_user=animal.farmer,
-                processing_unit=processing_unit,
-                action='animal_received',
-                description=f'Animal {animal.animal_id} received by processing unit {processing_unit.name}',
-                old_values={'received_by': None},
-                new_values={'received_by': user.id, 'received_at': animal.received_at.isoformat()},
-                ip_address=request.META.get('REMOTE_ADDR'),
-                user_agent=request.META.get('HTTP_USER_AGENT', '')
-            )
+                # Special validation for split carcass animals
+                if animal.is_split_carcass:
+                    return Response({
+                        'error': f'Animal {animal.animal_id} is a split carcass animal and must be received by parts, not as a whole animal',
+                        'animal_id': animal.animal_id,
+                        'carcass_type': 'split',
+                        'required_parts': ['head', 'feet', 'left_carcass', 'right_carcass'],
+                        'suggestion': 'Use accept_items with type="part" to receive individual parts of this split carcass animal'
+                    }, status=status_module.HTTP_400_BAD_REQUEST)
+
+                animal.received_by = user
+                animal.received_at = timezone.now()
+                animal.save()
+                received_animals_count += 1
+
+                # Create activity for receiving animal
+                Activity.objects.create(
+                    user=user,
+                    activity_type='transfer',
+                    title=f'Animal {animal.animal_id} received',
+                    description=f'Received animal {animal.animal_id}',
+                    entity_id=str(animal.id),
+                    entity_type='animal',
+                    metadata={'animal_id': animal.animal_id}
+                )
+                UserAuditLog.objects.create(
+                    performed_by=user,
+                    affected_user=animal.farmer,
+                    processing_unit=processing_unit,
+                    action='animal_received',
+                    description=f'Animal {animal.animal_id} received by processing unit {processing_unit.name}',
+                    old_values={'received_by': None},
+                    new_values={'received_by': user.id, 'received_at': animal.received_at.isoformat()},
+                    ip_address=request.META.get('REMOTE_ADDR'),
+                    user_agent=request.META.get('HTTP_USER_AGENT', '')
+                )
+
+            elif item_type == 'part':
+                print(f"[RECEIVE_ANIMALS] Processing part {item_id} for animal_id {item.get('animal_id')}")
+                try:
+                    part = SlaughterPart.objects.get(id=item_id, transferred_to=processing_unit)
+                    print(f"[RECEIVE_ANIMALS] Found part {item_id}: {part.part_type}, transferred_to: {part.transferred_to}, received_by: {part.received_by}")
+                except SlaughterPart.DoesNotExist:
+                    print(f"[RECEIVE_ANIMALS] Part {item_id} not found or not transferred to processing unit {processing_unit.id}")
+                    return Response({'error': f'Part {item_id} not found or not transferred to your processing unit'}, status=status_module.HTTP_404_NOT_FOUND)
+
+                if part.received_by is not None:
+                    print(f"[RECEIVE_ANIMALS] Part {item_id} already received by {part.received_by}")
+                    return Response({'error': f'Part {part.part_type} already received'}, status=status_module.HTTP_400_BAD_REQUEST)
+
+                part.received_by = user
+                part.received_at = timezone.now()
+                part.save()
+                received_parts_count += 1
+
+                # Create activity for part receive
+                Activity.objects.create(
+                    user=user,
+                    activity_type='transfer',
+                    title=f'Part {part.part_type} of animal {part.animal.animal_id} received',
+                    description=f'Received part {part.part_type} of animal {part.animal.animal_id}',
+                    entity_id=str(part.id),
+                    entity_type='slaughter_part',
+                    metadata={'animal_id': part.animal.animal_id, 'part_id': part.id, 'part_type': part.part_type}
+                )
+                UserAuditLog.objects.create(
+                    performed_by=user,
+                    affected_user=part.animal.farmer,
+                    processing_unit=processing_unit,
+                    action='part_received',
+                    description=f'Part {part.part_type} of animal {part.animal.animal_id} received by processing unit {processing_unit.name}',
+                    old_values={'received_by': None},
+                    new_values={'received_by': user.id, 'received_at': part.received_at.isoformat()},
+                    ip_address=request.META.get('REMOTE_ADDR'),
+                    user_agent=request.META.get('HTTP_USER_AGENT', '')
+                )
+
+        # Process rejections
+        for item in reject_items:
+            item_type = item.get('type')
+            item_id = item.get('id')
+            category = item.get('category')
+            specific_reason = item.get('specific_reason')
+            notes = item.get('notes', '')
+
+            if not item_id or not category or not specific_reason:
+                return Response({'error': 'id, category, and specific_reason are required for rejections'}, status=status_module.HTTP_400_BAD_REQUEST)
+
+            if item_type == 'animal':
+                try:
+                    animal = Animal.objects.get(id=item_id, transferred_to=processing_unit)
+                except Animal.DoesNotExist:
+                    return Response({'error': f'Animal {item_id} not found or not transferred to your processing unit'}, status=status_module.HTTP_404_NOT_FOUND)
+
+                if animal.received_by is not None:
+                    return Response({'error': f'Animal {animal.animal_id} has already been received'}, status=status_module.HTTP_400_BAD_REQUEST)
+
+                # Process rejection using RejectionService
+                rejection_data = {
+                    'category': category,
+                    'specific_reason': specific_reason,
+                    'notes': notes
+                }
+                RejectionService.process_animal_rejection(animal, rejection_data, user, processing_unit)
+                rejected_animals_count += 1
+
+            elif item_type == 'part':
+                try:
+                    part = SlaughterPart.objects.get(id=item_id, transferred_to=processing_unit)
+                except SlaughterPart.DoesNotExist:
+                    return Response({'error': f'Part {item_id} not found or not transferred to your processing unit'}, status=status_module.HTTP_404_NOT_FOUND)
+
+                if part.received_by is not None:
+                    return Response({'error': f'Part {part.part_type} has already been received'}, status=status_module.HTTP_400_BAD_REQUEST)
+
+                # Process rejection using RejectionService
+                rejection_data = {
+                    'category': category,
+                    'specific_reason': specific_reason,
+                    'notes': notes
+                }
+                RejectionService.process_part_rejection(part, rejection_data, user, processing_unit)
+                rejected_parts_count += 1
 
         # receive parts
         for pr in part_receives:
@@ -757,6 +1054,19 @@ class AnimalViewSet(viewsets.ModelViewSet):
                 animal = Animal.objects.get(id=animal_id)
             except Animal.DoesNotExist:
                 return Response({'error': f'Animal {animal_id} not found'}, status=status_module.HTTP_404_NOT_FOUND)
+
+            # Validate split carcass part reception
+            # NOTE: Previously we required that all split-carcass parts be
+            # transferred to the same processing unit before any receive could
+            # happen. That prevented processing units from receiving parts of
+            # the same animal when parts were distributed across multiple
+            # processing units. Instead, allow receiving any parts that were
+            # actually transferred to the current processing unit; individual
+            # part-level validations occur below when checking each pid.
+            #
+            # Keep this block intentionally permissive — the detailed checks
+            # for each requested part (see the per-pid loop) will ensure the
+            # caller only receives parts that were transferred to them.
 
             for pid in part_ids:
                 try:
@@ -780,7 +1090,7 @@ class AnimalViewSet(viewsets.ModelViewSet):
                     description=f'Received part {part.part_type} of animal {animal.animal_id}',
                     entity_id=str(part.id),
                     entity_type='slaughter_part',
-                    metadata={'animal_id': animal.animal_id, 'part_id': part.id}
+                    metadata={'animal_id': animal.animal_id, 'part_id': part.id, 'part_type': part.part_type}
                 )
                 UserAuditLog.objects.create(
                     performed_by=user,
@@ -793,17 +1103,45 @@ class AnimalViewSet(viewsets.ModelViewSet):
                     ip_address=request.META.get('REMOTE_ADDR'),
                     user_agent=request.META.get('HTTP_USER_AGENT', '')
                 )
-                # If all parts are received, mark the animal as received
-                all_parts = SlaughterPart.objects.filter(animal=animal, transferred_to=processing_unit)
-                if all_parts.exists() and all(pt.received_by is not None for pt in all_parts):
-                    animal.received_by = user
-                    animal.received_at = timezone.now()
-                    animal.save()
+
+            # Check if all parts are received and mark animal as received if needed
+            all_parts = SlaughterPart.objects.filter(animal=part.animal, transferred_to=processing_unit)
+            if all_parts.exists() and all(pt.received_by is not None for pt in all_parts):
+                # For split carcass animals, ensure all required parts are received
+                if part.animal.is_split_carcass:
+                    required_parts = {'head', 'feet', 'left_carcass', 'right_carcass'}
+                    received_parts = set(all_parts.filter(received_by__isnull=False).values_list('part_type', flat=True))
+                    if required_parts.issubset(received_parts):
+                        part.animal.received_by = user
+                        part.animal.received_at = timezone.now()
+                        part.animal.save()
+
+                        # Create activity for complete split carcass reception
+                        Activity.objects.create(
+                            user=user,
+                            activity_type='transfer',
+                            title=f'Split carcass animal {part.animal.animal_id} fully received',
+                            description=f'All parts of split carcass animal {part.animal.animal_id} received',
+                            entity_id=str(part.animal.id),
+                            entity_type='animal',
+                            metadata={
+                                'animal_id': part.animal.animal_id,
+                                'carcass_type': 'split',
+                                'parts_received': list(received_parts)
+                            }
+                        )
+                else:
+                    # For regular animals with parts, mark as received when all parts are received
+                    part.animal.received_by = user
+                    part.animal.received_at = timezone.now()
+                    part.animal.save()
 
         return Response({
-            'message': f'Received {received_animals_count} animals and {received_parts_count} parts',
+            'message': f'Received {received_animals_count} animals and {received_parts_count} parts, rejected {rejected_animals_count} animals and {rejected_parts_count} parts',
             'received_animals_count': received_animals_count,
-            'received_parts_count': received_parts_count
+            'received_parts_count': received_parts_count,
+            'rejected_animals_count': rejected_animals_count,
+            'rejected_parts_count': rejected_parts_count
         }, status=status_module.HTTP_200_OK)
 
 
@@ -1065,6 +1403,243 @@ class CarcassMeasurementViewSet(viewsets.ModelViewSet):
     serializer_class = CarcassMeasurementSerializer
     permission_classes = [IsAuthenticated]
 
+    def get_queryset(self):
+        """
+        Return carcass measurements based on user permissions.
+        Farmers see their own animals' measurements.
+        Processing units see measurements for animals they've received.
+        """
+        user = self.request.user
+        queryset = CarcassMeasurement.objects.select_related('animal').prefetch_related('animal__products')
+
+        # Farmers see measurements for their animals
+        if hasattr(user, 'profile') and user.profile.role == 'farmer':
+            queryset = queryset.filter(animal__farmer=user)
+        # Processing units see measurements for animals they've received
+        elif hasattr(user, 'profile') and user.profile.role == 'processing_unit':
+            processing_unit = user.profile.processing_unit
+            if processing_unit:
+                queryset = queryset.filter(animal__transferred_to=processing_unit)
+
+        return queryset.order_by('-created_at')
+
+    def create(self, request, *args, **kwargs):
+        """
+        Create a new carcass measurement with comprehensive validation and error handling.
+        """
+        print(f"[CARCASS_MEASUREMENT_CREATE] Starting carcass measurement creation for user {request.user.username}")
+
+        user = self.request.user
+
+        # Verify user is a farmer (only farmers can create carcass measurements)
+        if not hasattr(user, 'profile') or user.profile.role != 'farmer':
+            print(f"[CARCASS_MEASUREMENT_CREATE] User role check failed: has_profile={hasattr(user, 'profile')}, role={user.profile.role if hasattr(user, 'profile') else 'None'}")
+            return Response(
+                {'error': 'Only farmers can create carcass measurements'},
+                status=status_module.HTTP_403_FORBIDDEN
+            )
+
+        # Extract data
+        # Accept either 'animal_id' (backend-style) or 'animal' (frontend-style) for the animal PK.
+        animal_id = request.data.get('animal_id') or request.data.get('animal')
+        # Support case where frontend sends a nested object: { "animal": {"id": 123} }
+        if isinstance(animal_id, dict):
+            animal_id = animal_id.get('id')
+
+        carcass_type = request.data.get('carcass_type', 'whole')
+        measurements_data = request.data.get('measurements', {})
+
+        print(f"[CARCASS_MEASUREMENT_CREATE] Received data: animal_id={animal_id}, carcass_type={carcass_type}")
+
+        if not animal_id:
+            print(f"[CARCASS_MEASUREMENT_CREATE] Missing animal identifier (expected 'animal_id' or 'animal')")
+            return Response(
+                {'error': 'Animal ID is required (provide "animal" or "animal_id" in request body)'},
+                status=status_module.HTTP_400_BAD_REQUEST
+            )
+
+        # Verify animal ownership and validate state
+        try:
+            animal = Animal.objects.get(id=animal_id, farmer=user)
+            print(f"[CARCASS_MEASUREMENT_CREATE] Found animal: {animal.animal_id}")
+        except Animal.DoesNotExist:
+            print(f"[CARCASS_MEASUREMENT_CREATE] Animal not found or not owned by user")
+            return Response(
+                {'error': 'Animal not found or access denied'},
+                status=status_module.HTTP_404_NOT_FOUND
+            )
+
+        # Check if animal is already slaughtered
+        if animal.slaughtered:
+            print(f"[CARCASS_MEASUREMENT_CREATE] Animal already slaughtered")
+            return Response(
+                {'error': 'Animal is already slaughtered'},
+                status=status_module.HTTP_400_BAD_REQUEST
+            )
+
+        # Check if animal has been transferred (can't slaughter transferred animals)
+        if animal.transferred_to is not None:
+            print(f"[CARCASS_MEASUREMENT_CREATE] Animal already transferred")
+            return Response(
+                {'error': 'Cannot slaughter an animal that has been transferred'},
+                status=status_module.HTTP_400_BAD_REQUEST
+            )
+
+        # Validate carcass type
+        if carcass_type not in ['whole', 'split']:
+            return Response(
+                {'error': 'Carcass type must be either "whole" or "split"'},
+                status=status_module.HTTP_400_BAD_REQUEST
+            )
+
+        # Validate measurements based on carcass type
+        if carcass_type == 'whole':
+            # Expect weight field names used by serializer/frontend
+            if 'whole_carcass_weight' not in measurements_data:
+                return Response(
+                    {'error': 'Whole carcass weight is required for whole carcass type'},
+                    status=status_module.HTTP_400_BAD_REQUEST
+                )
+        elif carcass_type == 'split':
+            # Frontend/tests may send weight fields either as 'left_carcass_weight' or 'left_carcass'.
+            # Accept either form for backward compatibility.
+            required_bases = ['head', 'feet', 'left_carcass', 'right_carcass']
+            missing = []
+            for base in required_bases:
+                if f'{base}_weight' not in measurements_data and base not in measurements_data:
+                    missing.append(base)
+            if missing:
+                return Response(
+                    {'error': f'Missing required measurement fields for split carcass: {", ".join(missing)}'},
+                    status=status_module.HTTP_400_BAD_REQUEST
+                )
+
+        # Validate weight values - comprehensive validation
+        for key, measurement in measurements_data.items():
+            if not isinstance(measurement, dict) or 'value' not in measurement:
+                return Response(
+                    {'error': f'Invalid measurement format for {key}. Must include "value" field.'},
+                    status=status_module.HTTP_400_BAD_REQUEST
+                )
+
+            weight_value = measurement['value']
+            if not isinstance(weight_value, (int, float, Decimal)) or weight_value <= 0:
+                return Response(
+                    {'error': f'Weight for {key.replace("_", " ")} must be a positive number'},
+                    status=status_module.HTTP_400_BAD_REQUEST
+                )
+
+            # Check for unrealistic weights (prevent data entry errors)
+            if weight_value > 2000:
+                return Response(
+                    {'error': f'Weight for {key.replace("_", " ")} seems unusually large ({weight_value} kg). Please verify the measurement.'},
+                    status=status_module.HTTP_400_BAD_REQUEST
+                )
+
+            # Check for negative values (additional safety)
+            if weight_value < 0:
+                return Response(
+                    {'error': f'Weight for {key.replace("_", " ")} cannot be negative'},
+                    status=status_module.HTTP_400_BAD_REQUEST
+                )
+
+        # Validate total weight against live weight (yield percentage check)
+        total_weight = 0.0
+        for key, measurement in measurements_data.items():
+            if key != 'yield_percentage':  # Skip yield percentage itself
+                total_weight += float(measurement['value'])
+
+        if animal.live_weight and total_weight > animal.live_weight:
+            return Response(
+                {'error': f'Total carcass weight ({total_weight:.1f} kg) cannot exceed live weight ({animal.live_weight} kg)'},
+                status=status_module.HTTP_400_BAD_REQUEST
+            )
+
+        print(f"[CARCASS_MEASUREMENT_CREATE] Validation passed, creating measurement")
+
+        # Create the carcass measurement with transaction safety
+        try:
+            with transaction.atomic():
+                # Create carcass measurement
+                carcass_measurement = CarcassMeasurement.objects.create(
+                    animal=animal,
+                    carcass_type=carcass_type,
+                    measurements=measurements_data,
+                )
+
+                # Mark animal as slaughtered
+                animal.slaughtered = True
+                animal.slaughtered_at = timezone.now()
+                animal.save(update_fields=['slaughtered', 'slaughtered_at'])
+
+                # Create slaughter parts if split carcass
+
+                if carcass_type == 'split':
+                    slaughter_parts_data = []
+                    # Map normalized base keys (without '_weight') to part types
+                    part_mapping_base = {
+                        'head': 'head',
+                        'torso': 'torso',
+                        'front_legs': 'front_legs',
+                        'hind_legs': 'hind_legs',
+                        'feet': 'feet',
+                        'organs': 'internal_organs',
+                        'left_carcass': 'left_carcass',
+                        'right_carcass': 'right_carcass',
+                    }
+
+                    for key, measurement in measurements_data.items():
+                        # Normalize keys that may include the '_weight' suffix
+                        if isinstance(key, str) and key.endswith('_weight'):
+                            base_key = key[:-7]
+                        else:
+                            base_key = key
+
+                        if base_key in part_mapping_base:
+                            slaughter_parts_data.append({
+                                'part_type': part_mapping_base[base_key],
+                                'weight': measurement['value'],
+                                'weight_unit': measurement.get('unit', 'kg'),
+                            })
+
+                    # Create slaughter parts
+                    for part_data in slaughter_parts_data:
+                        SlaughterPart.objects.create(
+                            animal=animal,
+                            **part_data
+                        )
+
+                print(f"[CARCASS_MEASUREMENT_CREATE] Carcass measurement created successfully: ID {carcass_measurement.id}")
+
+                # Create activity log
+                Activity.objects.create(
+                    user=user,
+                    activity_type='slaughter',
+                    title=f'Animal {animal.animal_name or animal.animal_id} slaughtered',
+                    description=f'Slaughtered {animal.species} with ID {animal.animal_id} and recorded carcass measurements.',
+                    entity_id=str(animal.id),
+                    entity_type='animal',
+                    metadata={
+                        'animal_id': animal.animal_id,
+                        'carcass_measurement_id': carcass_measurement.id,
+                        'carcass_type': carcass_measurement.carcass_type,
+                        'total_weight': total_weight,
+                    }
+                )
+
+                # Serialize and return
+                serializer = self.get_serializer(carcass_measurement)
+                return Response(serializer.data, status=status_module.HTTP_201_CREATED)
+
+        except Exception as e:
+            print(f"[CARCASS_MEASUREMENT_CREATE] Exception occurred: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': f'Failed to create carcass measurement: {str(e)}'},
+                status=status_module.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
     def perform_create(self, serializer):
         """
         Custom create logic to mark animal as slaughtered and create slaughter parts.
@@ -1109,6 +1684,33 @@ class CarcassMeasurementViewSet(viewsets.ModelViewSet):
                 'carcass_type': measurement.carcass_type,
             }
         )
+
+    def retrieve(self, request, *args, **kwargs):
+        """
+        Retrieve a single carcass measurement, conditionally exposing new fields.
+        """
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        data = serializer.data
+        if instance.carcass_type != 'whole':
+            data.pop('head_weight', None)
+            data.pop('feet_weight', None)
+            data.pop('whole_carcass_weight', None)
+        return Response(data)
+
+    def list(self, request, *args, **kwargs):
+        """
+        List carcass measurements, conditionally exposing new fields for each item.
+        """
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        data = serializer.data
+        for item in data:
+            if item['carcass_type'] != 'whole':
+                item.pop('head_weight', None)
+                item.pop('feet_weight', None)
+                item.pop('whole_carcass_weight', None)
+        return Response(data)
 
 
 @api_view(['GET'])
@@ -2183,6 +2785,182 @@ class SaleViewSet(viewsets.ModelViewSet):
             )
 
 
+@api_view(['GET'])
+def rejection_reasons_view(request):
+    """
+    API endpoint to get categorized rejection reasons for animals and parts.
+    Returns reasons organized by category for use in rejection workflows.
+    """
+    reasons = {
+        'quality': {
+            'name': 'Quality Issues',
+            'reasons': [
+                {'code': 'poor_condition', 'name': 'Poor Physical Condition'},
+                {'code': 'contamination', 'name': 'Contamination'},
+                {'code': 'incorrect_weight', 'name': 'Incorrect Weight'},
+                {'code': 'damage', 'name': 'Physical Damage'},
+                {'code': 'expired', 'name': 'Expired/Outdated'},
+            ]
+        },
+        'documentation': {
+            'name': 'Documentation Issues',
+            'reasons': [
+                {'code': 'missing_docs', 'name': 'Missing Documentation'},
+                {'code': 'invalid_docs', 'name': 'Invalid Documentation'},
+                {'code': 'incomplete_records', 'name': 'Incomplete Records'},
+                {'code': 'wrong_animal', 'name': 'Wrong Animal ID'},
+            ]
+        },
+        'health_safety': {
+            'name': 'Health & Safety',
+            'reasons': [
+                {'code': 'disease_symptoms', 'name': 'Disease Symptoms'},
+                {'code': 'parasites', 'name': 'Parasites/Insects'},
+                {'code': 'chemical_residues', 'name': 'Chemical Residues'},
+                {'code': 'temperature_issues', 'name': 'Temperature Issues'},
+            ]
+        },
+        'compliance': {
+            'name': 'Compliance Issues',
+            'reasons': [
+                {'code': 'certification_missing', 'name': 'Missing Certification'},
+                {'code': 'traceability_breach', 'name': 'Traceability Breach'},
+                {'code': 'regulatory_violation', 'name': 'Regulatory Violation'},
+            ]
+        },
+        'logistics': {
+            'name': 'Logistics Issues',
+            'reasons': [
+                {'code': 'transport_damage', 'name': 'Transport Damage'},
+                {'code': 'delayed_delivery', 'name': 'Delayed Delivery'},
+                {'code': 'packaging_issues', 'name': 'Packaging Issues'},
+            ]
+        },
+        'other': {
+            'name': 'Other',
+            'reasons': [
+                {'code': 'other', 'name': 'Other (Specify in Notes)'},
+            ]
+        }
+    }
+
+    return Response({
+        'categories': reasons,
+        'total_categories': len(reasons)
+    })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def appeal_rejection_view(request):
+    """
+    API endpoint for farmers to appeal rejections of their animals or parts.
+    Allows submission of appeal with notes and evidence.
+    """
+    user = request.user
+
+    # Verify user is a farmer
+    if not hasattr(user, 'profile') or user.profile.role != 'farmer':
+        return Response({'error': 'Only farmers can appeal rejections'}, status=status_module.HTTP_403_FORBIDDEN)
+
+    data = request.data
+    item_type = data.get('type')  # 'animal' or 'part'
+    item_id = data.get('id')
+    appeal_notes = data.get('appeal_notes', '').strip()
+
+    if not item_type or not item_id:
+        return Response({'error': 'type and id are required'}, status=status_module.HTTP_400_BAD_REQUEST)
+
+    if item_type not in ['animal', 'part']:
+        return Response({'error': 'type must be either "animal" or "part"'}, status=status_module.HTTP_400_BAD_REQUEST)
+
+    if not appeal_notes:
+        return Response({'error': 'appeal_notes are required'}, status=status_module.HTTP_400_BAD_REQUEST)
+
+    try:
+        if item_type == 'animal':
+            animal = Animal.objects.get(id=item_id, farmer=user)
+            if animal.rejection_status != 'rejected':
+                return Response({'error': 'Animal is not in rejected status'}, status=status_module.HTTP_400_BAD_REQUEST)
+
+            # Update appeal fields
+            animal.appeal_status = 'pending'
+            animal.appeal_notes = appeal_notes
+            animal.appealed_at = timezone.now()
+            animal.save()
+
+            # Create activity
+            Activity.objects.create(
+                user=user,
+                activity_type='other',
+                title=f'Appeal submitted for rejected animal {animal.animal_id}',
+                description=f'Farmer appealed rejection of animal {animal.animal_id}',
+                entity_id=str(animal.id),
+                entity_type='animal',
+                metadata={'animal_id': animal.animal_id, 'appeal_notes': appeal_notes}
+            )
+
+            # Create audit log
+            UserAuditLog.objects.create(
+                performed_by=user,
+                affected_user=user,
+                action='appeal_submitted',
+                description=f'Farmer {user.username} appealed rejection of animal {animal.animal_id}',
+                metadata={'animal_id': animal.animal_id, 'appeal_notes': appeal_notes},
+                ip_address=request.META.get('REMOTE_ADDR'),
+                user_agent=request.META.get('HTTP_USER_AGENT', '')
+            )
+
+            return Response({
+                'message': f'Appeal submitted for animal {animal.animal_id}',
+                'animal_id': animal.animal_id,
+                'appeal_status': 'pending'
+            })
+
+        elif item_type == 'part':
+            part = SlaughterPart.objects.get(animal__farmer=user, id=item_id)
+            if part.rejection_status != 'rejected':
+                return Response({'error': 'Part is not in rejected status'}, status=status_module.HTTP_400_BAD_REQUEST)
+
+            # Update appeal fields
+            part.appeal_status = 'pending'
+            part.appeal_notes = appeal_notes
+            part.appealed_at = timezone.now()
+            part.save()
+
+            # Create activity
+            Activity.objects.create(
+                user=user,
+                activity_type='other',
+                title=f'Appeal submitted for rejected part {part.part_type} of animal {part.animal.animal_id}',
+                description=f'Farmer appealed rejection of part {part.part_type}',
+                entity_id=str(part.id),
+                entity_type='slaughter_part',
+                metadata={'animal_id': part.animal.animal_id, 'part_id': part.id, 'part_type': part.part_type, 'appeal_notes': appeal_notes}
+            )
+
+            # Create audit log
+            UserAuditLog.objects.create(
+                performed_by=user,
+                affected_user=user,
+                action='appeal_submitted',
+                description=f'Farmer {user.username} appealed rejection of part {part.part_type} from animal {part.animal.animal_id}',
+                metadata={'animal_id': part.animal.animal_id, 'part_id': part.id, 'part_type': part.part_type, 'appeal_notes': appeal_notes},
+                ip_address=request.META.get('REMOTE_ADDR'),
+                user_agent=request.META.get('HTTP_USER_AGENT', '')
+            )
+
+            return Response({
+                'message': f'Appeal submitted for part {part.part_type} of animal {part.animal.animal_id}',
+                'part_id': part.id,
+                'animal_id': part.animal.animal_id,
+                'appeal_status': 'pending'
+            })
+
+    except (Animal.DoesNotExist, SlaughterPart.DoesNotExist):
+        return Response({'error': f'{item_type.title()} not found or access denied'}, status=status_module.HTTP_404_NOT_FOUND)
+
+
 def sale_info_view(request, sale_id):
     """
     HTML view for displaying detailed sale information.
@@ -2208,4 +2986,197 @@ def sale_info_view(request, sale_id):
             'error': f'An error occurred: {str(e)}',
             'sale_id': sale_id
         })
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def production_stats_view(request):
+    """
+    API endpoint to get production statistics for processing units.
+    Returns aggregated statistics about products, animals, and processing operations.
+    """
+    user = request.user
+
+    # Verify user is a processing unit user
+    if not hasattr(user, 'profile') or user.profile.role != 'processing_unit':
+        return Response({'error': 'Only processing unit users can access production stats'}, status=status_module.HTTP_403_FORBIDDEN)
+
+    # Get the processing unit
+    processing_unit = user.profile.processing_unit
+    if not processing_unit:
+        return Response({'error': 'User not associated with a processing unit'}, status=status_module.HTTP_400_BAD_REQUEST)
+
+    # Calculate statistics
+    from django.utils import timezone
+    from django.db.models import Count, Sum
+    from datetime import timedelta
+
+    today = timezone.now().date()
+    week_ago = today - timedelta(days=7)
+
+    # Products created by this processing unit
+    total_products_created = Product.objects.filter(processing_unit=processing_unit).count()
+    products_created_today = Product.objects.filter(
+        processing_unit=processing_unit,
+        created_at__date=today
+    ).count()
+    products_created_this_week = Product.objects.filter(
+        processing_unit=processing_unit,
+        created_at__date__gte=week_ago
+    ).count()
+
+    # Animals received by this processing unit
+    total_animals_received = Animal.objects.filter(
+        transferred_to=processing_unit,
+        received_by__isnull=False
+    ).count()
+    animals_received_today = Animal.objects.filter(
+        transferred_to=processing_unit,
+        received_at__date=today
+    ).count()
+    animals_received_this_week = Animal.objects.filter(
+        transferred_to=processing_unit,
+        received_at__date__gte=week_ago
+    ).count()
+
+    # Pending animals to process (received but not yet processed into products)
+    pending_animals_to_process = Animal.objects.filter(
+        transferred_to=processing_unit,
+        received_by__isnull=False,
+        processed=False
+    ).count()
+
+    # Products transferred from this processing unit
+    total_products_transferred = Product.objects.filter(
+        processing_unit=processing_unit,
+        transferred_to__isnull=False
+    ).count()
+    products_transferred_today = Product.objects.filter(
+        processing_unit=processing_unit,
+        transferred_at__date=today
+    ).count()
+
+    # Calculate transfer success rate (transferred products / total products)
+    transfer_success_rate = 0.0
+    if total_products_created > 0:
+        transfer_success_rate = (total_products_transferred / total_products_created) * 100
+
+    # Calculate processing throughput (products per day over the last week)
+    days_in_week = 7
+    processing_throughput_per_day = products_created_this_week / days_in_week if days_in_week > 0 else 0
+
+    # Equipment uptime (mock data for now - could be calculated from actual equipment data)
+    equipment_uptime_percentage = 95.0  # Default value
+
+    # Operational status
+    operational_status = 'operational'  # Could be calculated based on recent activity
+
+    # Last updated timestamp
+    last_updated = timezone.now().isoformat()
+
+    stats_data = {
+        'total_products_created': total_products_created,
+        'products_created_today': products_created_today,
+        'products_created_this_week': products_created_this_week,
+        'total_animals_received': total_animals_received,
+        'animals_received_today': animals_received_today,
+        'animals_received_this_week': animals_received_this_week,
+        'processing_throughput_per_day': processing_throughput_per_day,
+        'equipment_uptime_percentage': equipment_uptime_percentage,
+        'pending_animals_to_process': pending_animals_to_process,
+        'operational_status': operational_status,
+        'total_products_transferred': total_products_transferred,
+        'products_transferred_today': products_transferred_today,
+        'transfer_success_rate': transfer_success_rate,
+        'last_updated': last_updated,
+    }
+
+    return Response(stats_data)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def processing_pipeline_view(request):
+    """
+    API endpoint to get processing pipeline status for processing units.
+    Returns information about the current state of the processing pipeline.
+    """
+    user = request.user
+
+    # Verify user is a processing unit user
+    if not hasattr(user, 'profile') or user.profile.role != 'processing_unit':
+        return Response({'error': 'Only processing unit users can access processing pipeline'}, status=status_module.HTTP_403_FORBIDDEN)
+
+    # Get the processing unit
+    processing_unit = user.profile.processing_unit
+    if not processing_unit:
+        return Response({'error': 'User not associated with a processing unit'}, status=status_module.HTTP_400_BAD_REQUEST)
+
+    # Get pipeline statistics
+    from django.db.models import Q
+
+    # Animals in different stages
+    pending_receipt = Animal.objects.filter(
+        transferred_to=processing_unit,
+        received_by__isnull=True
+    ).count()
+
+    received_not_processed = Animal.objects.filter(
+        transferred_to=processing_unit,
+        received_by__isnull=False,
+        processed=False
+    ).count()
+
+    processed_animals = Animal.objects.filter(
+        transferred_to=processing_unit,
+        received_by__isnull=False,
+        processed=True
+    ).count()
+
+    # Products created and transferred
+    total_products = Product.objects.filter(processing_unit=processing_unit).count()
+    transferred_products = Product.objects.filter(
+        processing_unit=processing_unit,
+        transferred_to__isnull=False
+    ).count()
+
+    # Current capacity and utilization (mock data)
+    current_capacity = 100  # animals per day
+    current_utilization = min(100, (received_not_processed + processed_animals) / max(1, current_capacity) * 100)
+
+    pipeline_data = {
+        'processing_unit': {
+            'id': processing_unit.id,
+            'name': processing_unit.name,
+            'location': processing_unit.location,
+        },
+        'stages': {
+            'pending_receipt': {
+                'count': pending_receipt,
+                'description': 'Animals transferred but not yet received'
+            },
+            'received_not_processed': {
+                'count': received_not_processed,
+                'description': 'Animals received but not yet processed'
+            },
+            'processed': {
+                'count': processed_animals,
+                'description': 'Animals that have been processed'
+            },
+            'products_created': {
+                'count': total_products,
+                'description': 'Total products created from processed animals'
+            },
+            'products_transferred': {
+                'count': transferred_products,
+                'description': 'Products that have been transferred to shops'
+            }
+        },
+        'capacity': {
+            'current_capacity': current_capacity,
+            'current_utilization': current_utilization,
+            'status': 'normal' if current_utilization < 80 else 'high' if current_utilization < 95 else 'critical'
+        },
+        'last_updated': timezone.now().isoformat()
+    }
+
+    return Response(pipeline_data)
 

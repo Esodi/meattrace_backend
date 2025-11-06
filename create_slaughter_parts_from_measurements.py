@@ -55,7 +55,7 @@ def create_slaughter_parts_from_measurements():
             continue
         
         # Map of measurement keys to part types (must match PART_CHOICES in models.py)
-        # Valid choices: whole_carcass, left_side, right_side, head, feet, internal_organs, other
+        # Valid choices: whole_carcass, left_side, right_side, head, feet, internal_organs, torso, front_legs, hind_legs, other
         part_type_map = {
             'head_weight': 'head',
             'left_side_weight': 'left_side',
@@ -63,9 +63,9 @@ def create_slaughter_parts_from_measurements():
             'internal_organs_weight': 'internal_organs',
             'feet_weight': 'feet',
             # Map split carcass fields to valid part types
-            'torso_weight': 'other',
-            'front_legs_weight': 'left_side',  # Map front legs to left_side
-            'hind_legs_weight': 'right_side',  # Map hind legs to right_side
+            'torso_weight': 'torso',
+            'front_legs_weight': 'front_legs',
+            'hind_legs_weight': 'hind_legs',
             'organs_weight': 'internal_organs',
         }
         
@@ -81,9 +81,9 @@ def create_slaughter_parts_from_measurements():
                 # Get part type name from mapping (must be valid PART_CHOICES value)
                 part_type = part_type_map.get(measurement_key)
                 if not part_type:
-                    # If no mapping exists, use 'other' as fallback
-                    part_type = 'other'
-                    print(f"  ⚠️  Unmapped measurement '{measurement_key}', using 'other'")
+                    # If no mapping exists, skip this measurement
+                    print(f"  ⚠️  Unmapped measurement '{measurement_key}', skipping")
+                    continue
                 
                 weight = measurement_value.get('value')
                 unit = measurement_value.get('unit', 'kg')

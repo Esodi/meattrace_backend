@@ -81,6 +81,26 @@ class AnimalSerializer(serializers.ModelSerializer):
                            'lifecycle_status', 'is_healthy', 'is_slaughtered_status',
                            'is_transferred_status', 'is_semi_transferred_status']
 
+    def validate_animal_id(self, value):
+        """Validate animal_id format and uniqueness"""
+        if value:
+            # Check length
+            if len(value) < 3:
+                raise serializers.ValidationError("Animal ID must be at least 3 characters long")
+            if len(value) > 50:
+                raise serializers.ValidationError("Animal ID cannot exceed 50 characters")
+
+            # Check format - allow alphanumeric, hyphens, underscores
+            import re
+            if not re.match(r'^[A-Za-z0-9\-_]+$', value):
+                raise serializers.ValidationError("Animal ID can only contain letters, numbers, hyphens, and underscores")
+
+            # Check uniqueness (only if creating new animal)
+            if self.instance is None:  # Creating new animal
+                if Animal.objects.filter(animal_id=value).exists():
+                    raise serializers.ValidationError("An animal with this ID already exists")
+        return value
+
     def validate_health_status(self, value):
         # Optional: enforce health status normalization (allow any but trim)
         if value is None:
@@ -232,9 +252,62 @@ class CarcassMeasurementSerializer(serializers.ModelSerializer):
         model = CarcassMeasurement
         fields = [
             'id', 'animal', 'animal_animal_id', 'animal_species', 'animal_farmer_username',
-            'carcass_type', 'measurements', 'created_at', 'updated_at'
+            'carcass_type', 'head_weight', 'feet_weight', 'left_carcass_weight', 'right_carcass_weight',
+            'whole_carcass_weight', 'organs_weight', 'measurements', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'animal_animal_id', 'animal_species', 'animal_farmer_username']
+
+    def to_representation(self, instance):
+        """
+        Conditionally expose fields based on carcass type.
+        For 'whole' carcass: show head_weight, feet_weight, whole_carcass_weight
+        For 'split' carcass: show left_carcass_weight, right_carcass_weight, feet_weight, organs_weight
+        """
+        data = super().to_representation(instance)
+        if instance.carcass_type == 'whole':
+            # Hide split carcass fields for whole carcass
+            data.pop('left_carcass_weight', None)
+            data.pop('right_carcass_weight', None)
+            data.pop('organs_weight', None)
+        elif instance.carcass_type == 'split':
+            # Hide whole carcass fields for split carcass
+            data.pop('head_weight', None)
+            data.pop('whole_carcass_weight', None)
+        return data
+
+    def validate(self, attrs):
+        carcass_type = attrs.get('carcass_type')
+
+        # Validate measurements are positive numbers
+        weight_fields = ['head_weight', 'feet_weight', 'left_carcass_weight', 'right_carcass_weight',
+                        'whole_carcass_weight', 'organs_weight']
+
+        for field_name in weight_fields:
+            weight = attrs.get(field_name)
+            if weight is not None:
+                if weight <= 0:
+                    raise serializers.ValidationError(f"{field_name.replace('_', ' ').title()} must be a positive number.")
+                # Check for unrealistic weights (too large for typical livestock)
+                if weight > 2000:
+                    raise serializers.ValidationError(f"{field_name.replace('_', ' ').title()} seems unreasonably high (over 2000 kg). Please verify the measurement.")
+
+        if carcass_type == 'whole':
+            head_weight = attrs.get('head_weight')
+            feet_weight = attrs.get('feet_weight')
+            whole_carcass_weight = attrs.get('whole_carcass_weight')
+            if head_weight is not None and feet_weight is not None and whole_carcass_weight is not None:
+                if whole_carcass_weight < head_weight + feet_weight:
+                    raise serializers.ValidationError("For whole carcass type, whole_carcass_weight must be greater than or equal to the sum of head_weight and feet_weight.")
+        elif carcass_type == 'split':
+            left_carcass_weight = attrs.get('left_carcass_weight')
+            right_carcass_weight = attrs.get('right_carcass_weight')
+            feet_weight = attrs.get('feet_weight')
+            organs_weight = attrs.get('organs_weight')
+            # For split carcass, all parts should be provided and positive
+            if not all([left_carcass_weight, right_carcass_weight, feet_weight, organs_weight]):
+                raise serializers.ValidationError("For split carcass type, all weight fields (left_carcass_weight, right_carcass_weight, feet_weight, organs_weight) must be provided.")
+
+        return attrs
 
 
 class SlaughterPartSerializer(serializers.ModelSerializer):

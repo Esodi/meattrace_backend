@@ -139,6 +139,14 @@ urlpatterns = [
     
     # Sale info HTML view
     path('api/v2/sale-info/view/<int:sale_id>/', views.sale_info_view, name='sale_info_view'),
+
+    # Rejection and appeal endpoints
+    path('api/v2/rejection-reasons/', views.rejection_reasons_view, name='rejection_reasons'),
+    # Production stats and processing pipeline endpoints
+    path('api/v2/production-stats/', views.production_stats_view, name='production_stats'),
+    path('api/v2/processing-pipeline/', views.processing_pipeline_view, name='processing_pipeline'),
+    path('api/v2/appeal-rejection/', views.appeal_rejection_view, name='appeal_rejection'),
+
     # Legacy/compat endpoint for frontend settings screen to list processing unit users
     path('api/v2/processing-unit-users/<int:unit_id>/', views.ProcessingUnitViewSet.as_view({'get': 'users'}), name='processing-unit-users'),
 
