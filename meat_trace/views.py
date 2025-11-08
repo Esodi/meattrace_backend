@@ -12,6 +12,7 @@ from rest_framework import viewsets, status as status_module
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.views import APIView
+from rest_framework.exceptions import ValidationError
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
 from django.utils import timezone
@@ -59,9 +60,12 @@ class AnimalViewSet(viewsets.ModelViewSet):
             
             if user_processing_units:
                 # Show animals transferred to any of the user's processing units (whole or parts)
+                # Exclude rejected animals
                 queryset = queryset.filter(
                     Q(transferred_to_id__in=user_processing_units) |
                     Q(slaughter_parts__transferred_to_id__in=user_processing_units)
+                ).exclude(
+                    rejection_status='rejected'
                 ).distinct()
             else:
                 queryset = queryset.none()
@@ -326,9 +330,10 @@ class AnimalViewSet(viewsets.ModelViewSet):
         animal_rejections = request.data.get('animal_rejections', [])
         part_rejections = request.data.get('part_rejections', [])
 
-        if not animal_ids and not part_receives:
+        # Allow rejections even without receive IDs
+        if not animal_ids and not part_receives and not animal_rejections and not part_rejections:
             return Response(
-                {'error': 'Either animal_ids or part_receives must be provided'},
+                {'error': 'Either animal_ids, part_receives, animal_rejections, or part_rejections must be provided'},
                 status=status_module.HTTP_400_BAD_REQUEST
             )
 
@@ -369,19 +374,48 @@ class AnimalViewSet(viewsets.ModelViewSet):
                             part.save()
                             received_parts.append(part)
 
-                # Process rejections
+                # Get processing unit for rejection service
+                processing_unit = None
+                try:
+                    # Get the first active processing unit for this user
+                    from .models import ProcessingUnitUser
+                    pu_user = ProcessingUnitUser.objects.filter(
+                        user=request.user,
+                        is_active=True,
+                        is_suspended=False
+                    ).first()
+                    if pu_user:
+                        processing_unit = pu_user.processing_unit
+                except Exception:
+                    pass  # No processing unit found, continue with None
+
+                # Process rejections using RejectionService
                 if animal_rejections:
                     for rejection in animal_rejections:
                         animal_id = rejection.get('animal_id')
-                        reason = rejection.get('reason', 'Not specified')
+                        
+                        # Build rejection data
+                        if 'reason' in rejection:
+                            # Old format - convert to new format
+                            rejection_data = {
+                                'category': 'other',
+                                'specific_reason': rejection.get('reason', 'Not specified'),
+                                'notes': ''
+                            }
+                        else:
+                            # New structured format
+                            rejection_data = {
+                                'category': rejection.get('category', 'other'),
+                                'specific_reason': rejection.get('specific_reason', 'Not specified'),
+                                'notes': rejection.get('notes', '')
+                            }
 
                         try:
                             animal = Animal.objects.get(id=animal_id)
-                            animal.rejection_status = 'rejected'
-                            animal.rejection_reason_specific = reason
-                            animal.rejected_by = request.user
-                            animal.rejected_at = timezone.now()
-                            animal.save()
+                            # Use RejectionService to handle rejection with notifications
+                            RejectionService.process_animal_rejection(
+                                animal, rejection_data, request.user, processing_unit
+                            )
                             rejected_animals.append(animal)
                         except Animal.DoesNotExist:
                             continue
@@ -389,15 +423,29 @@ class AnimalViewSet(viewsets.ModelViewSet):
                 if part_rejections:
                     for rejection in part_rejections:
                         part_id = rejection.get('part_id')
-                        reason = rejection.get('reason', 'Not specified')
+                        
+                        # Build rejection data
+                        if 'reason' in rejection:
+                            # Old format - convert to new format
+                            rejection_data = {
+                                'category': 'other',
+                                'specific_reason': rejection.get('reason', 'Not specified'),
+                                'notes': ''
+                            }
+                        else:
+                            # New structured format
+                            rejection_data = {
+                                'category': rejection.get('category', 'other'),
+                                'specific_reason': rejection.get('specific_reason', 'Not specified'),
+                                'notes': rejection.get('notes', '')
+                            }
 
                         try:
                             part = SlaughterPart.objects.get(id=part_id)
-                            part.rejection_status = 'rejected'
-                            part.rejection_reason_specific = reason
-                            part.rejected_by = request.user
-                            part.rejected_at = timezone.now()
-                            part.save()
+                            # Use RejectionService to handle rejection with notifications
+                            RejectionService.process_part_rejection(
+                                part, rejection_data, request.user, processing_unit
+                            )
                             rejected_parts.append(part)
                         except SlaughterPart.DoesNotExist:
                             continue
@@ -505,13 +553,19 @@ class SlaughterPartViewSet(viewsets.ModelViewSet):
             
             if user_processing_units:
                 # Show parts transferred to any of the user's processing units OR received by the user
+                # Exclude rejected parts
                 queryset = queryset.filter(
                     Q(transferred_to_id__in=user_processing_units) |
                     Q(received_by=user)
+                ).exclude(
+                    rejection_status='rejected'
                 )
             else:
                 # Fallback to parts received by the user directly
-                queryset = queryset.filter(received_by=user)
+                # Exclude rejected parts
+                queryset = queryset.filter(received_by=user).exclude(
+                    rejection_status='rejected'
+                )
 
         # Apply filters from query parameters
         animal_id = self.request.query_params.get('animal')
@@ -1069,6 +1123,17 @@ def dashboard_view(request):
 
 
 @api_view(['GET'])
+@permission_classes([AllowAny])
+def health_check(request):
+    """Health check endpoint for monitoring backend availability"""
+    return Response({
+        'status': 'healthy',
+        'timestamp': timezone.now().isoformat(),
+        'service': 'meattrace-backend'
+    })
+
+
+@api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def activities_view(request):
     try:
@@ -1155,7 +1220,8 @@ def production_stats_view(request):
         profile = user.profile
 
         # Only processing unit users get production stats
-        if profile.role != 'processing_unit':
+        # Support both 'processing_unit' and 'Processor' role values
+        if profile.role not in ['processing_unit', 'Processor']:
             return Response({'production': {}})
 
         # Get user's processing units
@@ -1443,6 +1509,43 @@ class ProcessingUnitViewSet(viewsets.ViewSet):
             logger = logging.getLogger(__name__)
             logger.error(f"[PROCESSING_UNIT_VIEWSET] Error listing processing units: {e}")
             return Response({'error': str(e)}, status=500)
+
+    @action(detail=True, methods=['get'], url_path='join-requests')
+    def join_requests(self, request, pk=None):
+        """List join requests for a specific processing unit"""
+        try:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"[PROCESSING_UNIT_VIEWSET] Fetching join requests for processing unit {pk}")
+            
+            # Check if processing unit exists
+            try:
+                processing_unit = ProcessingUnit.objects.get(pk=pk)
+            except ProcessingUnit.DoesNotExist:
+                return Response(
+                    {'error': 'Processing unit not found'}, 
+                    status=status_module.HTTP_404_NOT_FOUND
+                )
+            
+            # Filter join requests for this processing unit
+            join_requests = JoinRequest.objects.filter(
+                processing_unit=processing_unit
+            ).order_by('-created_at')
+            
+            serializer = JoinRequestSerializer(join_requests, many=True)
+            logger.info(f"[PROCESSING_UNIT_VIEWSET] Found {len(join_requests)} join requests")
+            
+            return Response(serializer.data)
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"[PROCESSING_UNIT_VIEWSET] Error fetching join requests: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return Response(
+                {'error': str(e)}, 
+                status=status_module.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     @action(detail=True, methods=['get'])
     def users(self, request, pk=None):
@@ -1779,6 +1882,146 @@ class ShopViewSet(viewsets.ModelViewSet):
             
         except UserProfile.DoesNotExist:
             return Shop.objects.all()
+
+    @action(detail=True, methods=['get'], url_path='join-requests', permission_classes=[AllowAny])
+    def join_requests(self, request, pk=None):
+        """List join requests for a specific shop"""
+        try:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"[SHOP_VIEWSET] Fetching join requests for shop {pk}")
+            
+            # Check if shop exists
+            try:
+                shop = Shop.objects.get(pk=pk)
+            except Shop.DoesNotExist:
+                return Response(
+                    {'error': 'Shop not found'}, 
+                    status=status_module.HTTP_404_NOT_FOUND
+                )
+            
+            # Only allow shop owners/managers to view join requests
+            user = request.user
+            if user.is_authenticated:
+                try:
+                    # Check if user is owner or member of this shop
+                    from .models import ShopUser
+                    is_shop_member = ShopUser.objects.filter(
+                        user=user,
+                        shop=shop,
+                        is_active=True
+                    ).exists()
+                    
+                    # Or check if user's profile is linked to this shop
+                    is_shop_owner = hasattr(user, 'profile') and user.profile.shop_id == shop.id
+                    
+                    if not (is_shop_member or is_shop_owner or user.is_staff):
+                        return Response(
+                            {'error': 'You do not have permission to view join requests for this shop'},
+                            status=status_module.HTTP_403_FORBIDDEN
+                        )
+                except Exception as perm_error:
+                    logger.error(f"[SHOP_VIEWSET] Permission check error: {perm_error}")
+            
+            # Filter join requests for this shop
+            join_requests = JoinRequest.objects.filter(
+                shop=shop
+            ).order_by('-created_at')
+            
+            serializer = JoinRequestSerializer(join_requests, many=True)
+            logger.info(f"[SHOP_VIEWSET] Found {len(join_requests)} join requests")
+            
+            return Response(serializer.data)
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"[SHOP_VIEWSET] Error fetching join requests: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return Response(
+                {'error': str(e)}, 
+                status=status_module.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['get'], url_path='members', permission_classes=[AllowAny])
+    def members(self, request, pk=None):
+        """List members of a specific shop"""
+        try:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"[SHOP_VIEWSET] Fetching members for shop {pk}")
+            
+            # Check if shop exists
+            try:
+                shop = Shop.objects.get(pk=pk)
+            except Shop.DoesNotExist:
+                return Response(
+                    {'error': 'Shop not found'}, 
+                    status=status_module.HTTP_404_NOT_FOUND
+                )
+            
+            # Only allow shop owners/managers to view members
+            user = request.user
+            if user.is_authenticated:
+                try:
+                    # Check if user is owner or member of this shop
+                    from .models import ShopUser
+                    is_shop_member = ShopUser.objects.filter(
+                        user=user,
+                        shop=shop,
+                        is_active=True
+                    ).exists()
+                    
+                    # Or check if user's profile is linked to this shop
+                    is_shop_owner = hasattr(user, 'profile') and user.profile.shop_id == shop.id
+                    
+                    if not (is_shop_member or is_shop_owner or user.is_staff):
+                        return Response(
+                            {'error': 'You do not have permission to view members of this shop'},
+                            status=status_module.HTTP_403_FORBIDDEN
+                        )
+                except Exception as perm_error:
+                    logger.error(f"[SHOP_VIEWSET] Permission check error: {perm_error}")
+            
+            # Get shop members
+            from .models import ShopUser
+            shop_members = ShopUser.objects.filter(shop=shop).select_related('user')
+            
+            # Serialize member data
+            members_data = []
+            for shop_user in shop_members:
+                members_data.append({
+                    'id': shop_user.id,
+                    'user': {
+                        'id': shop_user.user.id,
+                        'username': shop_user.user.username,
+                        'email': shop_user.user.email,
+                        'first_name': shop_user.user.first_name,
+                        'last_name': shop_user.user.last_name,
+                    },
+                    'role': shop_user.role,
+                    'permissions': shop_user.permissions,
+                    'is_active': shop_user.is_active,
+                    'joined_at': shop_user.joined_at,
+                    'invited_by': {
+                        'id': shop_user.invited_by.id,
+                        'username': shop_user.invited_by.username,
+                    } if shop_user.invited_by else None,
+                })
+            
+            logger.info(f"[SHOP_VIEWSET] Found {len(members_data)} members")
+            
+            return Response(members_data)
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"[SHOP_VIEWSET] Error fetching members: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return Response(
+                {'error': str(e)}, 
+                status=status_module.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class OrderViewSet(viewsets.ModelViewSet):
@@ -2344,12 +2587,12 @@ class SaleViewSet(viewsets.ModelViewSet):
             
             # Admin can see all sales
             if profile.role == 'Admin':
-                return Sale.objects.all().order_by('-sale_date')
+                return Sale.objects.all().order_by('-created_at')
             
             # Shop owners can see sales from their shop
             elif profile.role == 'ShopOwner':
                 if profile.shop:
-                    return Sale.objects.filter(shop=profile.shop).order_by('-sale_date')
+                    return Sale.objects.filter(shop=profile.shop).order_by('-created_at')
                 return Sale.objects.none()
             
             # Processor can see sales of products from their processing unit
@@ -2357,10 +2600,26 @@ class SaleViewSet(viewsets.ModelViewSet):
                 if profile.processing_unit:
                     return Sale.objects.filter(
                         items__product__processing_unit=profile.processing_unit
-                    ).distinct().order_by('-sale_date')
+                    ).distinct().order_by('-created_at')
                 return Sale.objects.none()
             
             return Sale.objects.none()
             
         except UserProfile.DoesNotExist:
             return Sale.objects.none()
+    
+    def perform_create(self, serializer):
+        """Automatically set shop and sold_by when creating a sale"""
+        user = self.request.user
+        
+        try:
+            profile = user.profile
+            
+            # Set the shop from user's profile
+            if profile.shop:
+                serializer.save(shop=profile.shop, sold_by=user)
+            else:
+                raise ValidationError("User is not associated with any shop")
+                
+        except UserProfile.DoesNotExist:
+            raise ValidationError("User profile not found")

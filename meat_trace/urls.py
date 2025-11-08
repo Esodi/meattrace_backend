@@ -132,6 +132,7 @@ urlpatterns = [
     path('api/v2/admin/performance/data/', views.admin_performance_data, name='admin_performance_data'),
 
     # Dashboard endpoints (generic and role-specific)
+    path('api/v2/health/', views.health_check, name='health_check'),
     path('api/v2/dashboard/', views.dashboard_view, name='dashboard'),
     path('api/v2/activities/', views.activities_view, name='activities'),
     path('api/v2/farmer/dashboard/', views.farmer_dashboard, name='farmer_dashboard'),

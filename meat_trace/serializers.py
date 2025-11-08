@@ -126,10 +126,11 @@ class AnimalSerializer(serializers.ModelSerializer):
         return value
     
     def get_slaughter_parts(self, obj):
-        """Include slaughter parts if they exist"""
+        """Include slaughter parts if they exist, excluding rejected parts"""
         if obj.has_slaughter_parts:
             from .serializers import SlaughterPartSerializer
-            parts = obj.slaughter_parts.all()
+            # Exclude rejected parts from the serialized output
+            parts = obj.slaughter_parts.exclude(rejection_status='rejected')
             return SlaughterPartSerializer(parts, many=True).data
         return []
     
@@ -661,7 +662,7 @@ class SaleSerializer(serializers.ModelSerializer):
             'customer_name', 'customer_phone', 'total_amount', 'payment_method',
             'created_at', 'qr_code', 'items'
         ]
-        read_only_fields = ['id', 'created_at', 'qr_code', 'shop_name', 'sold_by_username']
+        read_only_fields = ['id', 'created_at', 'qr_code', 'shop_name', 'sold_by_username', 'shop', 'sold_by']
     
     def create(self, validated_data):
         items_data = validated_data.pop('items')
