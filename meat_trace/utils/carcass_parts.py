@@ -1,4 +1,5 @@
 from decimal import Decimal
+import uuid
 from ..models import SlaughterPart, Animal, CarcassMeasurement
 
 def create_slaughter_parts_from_measurement(animal: Animal, measurement: CarcassMeasurement):
@@ -10,57 +11,47 @@ def create_slaughter_parts_from_measurement(animal: Animal, measurement: Carcass
         animal (Animal): The animal instance.
         measurement (CarcassMeasurement): The carcass measurement instance.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"[CARCASS_PARTS] Creating slaughter parts for animal {animal.animal_id}")
+    logger.info(f"[CARCASS_PARTS] Carcass type: {measurement.carcass_type}")
+    
     if measurement.carcass_type != 'split':
-        print(f"Animal {animal.id} is not a split carcass. No parts will be created.")
+        logger.info(f"[CARCASS_PARTS] Animal {animal.id} is not a split carcass. No parts will be created.")
         return
 
-    # Delete existing parts to ensure a clean slate, in case this is a re-run
-    SlaughterPart.objects.filter(animal=animal).delete()
-    print(f"Deleted existing slaughter parts for Animal {animal.id} to ensure a clean slate.")
+    # Delete existing parts to ensure a clean slate
+    deleted_count = SlaughterPart.objects.filter(animal=animal).delete()[0]
+    logger.info(f"[CARCASS_PARTS] Deleted {deleted_count} existing slaughter parts for Animal {animal.id}")
 
     parts_to_create = []
     
-    # Map of measurement fields to SlaughterPart part_type
-    # Must match PART_CHOICES in models.py: whole_carcass, left_side, right_side, head, feet, internal_organs, torso, front_legs, hind_legs, other
-    measurement_to_part_map = {
-        'head': 'head',
-        'feet': 'feet',
-        'left_carcass': 'left_carcass',
-        'right_carcass': 'right_carcass',
+    # Map measurement field names to SlaughterPart part_type choices
+    field_to_part_type_map = {
+        'head_weight': 'head',
+        'feet_weight': 'feet',
+        'left_carcass_weight': 'left_carcass',
+        'right_carcass_weight': 'right_carcass',
+        'organs_weight': 'internal_organs',
     }
     
-    # Standard parts from fixed fields
-    for field, part_type in measurement_to_part_map.items():
-        if hasattr(measurement, field) and getattr(measurement, field) is not None:
-            weight = getattr(measurement, field)
-            if weight > 0:
-                parts_to_create.append(SlaughterPart(
-                    animal=animal,
-                    part_type=part_type,
-                    weight=weight,
-                    weight_unit='kg' # Defaulting to kg as per model definition
-                ))
-    
-    # Custom parts from the JSONField
-    if isinstance(measurement.measurements, dict):
-        for part_name, data in measurement.measurements.items():
-            # Avoid re-creating standard parts if they are also in the JSON
-            if part_name in measurement_to_part_map.values():
-                continue
-
-            if isinstance(data, dict) and 'value' in data and 'unit' in data:
-                try:
-                    weight = Decimal(str(data['value']))
-                    if weight > 0:
-                        parts_to_create.append(SlaughterPart(
-                            animal=animal,
-                            part_type=part_name.lower().replace(" ", "_"),
-                            weight=weight,
-                            weight_unit=data.get('unit', 'kg')
-                        ))
-                except (ValueError, TypeError):
-                    print(f"Could not parse weight for custom part '{part_name}' for animal {animal.id}")
+    # Create parts from individual weight fields
+    for field_name, part_type in field_to_part_type_map.items():
+        weight = getattr(measurement, field_name, None)
+        if weight is not None and weight > 0:
+            part_id = f"PART_{uuid.uuid4().hex[:12].upper()}"
+            logger.info(f"[CARCASS_PARTS] Creating part: {part_type} with weight {weight}kg (part_id: {part_id})")
+            parts_to_create.append(SlaughterPart(
+                part_id=part_id,
+                animal=animal,
+                part_type=part_type,
+                weight=weight,
+                weight_unit='kg'
+            ))
 
     if parts_to_create:
         SlaughterPart.objects.bulk_create(parts_to_create)
-        print(f"Created {len(parts_to_create)} slaughter parts for Animal {animal.id}.")
+        logger.info(f"[CARCASS_PARTS] Created {len(parts_to_create)} slaughter parts for Animal {animal.id}")
+    else:
+        logger.info(f"[CARCASS_PARTS] No parts to create for Animal {animal.id}")

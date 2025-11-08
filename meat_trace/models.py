@@ -249,6 +249,7 @@ class Animal(models.Model):
         return self.live_weight
 
     live_weight = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0)], null=True, blank=True, help_text="Live weight in kg before slaughter")
+    remaining_weight = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0)], null=True, blank=True, help_text="Remaining weight available for product creation")
     # Gender and notes - added to align with frontend register screen
     GENDER_CHOICES = [
         ('male', 'Male'),
@@ -318,6 +319,10 @@ class Animal(models.Model):
         # Ensure animal_id exists only if not manually set
         if not self.animal_id:
             self.animal_id = self._generate_animal_id()
+        
+        # Initialize remaining_weight if not set
+        if self.remaining_weight is None and self.live_weight is not None:
+            self.remaining_weight = self.live_weight
 
         super().save(*args, **kwargs)
 
@@ -419,6 +424,7 @@ class SlaughterPart(models.Model):
     animal = models.ForeignKey(Animal, on_delete=models.CASCADE, related_name='slaughter_parts')
     part_type = models.CharField(max_length=20, choices=PART_CHOICES, default='whole_carcass')
     weight = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(0)], help_text="Weight of this part in kg")
+    remaining_weight = models.DecimalField(max_digits=8, decimal_places=2, validators=[MinValueValidator(0)], null=True, blank=True, help_text="Remaining weight available for product creation")
     weight_unit = models.CharField(max_length=10, choices=[('kg', 'Kilograms'), ('lbs', 'Pounds'), ('g', 'Grams')], default='kg')
     description = models.TextField(blank=True, null=True, help_text="Additional description of the part")
     created_at = models.DateTimeField(default=timezone.now)
@@ -472,6 +478,9 @@ class SlaughterPart(models.Model):
         # Ensure part_id exists
         if not self.part_id:
             self.part_id = self._generate_part_id()
+        # Initialize remaining_weight if not set
+        if self.remaining_weight is None:
+            self.remaining_weight = self.weight
         super().save(*args, **kwargs)
 
     def _generate_part_id(self):
@@ -559,9 +568,9 @@ class CarcassMeasurement(models.Model):
             if self.whole_carcass_weight is None:
                 raise ValidationError("For whole carcass, whole_carcass_weight is required.")
         elif self.carcass_type == 'split':
-            # For split carcass, at least torso_weight is required, others are optional but if provided must be valid
-            if self.torso_weight is None:
-                raise ValidationError("For split carcass, torso_weight is required.")
+            # For split carcass, left and right carcass weights are required
+            if self.left_carcass_weight is None or self.right_carcass_weight is None:
+                raise ValidationError("For split carcass, both left_carcass_weight and right_carcass_weight are required.")
 
             # Validate that total weight makes sense (not too small for any animal)
             total_weight = 0.0
@@ -672,6 +681,19 @@ class Product(models.Model):
     # Receive fields (shop receives products, not individual users)
     received_by_shop = models.ForeignKey(Shop, on_delete=models.SET_NULL, null=True, blank=True, related_name='received_products_as_shop')
     received_at = models.DateTimeField(null=True, blank=True)
+    quantity_received = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)], default=0, help_text="Quantity actually received by shop")
+    
+    # Rejection fields for products
+    REJECTION_STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('rejected', 'Rejected'),
+    ]
+    
+    rejection_status = models.CharField(max_length=20, choices=REJECTION_STATUS_CHOICES, blank=True, null=True, help_text="Current rejection status")
+    rejection_reason = models.TextField(blank=True, null=True, help_text="Reason for rejection")
+    quantity_rejected = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)], default=0, help_text="Quantity rejected by shop")
+    rejected_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='rejected_products', help_text="User who rejected the product")
+    rejected_at = models.DateTimeField(null=True, blank=True, help_text="Date and time when the product was rejected")
 
     def __str__(self):
         part_info = f" from {self.slaughter_part.get_part_type_display()}" if self.slaughter_part else ""
@@ -941,12 +963,38 @@ class Notification(models.Model):
         ('appeal_denied', 'Appeal Denied'),
     ]
 
+    PRIORITY_CHOICES = [
+        ('low', 'Low'),
+        ('medium', 'Medium'),
+        ('high', 'High'),
+        ('urgent', 'Urgent'),
+    ]
+
+    ACTION_TYPE_CHOICES = [
+        ('none', 'No Action'),
+        ('view', 'View Details'),
+        ('approve', 'Approve'),
+        ('reject', 'Reject'),
+        ('respond', 'Respond'),
+        ('appeal', 'Appeal'),
+    ]
+
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
     notification_type = models.CharField(max_length=30, choices=NOTIFICATION_TYPE_CHOICES)
 
     title = models.CharField(max_length=200)
     message = models.TextField()
     data = models.JSONField(default=dict, blank=True)  # Additional context data
+
+    # New fields for enhanced notification system
+    priority = models.CharField(max_length=10, choices=PRIORITY_CHOICES, default='medium')
+    is_dismissed = models.BooleanField(default=False)
+    dismissed_at = models.DateTimeField(null=True, blank=True)
+    action_type = models.CharField(max_length=20, choices=ACTION_TYPE_CHOICES, default='none')
+    is_archived = models.BooleanField(default=False)
+    archived_at = models.DateTimeField(null=True, blank=True)
+    group_key = models.CharField(max_length=100, blank=True, help_text="Groups related notifications together")
+    is_batch_notification = models.BooleanField(default=False, help_text="Indicates if this is part of a batch notification")
 
     is_read = models.BooleanField(default=False)
     read_at = models.DateTimeField(null=True, blank=True)
@@ -960,6 +1008,14 @@ class Notification(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+            models.Index(fields=['user', 'is_read']),
+            models.Index(fields=['user', 'is_dismissed']),
+            models.Index(fields=['user', 'is_archived']),
+            models.Index(fields=['priority', 'created_at']),
+            models.Index(fields=['group_key', 'created_at']),
+        ]
 
     def __str__(self):
         return f"{self.notification_type} for {self.user.username}: {self.title}"

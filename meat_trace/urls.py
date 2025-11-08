@@ -30,12 +30,12 @@ except Exception:
     # If UserProfileViewSet not present at import time, router registration will be skipped
     pass
 
-# try:
-from .views import ProcessingUnitViewSet
-router.register(r'processing-units', ProcessingUnitViewSet, basename='processing-units')
-# except Exception:
-#     # Optional registration
-#     pass
+try:
+    from .views import ProcessingUnitViewSet
+    router.register(r'processing-units', ProcessingUnitViewSet, basename='processing-units')
+except Exception:
+    # Optional registration
+    pass
 
 try:
     from .views import JoinRequestViewSet
@@ -85,16 +85,26 @@ except Exception:
     # Optional registration
     pass
 
+try:
+    from .views import NotificationViewSet
+    router.register(r'notifications', NotificationViewSet, basename='notifications')
+except Exception:
+    # Optional registration
+    pass
+
+try:
+    from .views import SlaughterPartViewSet
+    router.register(r'slaughter-parts', SlaughterPartViewSet, basename='slaughter-parts')
+except Exception:
+    # Optional registration
+    pass
+
 urlpatterns = [
-    # App-level admin-like template views. Use 'site-admin/' prefix to avoid
-    # colliding with Django's built-in admin site which is mounted at '/admin/'.
-    path('site-admin/', views.admin_dashboard, name='admin_dashboard'),
-    path('site-admin/dashboard/', views.admin_dashboard, name='admin_dashboard'),
-    path('site-admin/users/', views.admin_users, name='admin_users'),
-    path('site-admin/supply-chain/', views.admin_supply_chain, name='admin_supply_chain'),
-    path('site-admin/performance/', views.admin_performance, name='admin_performance'),
-    path('site-admin/compliance/', views.admin_compliance, name='admin_compliance'),
-    path('site-admin/system-health/', views.admin_system_health, name='admin_system_health'),
+    # Admin template routes were moved to `meat_trace.admin_urls` so the
+    # admin UI can be included only in environments that need it.
+    # To enable the admin templates mount them in your project URLs:
+    #     path('site-admin/', include('meat_trace.admin_urls'))
+    # This keeps the main `meat_trace.urls` import lighter for API-only envs.
 
     # JWT Authentication endpoints
     path('api/v2/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),

@@ -6,6 +6,7 @@ Provides centralized logic for rejection workflows including notifications and a
 from django.utils import timezone
 from django.db import transaction
 from ..models import Animal, SlaughterPart, Notification, UserAuditLog, Activity
+from .notification_service import NotificationService
 
 
 class RejectionService:
@@ -43,9 +44,8 @@ class RejectionService:
                 processing_unit=processing_unit,
             )
 
-            # Send notification to farmer
-            RejectionService._send_rejection_notification(
-                'animal',
+            # Send notification to farmer using NotificationService
+            NotificationService.notify_animal_rejected(
                 animal.farmer,
                 animal,
                 rejection_data['category'],
@@ -120,9 +120,8 @@ class RejectionService:
                 processing_unit=processing_unit,
             )
 
-            # Send notification to farmer
-            RejectionService._send_rejection_notification(
-                'part',
+            # Send notification to farmer using NotificationService
+            NotificationService.notify_part_rejected(
                 part.animal.farmer,
                 part,
                 rejection_data['category'],
@@ -189,9 +188,9 @@ class RejectionService:
                 animal.appeal_resolved_at = timezone.now()
                 animal.save()
 
-                # Send notification
-                RejectionService._send_appeal_resolution_notification(
-                    'animal', animal.farmer, animal, resolution, resolution_notes
+                # Send notification using NotificationService
+                NotificationService.notify_appeal_resolved(
+                    animal.farmer, 'animal', animal.id, resolution, resolution_notes
                 )
 
                 # Create activity
@@ -218,9 +217,9 @@ class RejectionService:
                 part.appeal_resolved_at = timezone.now()
                 part.save()
 
-                # Send notification
-                RejectionService._send_appeal_resolution_notification(
-                    'part', part.animal.farmer, part, resolution, resolution_notes
+                # Send notification using NotificationService
+                NotificationService.notify_appeal_resolved(
+                    part.animal.farmer, 'part', part.id, resolution, resolution_notes
                 )
 
                 # Create activity

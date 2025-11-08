@@ -65,7 +65,7 @@ class AnimalSerializer(serializers.ModelSerializer):
     class Meta:
         model = Animal
         fields = [
-            'id', 'farmer', 'farmer_username', 'species', 'age', 'live_weight',
+            'id', 'farmer', 'farmer_username', 'species', 'age', 'live_weight', 'remaining_weight',
             'created_at', 'slaughtered', 'slaughtered_at', 'transferred_to',
             'transferred_to_name', 'transferred_at', 'received_by',
             'received_by_username', 'received_at', 'processed', 'animal_id',
@@ -168,7 +168,8 @@ class ProductSerializer(serializers.ModelSerializer):
             'name', 'product_type', 'quantity', 'weight', 'weight_unit',
             'price', 'description', 'manufacturer', 'batch_number', 'category', 'created_at',
             'transferred_to', 'transferred_to_name', 'transferred_at', 'received_by_shop',
-            'received_by_shop_name', 'received_at', 'qr_code'
+            'received_by_shop_name', 'received_at', 'qr_code', 'quantity_received',
+            'rejection_status', 'rejection_reason', 'quantity_rejected', 'rejected_by', 'rejected_at'
         ]
         read_only_fields = [
             'id', 'created_at', 'processing_unit_name', 'animal_animal_id', 'animal_species',
@@ -257,6 +258,30 @@ class CarcassMeasurementSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'animal_animal_id', 'animal_species', 'animal_farmer_username']
 
+    def validate_animal(self, value):
+        """
+        Accept either numeric ID or animal_id string.
+        If a string is provided, look up the animal by animal_id.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.info(f"[CARCASS_MEASUREMENT] validate_animal called with value: {value} (type: {type(value)})")
+        
+        if isinstance(value, str):
+            # It's an animal_id string, look up the animal
+            try:
+                from .models import Animal
+                animal = Animal.objects.get(animal_id=value)
+                logger.info(f"[CARCASS_MEASUREMENT] Found animal by animal_id: {animal.id}")
+                return animal
+            except Animal.DoesNotExist:
+                logger.error(f"[CARCASS_MEASUREMENT] Animal with animal_id '{value}' not found")
+                raise serializers.ValidationError(f"Animal with animal_id '{value}' not found.")
+        # It's already an Animal instance or numeric ID
+        logger.info(f"[CARCASS_MEASUREMENT] Using numeric ID or Animal instance: {value}")
+        return value
+
     def to_representation(self, instance):
         """
         Conditionally expose fields based on carcass type.
@@ -276,37 +301,66 @@ class CarcassMeasurementSerializer(serializers.ModelSerializer):
         return data
 
     def validate(self, attrs):
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.info(f"[CARCASS_MEASUREMENT] validate() called with attrs keys: {list(attrs.keys())}")
+        logger.info(f"[CARCASS_MEASUREMENT] Raw attrs: {attrs}")
+        
         carcass_type = attrs.get('carcass_type')
+        measurements = attrs.get('measurements', {})
+        
+        logger.info(f"[CARCASS_MEASUREMENT] carcass_type: {carcass_type}")
+        logger.info(f"[CARCASS_MEASUREMENT] measurements: {measurements}")
+        
+        # If measurements JSON is provided, extract weight fields from it
+        if measurements:
+            logger.info(f"[CARCASS_MEASUREMENT] Extracting weights from measurements JSON...")
+            # Extract weights from measurements JSON and populate the individual fields
+            for field_name in ['head_weight', 'feet_weight', 'left_carcass_weight', 
+                             'right_carcass_weight', 'whole_carcass_weight', 'organs_weight', 'torso_weight']:
+                if field_name in measurements:
+                    measurement_data = measurements[field_name]
+                    logger.info(f"[CARCASS_MEASUREMENT] Processing {field_name}: {measurement_data}")
+                    if isinstance(measurement_data, dict) and 'value' in measurement_data:
+                        attrs[field_name] = measurement_data['value']
+                        logger.info(f"[CARCASS_MEASUREMENT] Set {field_name} = {measurement_data['value']}")
+
+        logger.info(f"[CARCASS_MEASUREMENT] After extraction, attrs: {attrs}")
 
         # Validate measurements are positive numbers
         weight_fields = ['head_weight', 'feet_weight', 'left_carcass_weight', 'right_carcass_weight',
-                        'whole_carcass_weight', 'organs_weight']
+                        'whole_carcass_weight', 'organs_weight', 'torso_weight']
 
         for field_name in weight_fields:
             weight = attrs.get(field_name)
             if weight is not None:
+                logger.info(f"[CARCASS_MEASUREMENT] Validating {field_name}: {weight}")
                 if weight <= 0:
+                    logger.error(f"[CARCASS_MEASUREMENT] {field_name} is not positive: {weight}")
                     raise serializers.ValidationError(f"{field_name.replace('_', ' ').title()} must be a positive number.")
                 # Check for unrealistic weights (too large for typical livestock)
                 if weight > 2000:
+                    logger.error(f"[CARCASS_MEASUREMENT] {field_name} is too large: {weight}")
                     raise serializers.ValidationError(f"{field_name.replace('_', ' ').title()} seems unreasonably high (over 2000 kg). Please verify the measurement.")
 
         if carcass_type == 'whole':
-            head_weight = attrs.get('head_weight')
-            feet_weight = attrs.get('feet_weight')
             whole_carcass_weight = attrs.get('whole_carcass_weight')
-            if head_weight is not None and feet_weight is not None and whole_carcass_weight is not None:
-                if whole_carcass_weight < head_weight + feet_weight:
-                    raise serializers.ValidationError("For whole carcass type, whole_carcass_weight must be greater than or equal to the sum of head_weight and feet_weight.")
+            logger.info(f"[CARCASS_MEASUREMENT] Whole carcass validation - whole_carcass_weight: {whole_carcass_weight}")
+            if whole_carcass_weight is None:
+                logger.error(f"[CARCASS_MEASUREMENT] whole_carcass_weight is required but missing")
+                raise serializers.ValidationError("For whole carcass type, whole_carcass_weight is required.")
         elif carcass_type == 'split':
+            # For split carcass, validate that we have the necessary measurements
             left_carcass_weight = attrs.get('left_carcass_weight')
             right_carcass_weight = attrs.get('right_carcass_weight')
-            feet_weight = attrs.get('feet_weight')
-            organs_weight = attrs.get('organs_weight')
-            # For split carcass, all parts should be provided and positive
-            if not all([left_carcass_weight, right_carcass_weight, feet_weight, organs_weight]):
-                raise serializers.ValidationError("For split carcass type, all weight fields (left_carcass_weight, right_carcass_weight, feet_weight, organs_weight) must be provided.")
+            logger.info(f"[CARCASS_MEASUREMENT] Split carcass validation - left: {left_carcass_weight}, right: {right_carcass_weight}")
+            # Split carcass should have at least left and right carcass weights
+            if left_carcass_weight is None or right_carcass_weight is None:
+                logger.error(f"[CARCASS_MEASUREMENT] left_carcass_weight or right_carcass_weight is missing")
+                raise serializers.ValidationError("For split carcass type, both left_carcass_weight and right_carcass_weight are required.")
 
+        logger.info(f"[CARCASS_MEASUREMENT] Validation passed successfully")
         return attrs
 
 
@@ -319,12 +373,12 @@ class SlaughterPartSerializer(serializers.ModelSerializer):
     class Meta:
         model = SlaughterPart
         fields = [
-            'id', 'animal', 'animal_animal_id', 'animal_species', 'part_type', 'weight',
+            'id', 'animal', 'animal_animal_id', 'animal_species', 'part_type', 'weight', 'remaining_weight',
             'weight_unit', 'description', 'created_at', 'transferred_to', 'transferred_to_name',
             'transferred_at', 'received_by', 'received_by_username', 'received_at',
-            'used_in_product', 'is_selected_for_transfer'
+            'used_in_product', 'is_selected_for_transfer', 'part_id'
         ]
-        read_only_fields = ['id', 'created_at', 'animal_animal_id', 'animal_species', 'transferred_to_name', 'received_by_username']
+        read_only_fields = ['id', 'created_at', 'animal_animal_id', 'animal_species', 'transferred_to_name', 'received_by_username', 'part_id']
 
 
 class ProcessingUnitSerializer(serializers.ModelSerializer):
@@ -404,10 +458,12 @@ class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notification
         fields = [
-            'id', 'notification_type', 'title', 'message', 'data', 'is_read',
+            'id', 'notification_type', 'title', 'message', 'data', 'priority',
+            'is_dismissed', 'dismissed_at', 'action_type', 'is_archived',
+            'archived_at', 'group_key', 'is_batch_notification', 'is_read',
             'read_at', 'action_url', 'action_text', 'created_at', 'expires_at'
         ]
-        read_only_fields = ['id', 'created_at']
+        read_only_fields = ['id', 'created_at', 'dismissed_at', 'archived_at']
 
 
 class ActivitySerializer(serializers.ModelSerializer):
