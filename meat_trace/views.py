@@ -99,6 +99,18 @@ class AnimalViewSet(viewsets.ModelViewSet):
         """Set the farmer to the current user when creating an animal"""
         serializer.save(farmer=self.request.user)
 
+    def destroy(self, request, *args, **kwargs):
+        """Prevent deletion of slaughtered animals"""
+        animal = self.get_object()
+        
+        if animal.slaughtered:
+            return Response(
+                {'error': 'Cannot delete slaughtered animals. Slaughtered animals must be retained for traceability.'},
+                status=status_module.HTTP_400_BAD_REQUEST
+            )
+        
+        return super().destroy(request, *args, **kwargs)
+
     @action(detail=True, methods=['patch'], url_path='slaughter')
     def slaughter_animal(self, request, pk=None):
         """Slaughter an animal and create slaughter parts if carcass measurement exists"""
@@ -602,6 +614,13 @@ class SlaughterPartViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """Create a slaughter part"""
         serializer.save()
+
+    def destroy(self, request, *args, **kwargs):
+        """Prevent deletion of slaughter parts for traceability"""
+        return Response(
+            {'error': 'Cannot delete slaughter parts. Slaughter parts must be retained for traceability.'},
+            status=status_module.HTTP_400_BAD_REQUEST
+        )
 
 
 class NotificationViewSet(viewsets.ModelViewSet):
@@ -1429,33 +1448,47 @@ def processing_pipeline_view(request):
             'total_pending': 0
         }
 
-        # Stage 1: Receive - Animals transferred to processing unit but not received
+        # Stage 1: Receive - Animals transferred to processing unit but not received yet
+        # Excludes rejected animals
         receive_count = Animal.objects.filter(
             transferred_to_id__in=user_processing_units,
-            received_by__isnull=True
+            received_by__isnull=True,
+            rejection_status__isnull=True  # Exclude rejected animals
         ).count()
 
-        # Stage 2: Inspect - Animals received but not slaughtered (no carcass measurement)
-        inspect_count = Animal.objects.filter(
+        # Stage 2: Inspect - Animals received but no carcass measurement taken yet
+        # This is the inspection phase where processor evaluates the carcass
+        from .models import CarcassMeasurement
+        
+        # Get animals that are received but don't have carcass measurements
+        received_animal_ids = Animal.objects.filter(
             transferred_to_id__in=user_processing_units,
             received_by__isnull=False,
-            slaughtered=False
-        ).count()
+            rejection_status__isnull=True  # Exclude rejected animals
+        ).values_list('id', flat=True)
+        
+        # Get animals that have carcass measurements
+        animals_with_measurements = CarcassMeasurement.objects.filter(
+            animal_id__in=received_animal_ids
+        ).values_list('animal_id', flat=True)
+        
+        # Inspect = received but no carcass measurement
+        inspect_count = len(received_animal_ids) - len(animals_with_measurements)
 
-        # Stage 3: Process - Animals slaughtered but no products created yet
-        process_count = Animal.objects.filter(
-            transferred_to_id__in=user_processing_units,
-            received_by__isnull=False,
-            slaughtered=True
-        ).exclude(
-            # Exclude animals that have products created from their slaughter parts
-            slaughter_parts__used_in_product__isnull=False
-        ).distinct().count()
+        # Stage 3: Process - Animals with carcass measurement but no products created yet
+        # These animals have been inspected and are being processed into products
+        animals_with_products = Product.objects.filter(
+            processing_unit_id__in=user_processing_units,
+            animal_id__isnull=False
+        ).values_list('animal_id', flat=True).distinct()
+        
+        # Process = has carcass measurement but no products yet
+        process_count = len([aid for aid in animals_with_measurements if aid not in animals_with_products])
 
-        # Stage 4: Stock - Products created and in inventory
+        # Stage 4: Stock - Products created and in inventory (not transferred to shops)
         stock_count = Product.objects.filter(
             processing_unit_id__in=user_processing_units,
-            transferred_to__isnull=True  # Not transferred out
+            transferred_to__isnull=True  # Not transferred out to shops
         ).count()
 
         # Build stages data
@@ -1527,7 +1560,11 @@ class ProcessingUnitViewSet(viewsets.ViewSet):
         try:
             queryset = ProcessingUnit.objects.all()
             serializer = ProcessingUnitSerializer(queryset, many=True)
-            return Response(serializer.data)
+            # Return paginated-style response for Flutter app compatibility
+            return Response({
+                'results': serializer.data,
+                'count': len(serializer.data)
+            })
         except Exception as e:
             import logging
             logger = logging.getLogger(__name__)
@@ -1712,7 +1749,7 @@ class CarcassMeasurementViewSet(viewsets.ModelViewSet):
             if not animal.slaughtered:
                 logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Marking animal {animal.animal_id} as slaughtered")
                 animal.slaughtered = True
-                animal.slaughter_date = timezone.now()
+                animal.slaughtered_at = timezone.now()
                 animal.save()
                 logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Animal marked as slaughtered successfully")
             else:
@@ -1752,7 +1789,7 @@ class CarcassMeasurementViewSet(viewsets.ModelViewSet):
             if not animal.slaughtered:
                 logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Marking animal {animal.animal_id} as slaughtered")
                 animal.slaughtered = True
-                animal.slaughter_date = timezone.now()
+                animal.slaughtered_at = timezone.now()
                 animal.save()
                 logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Animal marked as slaughtered successfully")
             
