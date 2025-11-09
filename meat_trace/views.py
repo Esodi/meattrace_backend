@@ -1390,13 +1390,27 @@ def production_stats_view(request):
 @permission_classes([IsAuthenticated])
 def processing_pipeline_view(request):
     """Return dynamic processing pipeline data for the current user's processing unit"""
+    # Default empty pipeline structure
+    empty_pipeline = {
+        'pipeline': {
+            'stages': [],
+            'total_pending': 0
+        }
+    }
+    
     try:
         user = request.user
         profile = user.profile
 
         # Only processing unit users can see pipeline data
-        if profile.role != 'processing_unit':
-            return Response({'pipeline': {}})
+        # Accept canonical role 'processing_unit' and tolerate legacy/capitalized variants
+        import logging
+        logger = logging.getLogger(__name__)
+
+        allowed_roles = ('processing_unit', 'Processor', 'processor')
+        if profile.role not in allowed_roles:
+            logger.info(f"[PROCESSING_PIPELINE] User {user.username} has role '{getattr(profile, 'role', None)}' which is not a processing unit role - returning empty pipeline")
+            return Response(empty_pipeline)
 
         # Get user's processing units
         from .models import ProcessingUnitUser
@@ -1407,7 +1421,7 @@ def processing_pipeline_view(request):
         ).values_list('processing_unit_id', flat=True)
 
         if not user_processing_units:
-            return Response({'pipeline': {}})
+            return Response(empty_pipeline)
 
         # Calculate pipeline stages
         pipeline_data = {
@@ -1478,8 +1492,18 @@ def processing_pipeline_view(request):
         return Response({'pipeline': pipeline_data})
 
     except Exception as e:
-        # Return empty pipeline on error to avoid breaking the UI
-        return Response({'pipeline': {}})
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"[PROCESSING_PIPELINE] Error fetching pipeline data: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        # Return empty but valid pipeline structure on error
+        return Response({
+            'pipeline': {
+                'stages': [],
+                'total_pending': 0
+            }
+        })
 
 
 @api_view(['POST'])
@@ -1882,6 +1906,87 @@ class ShopViewSet(viewsets.ModelViewSet):
             
         except UserProfile.DoesNotExist:
             return Shop.objects.all()
+
+    @action(detail=False, methods=['post'], url_path='register', permission_classes=[IsAuthenticated])
+    def register(self, request):
+        """
+        Register/create a new shop for the current authenticated user.
+        The user will be assigned as the owner with admin permissions.
+        """
+        try:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"[SHOP_VIEWSET] Creating new shop for user {request.user.username}")
+            
+            user = request.user
+            data = request.data
+            
+            # Validate required fields
+            name = data.get('name')
+            if not name:
+                return Response(
+                    {'error': 'Shop name is required'},
+                    status=status_module.HTTP_400_BAD_REQUEST
+                )
+            
+            # Check if user already owns a shop
+            try:
+                profile = user.profile
+                if profile.shop and profile.role == 'shop':
+                    return Response(
+                        {'error': 'You already own a shop. You cannot create another one.'},
+                        status=status_module.HTTP_400_BAD_REQUEST
+                    )
+            except UserProfile.DoesNotExist:
+                # Create profile if it doesn't exist
+                profile = UserProfile.objects.create(user=user, role='shop')
+            
+            # Create the shop
+            shop = Shop.objects.create(
+                name=name,
+                description=data.get('description', ''),
+                location=data.get('location', ''),
+                contact_email=data.get('contact_email', user.email),
+                contact_phone=data.get('contact_phone', ''),
+                business_license=data.get('business_license', ''),
+                tax_id=data.get('tax_id', ''),
+                is_active=True
+            )
+            logger.info(f"[SHOP_VIEWSET] Created Shop ID {shop.id}")
+            
+            # Create ShopUser membership for owner
+            shop_user = ShopUser.objects.create(
+                user=user,
+                shop=shop,
+                role='owner',
+                permissions='admin',
+                is_active=True,
+                invited_by=user,
+                invited_at=timezone.now(),
+                joined_at=timezone.now()
+            )
+            logger.info(f"[SHOP_VIEWSET] Created ShopUser owner membership ID {shop_user.id}")
+            
+            # Update user profile
+            profile.shop = shop
+            profile.role = 'shop'
+            profile.save()
+            logger.info(f"[SHOP_VIEWSET] Updated user profile with Shop ID {shop.id}")
+            
+            # Return shop data
+            serializer = self.get_serializer(shop)
+            return Response(serializer.data, status=status_module.HTTP_201_CREATED)
+            
+        except Exception as e:
+            import logging
+            import traceback
+            logger = logging.getLogger(__name__)
+            logger.error(f"[SHOP_VIEWSET] Error creating shop: {e}")
+            logger.error(traceback.format_exc())
+            return Response(
+                {'error': str(e)},
+                status=status_module.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     @action(detail=True, methods=['get'], url_path='join-requests', permission_classes=[AllowAny])
     def join_requests(self, request, pk=None):

@@ -195,28 +195,26 @@ class RegisterView(APIView):
             pu_name = data.get('processing_unit_name')
             
             if pu_id:
-                # Joining existing processing unit
+                # Joining existing processing unit - create pending join request
                 try:
                     processing_unit = ProcessingUnit.objects.get(id=pu_id)
-                    print(f"[REGISTRATION] User {user.username} joining existing ProcessingUnit ID {pu_id}")
+                    print(f"[REGISTRATION] User {user.username} requesting to join ProcessingUnit ID {pu_id}")
                     
-                    # Create membership with default worker role
-                    pu_user = ProcessingUnitUser.objects.create(
+                    # Create join request instead of direct membership
+                    from .models import JoinRequest
+                    join_request = JoinRequest.objects.create(
                         user=user,
                         processing_unit=processing_unit,
-                        role='worker',
-                        permissions='write',
-                        is_active=True,
-                        is_suspended=False,
-                        invited_by=user,
-                        invited_at=timezone.now(),
-                        joined_at=timezone.now()
+                        requested_role=data.get('requested_role', 'worker'),
+                        message=data.get('message', 'I would like to join this processing unit'),
+                        status='pending'
                     )
-                    print(f"[REGISTRATION] Created ProcessingUnitUser membership ID {pu_user.id}")
+                    print(f"[REGISTRATION] Created JoinRequest ID {join_request.id} - pending approval")
                     
-                    profile.processing_unit = processing_unit
+                    # Update profile but don't link to processing unit yet
+                    profile.processing_unit = None  # Will be set when request is approved
                     profile.save()
-                    print(f"[REGISTRATION] Updated user profile with ProcessingUnit ID {processing_unit.id}")
+                    print(f"[REGISTRATION] User profile created - awaiting join request approval")
                     
                 except ProcessingUnit.DoesNotExist:
                     print(f"[REGISTRATION] ERROR: ProcessingUnit ID {pu_id} not found")
@@ -268,27 +266,26 @@ class RegisterView(APIView):
             shop_name = data.get('shop_name')
             
             if shop_id:
-                # Joining existing shop
+                # Joining existing shop - create pending join request
                 try:
                     shop = Shop.objects.get(id=shop_id)
-                    print(f"[REGISTRATION] User {user.username} joining existing Shop ID {shop_id}")
+                    print(f"[REGISTRATION] User {user.username} requesting to join Shop ID {shop_id}")
                     
-                    # Create membership with default salesperson role
-                    shop_user = ShopUser.objects.create(
+                    # Create join request instead of direct membership
+                    from .models import JoinRequest
+                    join_request = JoinRequest.objects.create(
                         user=user,
                         shop=shop,
-                        role='salesperson',
-                        permissions='write',
-                        is_active=True,
-                        invited_by=user,
-                        invited_at=timezone.now(),
-                        joined_at=timezone.now()
+                        requested_role=data.get('requested_role', 'salesperson'),
+                        message=data.get('message', 'I would like to join this shop'),
+                        status='pending'
                     )
-                    print(f"[REGISTRATION] Created ShopUser membership ID {shop_user.id}")
+                    print(f"[REGISTRATION] Created JoinRequest ID {join_request.id} - pending approval")
                     
-                    profile.shop = shop
+                    # Update profile but don't link to shop yet
+                    profile.shop = None  # Will be set when request is approved
                     profile.save()
-                    print(f"[REGISTRATION] Updated user profile with Shop ID {shop.id}")
+                    print(f"[REGISTRATION] User profile created - awaiting join request approval")
                     
                 except Shop.DoesNotExist:
                     print(f"[REGISTRATION] ERROR: Shop ID {shop_id} not found")
@@ -342,10 +339,26 @@ class RegisterView(APIView):
         from rest_framework_simplejwt.tokens import RefreshToken
         refresh = RefreshToken.for_user(user)
         
+        # Check if user has pending join requests
+        has_pending_join_request = False
+        pending_join_message = None
+        
+        if role.lower() in ['processingunit', 'processing_unit'] and data.get('processing_unit_id'):
+            has_pending_join_request = True
+            pending_join_message = 'Your join request is pending approval from the processing unit owner.'
+        elif role.lower() == 'shop' and data.get('shop_id'):
+            has_pending_join_request = True
+            pending_join_message = 'Your join request is pending approval from the shop owner.'
+        
+        response_message = 'User registered successfully'
+        if has_pending_join_request:
+            response_message = 'Registration successful. Your join request is pending approval.'
+        
         return Response(
             {
-                'message': 'User registered successfully',
-                'detail': 'Your account has been created successfully. Welcome to MeatTrace Pro!',
+                'message': response_message,
+                'detail': pending_join_message if has_pending_join_request else 'Your account has been created successfully. Welcome to MeatTrace Pro!',
+                'has_pending_join_request': has_pending_join_request,
                 'user': {
                     'id': user.id,
                     'username': user.username,
