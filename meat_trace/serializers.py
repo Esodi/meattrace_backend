@@ -664,12 +664,50 @@ class SaleSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'created_at', 'qr_code', 'shop_name', 'sold_by_username', 'shop', 'sold_by']
     
-    def create(self, validated_data):
-        items_data = validated_data.pop('items')
-        sale = Sale.objects.create(**validated_data)
+    def validate(self, data):
+        """Add logging to validation"""
+        print(f"[SALE_SERIALIZER] Validating data: {data}")
         
-        for item_data in items_data:
+        # Check if items exist
+        if 'items' not in data or not data['items']:
+            print(f"[SALE_SERIALIZER] ❌ Validation failed: No items provided")
+            raise serializers.ValidationError("At least one item is required for a sale")
+        
+        print(f"[SALE_SERIALIZER] ✅ Validation passed with {len(data['items'])} items")
+        return data
+    
+    def create(self, validated_data):
+        print(f"[SALE_SERIALIZER] Creating sale with validated_data: {validated_data}")
+        items_data = validated_data.pop('items')
+        print(f"[SALE_SERIALIZER] Items data: {items_data}")
+        
+        sale = Sale.objects.create(**validated_data)
+        print(f"[SALE_SERIALIZER] Sale created with ID: {sale.id}")
+        
+        for idx, item_data in enumerate(items_data):
+            print(f"[SALE_SERIALIZER] Creating sale item {idx+1}: {item_data}")
+            
+            # Get the product and reduce its quantity
+            product = item_data['product']
+            quantity_sold = item_data['quantity']
+            
+            print(f"[SALE_SERIALIZER] Product {product.id} ({product.name}): Current quantity = {product.quantity}")
+            
+            # Check if sufficient quantity is available
+            if product.quantity < quantity_sold:
+                raise serializers.ValidationError(
+                    f"Insufficient quantity for product '{product.name}'. "
+                    f"Available: {product.quantity}, Requested: {quantity_sold}"
+                )
+            
+            # Reduce product quantity
+            product.quantity -= quantity_sold
+            product.save()
+            print(f"[SALE_SERIALIZER] Product {product.id}: Updated quantity = {product.quantity} (reduced by {quantity_sold})")
+            
+            # Create the sale item
             SaleItem.objects.create(sale=sale, **item_data)
         
+        print(f"[SALE_SERIALIZER] ✅ Sale created successfully with {len(items_data)} items")
         return sale
         read_only_fields = ['id', 'created_at', 'updated_at']

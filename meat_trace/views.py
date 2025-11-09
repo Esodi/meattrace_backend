@@ -1984,32 +1984,90 @@ class ShopViewSet(viewsets.ModelViewSet):
                     logger.error(f"[SHOP_VIEWSET] Permission check error: {perm_error}")
             
             # Get shop members
-            from .models import ShopUser
-            shop_members = ShopUser.objects.filter(shop=shop).select_related('user')
+            from .models import ShopUser, UserProfile
+            shop_members = ShopUser.objects.filter(shop=shop).select_related('user', 'invited_by')
+            
+            logger.info(f"[SHOP_VIEWSET] ShopUser count: {shop_members.count()}")
             
             # Serialize member data
             members_data = []
-            for shop_user in shop_members:
-                members_data.append({
-                    'id': shop_user.id,
-                    'user': {
-                        'id': shop_user.user.id,
-                        'username': shop_user.user.username,
-                        'email': shop_user.user.email,
-                        'first_name': shop_user.user.first_name,
-                        'last_name': shop_user.user.last_name,
-                    },
-                    'role': shop_user.role,
-                    'permissions': shop_user.permissions,
-                    'is_active': shop_user.is_active,
-                    'joined_at': shop_user.joined_at,
-                    'invited_by': {
-                        'id': shop_user.invited_by.id,
-                        'username': shop_user.invited_by.username,
-                    } if shop_user.invited_by else None,
-                })
+            user_ids_added = set()  # Track which users we've already added
             
-            logger.info(f"[SHOP_VIEWSET] Found {len(members_data)} members")
+            # First, add shop owners from UserProfile (they might not have ShopUser records)
+            shop_owners = UserProfile.objects.filter(
+                shop=shop,
+                role='shop'
+            ).select_related('user')
+            
+            logger.info(f"[SHOP_VIEWSET] UserProfile owners count: {shop_owners.count()}")
+            
+            for profile in shop_owners:
+                logger.info(f"[SHOP_VIEWSET] Processing profile: user={profile.user}, role={profile.role}")
+                if profile.user and profile.user.id not in user_ids_added:
+                    # Check if they have a ShopUser record
+                    shop_user = shop_members.filter(user=profile.user).first()
+                    
+                    if shop_user:
+                        # They have a ShopUser record, we'll add them later
+                        logger.info(f"[SHOP_VIEWSET] User {profile.user.username} has ShopUser record, skipping profile-based add")
+                        continue
+                    
+                    # Add shop owner without ShopUser record
+                    logger.info(f"[SHOP_VIEWSET] Adding profile-based owner: {profile.user.username}")
+                    member_dict = {
+                        'id': -1,  # Use -1 to indicate profile-based owner (not a ShopUser record)
+                        'user_id': profile.user.id or 0,
+                        'username': profile.user.username or '',
+                        'email': profile.user.email or '',
+                        'shop_id': shop.id,
+                        'shop_name': shop.name,
+                        'role': 'owner',
+                        'permissions': 'admin',
+                        'is_active': True,
+                        'is_suspended': False,
+                        'joined_at': profile.created_at.isoformat() if profile.created_at else None,
+                        'invited_at': profile.created_at.isoformat() if profile.created_at else timezone.now().isoformat(),
+                        'invited_by_id': None,
+                        'invited_by_username': None,
+                    }
+                    members_data.append(member_dict)
+                    user_ids_added.add(profile.user.id)
+            
+            # Then add all ShopUser members (including owners who have ShopUser records)
+            for shop_user in shop_members:
+                logger.info(f"[SHOP_VIEWSET] Processing ShopUser: user={shop_user.user}, role={shop_user.role}")
+                if shop_user.user and shop_user.user.id not in user_ids_added:
+                    logger.info(f"[SHOP_VIEWSET] Adding ShopUser member: {shop_user.user.username}")
+                    member_dict = {
+                        'id': shop_user.id or 0,
+                        'user_id': shop_user.user.id or 0,
+                        'username': shop_user.user.username or '',
+                        'email': shop_user.user.email or '',
+                        'shop_id': shop.id,
+                        'shop_name': shop.name,
+                        'role': shop_user.role or 'salesperson',
+                        'permissions': shop_user.permissions or 'write',
+                        'is_active': shop_user.is_active if shop_user.is_active is not None else True,
+                        'is_suspended': False,  # Add this field - you may want to add this to your ShopUser model
+                        'joined_at': shop_user.joined_at.isoformat() if shop_user.joined_at else None,
+                        'invited_at': shop_user.invited_at.isoformat() if shop_user.invited_at else timezone.now().isoformat(),
+                        'invited_by_id': shop_user.invited_by.id if shop_user.invited_by else None,
+                        'invited_by_username': shop_user.invited_by.username if shop_user.invited_by else None,
+                    }
+                    members_data.append(member_dict)
+                    user_ids_added.add(shop_user.user.id)
+                else:
+                    if shop_user.user:
+                        logger.info(f"[SHOP_VIEWSET] Skipping duplicate user: {shop_user.user.username}")
+                    else:
+                        logger.warning(f"[SHOP_VIEWSET] ShopUser {shop_user.id} has no associated user!")
+            
+            # Sort by role (owners first) then by username
+            role_priority = {'owner': 0, 'manager': 1, 'salesperson': 2, 'cashier': 3, 'inventory_clerk': 4}
+            members_data.sort(key=lambda x: (role_priority.get(x['role'], 999), x.get('username', '')))
+            
+            logger.info(f"[SHOP_VIEWSET] Found {len(members_data)} members (including {len(shop_owners)} owner(s))")
+            logger.info(f"[SHOP_VIEWSET] Members data: {members_data}")
             
             return Response(members_data)
         except Exception as e:
@@ -2578,10 +2636,37 @@ class SaleViewSet(viewsets.ModelViewSet):
     serializer_class = SaleSerializer
     permission_classes = [IsAuthenticated]
     
+    def create(self, request, *args, **kwargs):
+        """Override create to add detailed logging"""
+        print(f"\n{'='*80}")
+        print(f"[SALE_CREATE] User: {request.user.username}")
+        print(f"[SALE_CREATE] Request data: {request.data}")
+        print(f"[SALE_CREATE] Request method: {request.method}")
+        print(f"{'='*80}\n")
+        
+        try:
+            response = super().create(request, *args, **kwargs)
+            print(f"[SALE_CREATE] ✅ Success - Status: {response.status_code}")
+            print(f"[SALE_CREATE] Response data: {response.data}")
+            return response
+        except Exception as e:
+            print(f"[SALE_CREATE] ❌ Exception occurred: {type(e).__name__}")
+            print(f"[SALE_CREATE] Error message: {str(e)}")
+            import traceback
+            print(f"[SALE_CREATE] Traceback:\n{traceback.format_exc()}")
+            raise
+    
     def get_queryset(self):
         """Filter sales based on user permissions"""
         user = self.request.user
         
+        # First check ShopUser memberships (new system)
+        shop_membership = user.shop_memberships.filter(is_active=True).first()
+        if shop_membership:
+            # ShopUser can see sales from their shop
+            return Sale.objects.filter(shop=shop_membership.shop).order_by('-created_at')
+        
+        # Fall back to UserProfile (old system)
         try:
             profile = user.profile
             
@@ -2611,15 +2696,34 @@ class SaleViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """Automatically set shop and sold_by when creating a sale"""
         user = self.request.user
+        shop = None
         
-        try:
-            profile = user.profile
-            
-            # Set the shop from user's profile
-            if profile.shop:
-                serializer.save(shop=profile.shop, sold_by=user)
-            else:
-                raise ValidationError("User is not associated with any shop")
-                
-        except UserProfile.DoesNotExist:
-            raise ValidationError("User profile not found")
+        print(f"[SALE_PERFORM_CREATE] User: {user.username}")
+        
+        # Try to get shop from ShopUser first (new system)
+        shop_membership = user.shop_memberships.filter(is_active=True).first()
+        print(f"[SALE_PERFORM_CREATE] ShopUser membership: {shop_membership}")
+        
+        if shop_membership:
+            shop = shop_membership.shop
+            print(f"[SALE_PERFORM_CREATE] Shop from ShopUser: {shop.name} (ID: {shop.id})")
+        else:
+            # Fall back to UserProfile (old system)
+            try:
+                profile = user.profile
+                print(f"[SALE_PERFORM_CREATE] UserProfile found: {profile.role}")
+                if profile.shop:
+                    shop = profile.shop
+                    print(f"[SALE_PERFORM_CREATE] Shop from UserProfile: {shop.name} (ID: {shop.id})")
+            except UserProfile.DoesNotExist:
+                print(f"[SALE_PERFORM_CREATE] No UserProfile found")
+                pass
+        
+        if shop:
+            print(f"[SALE_PERFORM_CREATE] ✅ Saving sale with shop: {shop.name}, sold_by: {user.username}")
+            print(f"[SALE_PERFORM_CREATE] Validated data before save: {serializer.validated_data}")
+            serializer.save(shop=shop, sold_by=user)
+            print(f"[SALE_PERFORM_CREATE] ✅ Sale saved successfully")
+        else:
+            print(f"[SALE_PERFORM_CREATE] ❌ No shop found for user")
+            raise ValidationError("User is not associated with any shop")
