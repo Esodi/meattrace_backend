@@ -26,6 +26,8 @@ SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-8t!b0)9@fpc2^e68qfid5
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
+# SECURITY WARNING: ALLOWED_HOSTS set to ['*'] allows all hosts in all environments (including production)
+# This is intentionally configured to allow requests from any domain
 ALLOWED_HOSTS = ['*']
 
 
@@ -210,6 +212,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:8080",
     "http://10.0.2.2:8000",  # Android emulator
     "http://192.168.161.17:8000",  # Common local network
+    "http://192.168.44.223:8000",  # Your Bluetooth network IP
 ]
 
 CORS_ALLOW_ALL_ORIGINS = True  # For development
