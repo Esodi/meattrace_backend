@@ -202,7 +202,7 @@ SIMPLE_JWT = {
     'SLIDING_TOKEN_REFRESH_LIFETIME': timedelta(days=1),
 }
 
-# CORS settings
+# CORS settings - Enabled for all environments (development and production)
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
@@ -213,9 +213,13 @@ CORS_ALLOWED_ORIGINS = [
     "http://10.0.2.2:8000",  # Android emulator
     "http://192.168.161.17:8000",  # Common local network
     "http://192.168.44.223:8000",  # Your Bluetooth network IP
+    "https://dev.shambabora.co.tz",  # Production domain
+    "http://dev.shambabora.co.tz",   # Production domain (http)
 ]
 
-CORS_ALLOW_ALL_ORIGINS = True  # For development
+# Allow all origins - enabled for both development AND production
+# This allows the Flutter mobile app to connect from any network/IP
+CORS_ALLOW_ALL_ORIGINS = True
 
 # Additional CORS settings for Flutter
 CORS_ALLOW_CREDENTIALS = True
