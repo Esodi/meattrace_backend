@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.pyc
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# Django
+*.log
+db.sqlite3
+db.sqlite3-journal
+staticfiles/
+media/qr_codes/
+media/animal_photos/
+
+# Gunicorn
+gunicorn.sock
+
+# Debug and Test Scripts
+check_*.py
+debug_*.py
+test_*.py
+demo_*.py
+diagnose_*.py
+fix_*.py
+init_*.py
+list_*.py
+migrate_*.py
+save_*.py
+verify_*.py
+create_test_*.py
+create_slaughter_parts_from_measurements.py
+change_password_to_111111.py
+
+# Downloaded Packages
+*.whl
+*.tar.gz
+django-*/
+
+# Backup Files
+*_backup.html
+*.bak
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation (temporary)
+ROLE_FIX_SUMMARY.md
+MIGRATION_NOTES_*.md

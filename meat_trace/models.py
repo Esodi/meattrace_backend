@@ -1550,61 +1550,107 @@ class ProductInfo(models.Model):
         # Build timeline events
         timeline = []
 
-        # Product creation event
-        timeline.append({
-            'stage': 'Product Created',
-            'timestamp': product.created_at.isoformat(),
-            'location': self.processing_unit_name or 'Unknown',
-            'action': f'Product {self.product_name} created',
-            'details': {
-                'Product Type': self.product_type,
-                'Batch Number': self.batch_number,
-                'Weight': f"{self.weight} {self.weight_unit}" if self.weight else 'Not recorded',
-                'Quantity': f"{self.quantity} {self.weight_unit}" if self.quantity else 'Not recorded'
-            }
-        })
-
-        # Add animal-related events if animal exists
+        # 1. Animal Registration (if exists)
         if product.animal:
-            # Animal registration
+            animal = product.animal
             timeline.append({
-                'stage': 'Source Animal',
-                'timestamp': product.animal.created_at.isoformat(),
-                'location': self.farmer_username,
+                'stage': 'Animal Registration',
+                'category': 'farmer',
+                'timestamp': animal.created_at.isoformat(),
+                'location': f'Farm - {self.farmer_username}',
                 'action': f'Animal {self.animal_id} registered',
+                'icon': 'fa-clipboard-list',
                 'details': {
-                    'Species': self.animal_species,
-                    'Farmer': self.farmer_username,
-                    'Weight': 'Not recorded'  # Temporarily disable weight display
+                    'Animal ID': self.animal_id or 'Unknown',
+                    'Animal Name': self.animal_name or 'Not named',
+                    'Species': self.animal_species or 'Unknown',
+                    'Farmer': self.farmer_username or 'Unknown',
+                    'Age': f'{animal.age} months' if animal.age else 'Not recorded',
+                    'Weight': f'{animal.weight} kg' if animal.weight else 'Not recorded'
                 }
             })
-
-            # Slaughter event if applicable
+            
+            # 2. Animal Transfer
+            if self.animal_transferred_at and self.animal_transferred_to_name:
+                timeline.append({
+                    'stage': 'Animal Transfer',
+                    'category': 'logistics',
+                    'timestamp': self.animal_transferred_at.isoformat(),
+                    'location': self.animal_transferred_to_name,
+                    'action': f'Animal transferred to processing unit',
+                    'icon': 'fa-truck',
+                    'details': {
+                        'From': f'Farm - {self.farmer_username}',
+                        'To': self.animal_transferred_to_name,
+                        'Animal ID': self.animal_id
+                    }
+                })
+            
+            # 3. Slaughter
             if self.animal_slaughtered and self.animal_slaughtered_at:
                 timeline.append({
                     'stage': 'Slaughter',
+                    'category': 'processing',
                     'timestamp': self.animal_slaughtered_at.isoformat(),
-                    'location': 'Processing Unit',
-                    'action': f'Animal {self.animal_id} slaughtered',
+                    'location': self.animal_transferred_to_name or 'Processing Unit',
+                    'action': f'Animal slaughtered',
+                    'icon': 'fa-cut',
                     'details': {
+                        'Animal ID': self.animal_id,
                         'Species': self.animal_species,
                         'Slaughter Date': self.animal_slaughtered_at.strftime('%Y-%m-%d %H:%M')
                     }
                 })
 
-            # Transfer event if applicable
-            if self.animal_transferred_at:
-                timeline.append({
-                    'stage': 'Transfer',
-                    'timestamp': self.animal_transferred_at.isoformat(),
-                    'location': self.animal_transferred_to_name or 'Unknown',
-                    'action': f'Animal transferred to {self.animal_transferred_to_name or "processing unit"}',
-                    'details': {
-                        'From': self.farmer_username,
-                        'To': self.animal_transferred_to_name or 'Processing Unit',
-                        'Transfer Mode': 'Whole carcass' if not hasattr(product.animal, 'slaughter_parts') or not product.animal.slaughter_parts.exists() else 'Parts'
-                    }
-                })
+        # 4. Product Creation
+        timeline.append({
+            'stage': 'Product Creation',
+            'category': 'processing',
+            'timestamp': product.created_at.isoformat(),
+            'location': self.processing_unit_name or 'Processing Unit',
+            'action': f'Product "{self.product_name}" created',
+            'icon': 'fa-box',
+            'details': {
+                'Product Name': self.product_name,
+                'Batch Number': self.batch_number,
+                'Product Type': self.product_type,
+                'Quantity': f"{self.quantity} {self.weight_unit}" if self.quantity else 'Not recorded',
+                'Weight': f"{self.weight} {self.weight_unit}" if self.weight else 'Not recorded'
+            }
+        })
+        
+        # 5. Product Transfer (if transferred)
+        if product.transferred_at and product.transferred_to:
+            timeline.append({
+                'stage': 'Product Transfer',
+                'category': 'logistics',
+                'timestamp': product.transferred_at.isoformat(),
+                'location': product.transferred_to.name,
+                'action': f'Product transferred to shop',
+                'icon': 'fa-truck-loading',
+                'details': {
+                    'From': self.processing_unit_name or 'Processing Unit',
+                    'To': product.transferred_to.name,
+                    'Batch': self.batch_number,
+                    'Quantity': f"{self.quantity} {self.weight_unit}"
+                }
+            })
+        
+        # 6. Product Reception (if received)
+        if product.received_at and product.received_by_shop:
+            timeline.append({
+                'stage': 'Product Reception',
+                'category': 'shop',
+                'timestamp': product.received_at.isoformat(),
+                'location': product.received_by_shop.name,
+                'action': 'Product received at shop',
+                'icon': 'fa-store',
+                'details': {
+                    'Shop': product.received_by_shop.name,
+                    'Quantity Received': f"{product.quantity_received} {self.weight_unit}",
+                    'Status': 'Accepted'
+                }
+            })
 
         # Sort timeline by timestamp
         timeline.sort(key=lambda x: x['timestamp'])

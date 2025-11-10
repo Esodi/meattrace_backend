@@ -1,244 +1,656 @@
 {% extends "meat_trace/base.html" %}
-{% block title %}Product Information - {{ product.name|default:"Unknown Product" }}{% endblock %}
+{% load static %}
+
+{% block title %}Meat Traceability Dashboard{% endblock %}
+
+{% block extra_head %}
+<style>
+    :root {
+        --primary-color: #2c5f2d;
+        --secondary-color: #97a97c;
+        --accent-color: #fc8c03;
+        --success-color: #28a745;
+        --danger-color: #dc3545;
+        --warning-color: #ffc107;
+        --info-color: #17a2b8;
+        --light-bg: #f8f9fa;
+        --card-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        --card-hover: 0 8px 12px rgba(0,0,0,0.15);
+    }
+    
+    body {
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    
+    .dashboard-hero {
+        background: linear-gradient(135deg, var(--primary-color) 0%, #1a3a1b 100%);
+        color: white;
+        padding: 3rem 2rem;
+        border-radius: 15px;
+        margin-bottom: 2rem;
+        box-shadow: var(--card-shadow);
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .dashboard-hero::before {
+        content: '';
+        position: absolute;
+        top: -50%;
+        right: -10%;
+        width: 300px;
+        height: 300px;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 50%;
+    }
+    
+    .dashboard-hero h1 {
+        font-size: 2.5rem;
+        font-weight: 700;
+        margin-bottom: 0.5rem;
+        position: relative;
+        z-index: 1;
+    }
+    
+    .dashboard-hero p {
+        font-size: 1.2rem;
+        opacity: 0.9;
+        position: relative;
+        z-index: 1;
+    }
+    
+    .timeline-card {
+        background: white;
+        border-radius: 15px;
+        padding: 2rem;
+        margin-bottom: 2rem;
+        box-shadow: var(--card-shadow);
+        transition: all 0.3s ease;
+    }
+    
+    .timeline-card:hover {
+        box-shadow: var(--card-hover);
+        transform: translateY(-2px);
+    }
+    
+    .product-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 1.5rem;
+        border-bottom: 2px solid var(--light-bg);
+        padding-bottom: 1rem;
+    }
+    
+    .product-title {
+        flex: 1;
+    }
+    
+    .product-title h2 {
+        color: var(--primary-color);
+        font-size: 1.8rem;
+        margin-bottom: 0.5rem;
+        font-weight: 600;
+    }
+    
+    .product-meta {
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+    }
+    
+    .meta-badge {
+        background: var(--light-bg);
+        padding: 0.4rem 0.8rem;
+        border-radius: 20px;
+        font-size: 0.9rem;
+        color: #555;
+    }
+    
+    .meta-badge i {
+        margin-right: 0.3rem;
+        color: var(--accent-color);
+    }
+    
+    .qr-section {
+        flex-shrink: 0;
+    }
+    
+    .qr-code-img {
+        width: 100px;
+        height: 100px;
+        border: 3px solid var(--primary-color);
+        border-radius: 10px;
+        padding: 5px;
+        background: white;
+    }
+    
+    /* Timeline Styles */
+    .timeline-container {
+        position: relative;
+        padding: 1rem 0;
+    }
+    
+    .timeline-wrapper {
+        position: relative;
+        padding-left: 50px;
+    }
+    
+    .timeline-line {
+        position: absolute;
+        left: 20px;
+        top: 0;
+        bottom: 0;
+        width: 4px;
+        background: linear-gradient(to bottom, 
+            var(--success-color) 0%, 
+            var(--info-color) 50%, 
+            var(--warning-color) 100%);
+        border-radius: 2px;
+    }
+    
+    .timeline-event {
+        position: relative;
+        margin-bottom: 2rem;
+        padding-left: 2rem;
+    }
+    
+    .timeline-event::before {
+        content: '';
+        position: absolute;
+        left: -30px;
+        top: 5px;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: white;
+        border: 4px solid var(--success-color);
+        z-index: 2;
+        box-shadow: 0 0 0 4px rgba(40, 167, 69, 0.2);
+    }
+    
+    .timeline-event.farmer::before { border-color: #8B4513; }
+    .timeline-event.logistics::before { border-color: var(--info-color); }
+    .timeline-event.processing::before { border-color: var(--accent-color); }
+    .timeline-event.shop::before { border-color: var(--primary-color); }
+    .timeline-event.sale::before { border-color: var(--success-color); }
+    .timeline-event.quality::before { border-color: var(--danger-color); }
+    
+    .timeline-event-card {
+        background: var(--light-bg);
+        border-left: 4px solid var(--success-color);
+        border-radius: 8px;
+        padding: 1rem 1.5rem;
+        transition: all 0.3s ease;
+    }
+    
+    .timeline-event.farmer .timeline-event-card { border-left-color: #8B4513; }
+    .timeline-event.logistics .timeline-event-card { border-left-color: var(--info-color); }
+    .timeline-event.processing .timeline-event-card { border-left-color: var(--accent-color); }
+    .timeline-event.shop .timeline-event-card { border-left-color: var(--primary-color); }
+    .timeline-event.sale .timeline-event-card { border-left-color: var(--success-color); }
+    .timeline-event.quality .timeline-event-card { border-left-color: var(--danger-color); }
+    
+    .timeline-event-card:hover {
+        background: white;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+    
+    .event-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.5rem;
+    }
+    
+    .event-stage {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-weight: 600;
+        font-size: 1.1rem;
+        color: var(--primary-color);
+    }
+    
+    .event-icon {
+        width: 35px;
+        height: 35px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--success-color);
+        color: white;
+        font-size: 0.9rem;
+    }
+    
+    .farmer .event-icon { background: #8B4513; }
+    .logistics .event-icon { background: var(--info-color); }
+    .processing .event-icon { background: var(--accent-color); }
+    .shop .event-icon { background: var(--primary-color); }
+    .sale .event-icon { background: var(--success-color); }
+    .quality .event-icon { background: var(--danger-color); }
+    
+    .event-timestamp {
+        font-size: 0.85rem;
+        color: #666;
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+    }
+    
+    .event-body {
+        margin: 0.8rem 0;
+    }
+    
+    .event-action {
+        font-size: 1rem;
+        color: #333;
+        margin-bottom: 0.5rem;
+    }
+    
+    .event-location {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        color: #666;
+        font-size: 0.9rem;
+    }
+    
+    .event-details {
+        background: white;
+        border-radius: 6px;
+        padding: 1rem;
+        margin-top: 0.8rem;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 0.8rem;
+    }
+    
+    .detail-item {
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .detail-label {
+        font-size: 0.8rem;
+        color: #888;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 0.2rem;
+    }
+    
+    .detail-value {
+        font-size: 0.95rem;
+        color: #333;
+        font-weight: 500;
+    }
+    
+    /* Stats Summary */
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1.5rem;
+        margin: 2rem 0;
+    }
+    
+    .stat-card {
+        background: white;
+        border-radius: 12px;
+        padding: 1.5rem;
+        text-align: center;
+        box-shadow: var(--card-shadow);
+        transition: all 0.3s ease;
+        border-top: 4px solid var(--primary-color);
+    }
+    
+    .stat-card:hover {
+        transform: translateY(-5px);
+        box-shadow: var(--card-hover);
+    }
+    
+    .stat-card.farmer { border-top-color: #8B4513; }
+    .stat-card.processing { border-top-color: var(--accent-color); }
+    .stat-card.shop { border-top-color: var(--primary-color); }
+    .stat-card.sale { border-top-color: var(--success-color); }
+    
+    .stat-icon {
+        font-size: 2.5rem;
+        margin-bottom: 0.5rem;
+        color: var(--primary-color);
+    }
+    
+    .stat-card.farmer .stat-icon { color: #8B4513; }
+    .stat-card.processing .stat-icon { color: var(--accent-color); }
+    .stat-card.shop .stat-icon { color: var(--primary-color); }
+    .stat-card.sale .stat-icon { color: var(--success-color); }
+    
+    .stat-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--primary-color);
+        margin: 0.5rem 0;
+    }
+    
+    .stat-label {
+        color: #666;
+        font-size: 0.9rem;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }
+    
+    /* Additional Info Sections */
+    .info-section {
+        background: white;
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-top: 2rem;
+        box-shadow: var(--card-shadow);
+    }
+    
+    .info-section h3 {
+        color: var(--primary-color);
+        font-size: 1.4rem;
+        margin-bottom: 1rem;
+        border-bottom: 2px solid var(--light-bg);
+        padding-bottom: 0.5rem;
+    }
+    
+    .data-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 1rem;
+    }
+    
+    .data-table th {
+        background: var(--light-bg);
+        color: var(--primary-color);
+        font-weight: 600;
+        padding: 0.8rem;
+        text-align: left;
+        border-bottom: 2px solid #dee2e6;
+    }
+    
+    .data-table td {
+        padding: 0.8rem;
+        border-bottom: 1px solid #e9ecef;
+    }
+    
+    .data-table tr:hover {
+        background: var(--light-bg);
+    }
+    
+    .status-badge {
+        padding: 0.3rem 0.8rem;
+        border-radius: 15px;
+        font-size: 0.85rem;
+        font-weight: 500;
+        display: inline-block;
+    }
+    
+    .status-pending { background: #fff3cd; color: #856404; }
+    .status-confirmed { background: #d4edda; color: #155724; }
+    .status-completed { background: #d1ecf1; color: #0c5460; }
+    .status-rejected { background: #f8d7da; color: #721c24; }
+    
+    .low-stock {
+        color: var(--danger-color);
+        font-weight: 600;
+    }
+    
+    .in-stock {
+        color: var(--success-color);
+        font-weight: 600;
+    }
+    
+    /* Empty State */
+    .empty-state {
+        text-align: center;
+        padding: 3rem;
+        color: #999;
+    }
+    
+    .empty-state i {
+        font-size: 4rem;
+        margin-bottom: 1rem;
+        color: #ddd;
+    }
+    
+    /* Responsive */
+    @media (max-width: 768px) {
+        .product-header {
+            flex-direction: column;
+        }
+        
+        .qr-section {
+            margin-top: 1rem;
+        }
+        
+        .stats-grid {
+            grid-template-columns: 1fr;
+        }
+        
+        .event-details {
+            grid-template-columns: 1fr;
+        }
+    }
+    
+    /* Print Styles */
+    @media print {
+        body {
+            background: white;
+        }
+        
+        .timeline-card {
+            page-break-inside: avoid;
+            box-shadow: none;
+            border: 1px solid #ddd;
+        }
+        
+        .no-print {
+            display: none;
+        }
+    }
+</style>
+{% endblock %}
 
 {% block content %}
-    {% if error %}
-    <div class="alert alert-danger mt-3">
-        <strong>Error:</strong> {{ error }}
-    </div>
-    {% endif %}
-<div class="header-hero">
-    <h1>{{ product.name|default:"Unknown Product" }}</h1>
-    <p class="mt-2">Product ID: {{ product.id|default:"N/A" }} | Batch: {{ product.batch_number|default:"N/A" }}</p>
+<div class="dashboard-hero">
+    <h1><i class="fas fa-chart-line"></i> Meat Traceability Dashboard</h1>
+    <p>Complete journey from farm to fork - Track every step of your meat products</p>
 </div>
 
-<div class="card mt-4 product-summary">
-    <h2>Product Summary</h2>
-    <div class="summary-grid">
-            <div class="summary-item">
-                <h3>Product Details</h3>
-                <p><strong>Type:</strong> {{ product.product_type|default:"N/A" }}</p>
-                <p><strong>Quantity:</strong> {{ product.quantity|default:"N/A" }} {{ product.weight_unit|default:"" }}</p>
-                <p><strong>Weight:</strong> {% if product.weight %}{{ product.weight }} {{ product.weight_unit }}{% else %}Not recorded{% endif %}</p>
-                <p><strong>Price:</strong> {% if product.price %}${{ product.price }}{% else %}Not set{% endif %}</p>
-            </div>
-
-            <div class="summary-item">
-                <h3>Processing Information</h3>
-                <p><strong>Processing Unit:</strong> {{ product.processing_unit.name|default:"N/A" }}</p>
-                <p><strong>Category:</strong> {% if product.category %}{{ product.category.name }}{% else %}Not categorized{% endif %}</p>
-                <p><strong>Manufacturer:</strong> {% if product.manufacturer %}{{ product.manufacturer }}{% else %}Not specified{% endif %}</p>
-                <p><strong>Created:</strong> {{ product.created_at|date:"M d, Y H:i"|default:"N/A" }}</p>
-            </div>
-
-            {% if animal %}
-            <div class="summary-item">
-                <h3>Source Animal</h3>
-                <p><strong>Animal ID:</strong> {{ animal.animal_id }}</p>
-                <p><strong>Name:</strong> {% if animal.animal_name %}{{ animal.animal_name }}{% else %}Not named{% endif %}</p>
-                <p><strong>Species:</strong> {{ animal.species }}</p>
-                <p><strong>Farmer:</strong> {{ animal.farmer.username }}</p>
-            </div>
-            {% endif %}
-
-            {% if qr_code_url %}
-            <div class="summary-item qr-code">
-                <h3>QR Code</h3>
-                <img src="/media/{{ qr_code_url }}" alt="Product QR Code">
-            </div>
-            {% endif %}
+{% if product_infos %}
+    <!-- Summary Statistics -->
+    <div class="stats-grid">
+        <div class="stat-card farmer">
+            <div class="stat-icon"><i class="fas fa-tractor"></i></div>
+            <div class="stat-value">{{ product_infos|length }}</div>
+            <div class="stat-label">Products Tracked</div>
+        </div>
+        <div class="stat-card processing">
+            <div class="stat-icon"><i class="fas fa-industry"></i></div>
+            <div class="stat-value">{{ total_processing_units|default:"N/A" }}</div>
+            <div class="stat-label">Processing Units</div>
+        </div>
+        <div class="stat-card shop">
+            <div class="stat-icon"><i class="fas fa-store"></i></div>
+            <div class="stat-value">{{ total_inventory }}</div>
+            <div class="stat-label">Inventory Locations</div>
+        </div>
+        <div class="stat-card sale">
+            <div class="stat-icon"><i class="fas fa-shopping-cart"></i></div>
+            <div class="stat-value">{{ total_orders }}</div>
+            <div class="stat-label">Total Orders</div>
+        </div>
     </div>
 
-    {% if product.description %}
-    <div class="mt-3 card">
-        <strong>Description:</strong> {{ product.description }}
-    </div>
-    {% endif %}
-
-    <div class="card mt-4 timeline">
-        <h2>Product Lifecycle Timeline</h2>
-        {% for event in timeline %}
-        <div class="timeline-item">
-            <div class="timeline-content">
-                <div class="timeline-stage">{{ event.stage }}</div>
-                <div class="timeline-timestamp">{{ event.timestamp|date:"M d, Y H:i:s" }}</div>
-                <div class="timeline-location">{{ event.location }}</div>
-                <div class="timeline-action">{{ event.action }}</div>
-                {% if event.details %}
-                <div class="timeline-details card mt-2 p-2">
-                    <table>
-                        {% for key, value in event.details.items %}
-                        <tr>
-                            <td>{{ key|title }}</td>
-                            <td>{{ value }}</td>
-                        </tr>
-                        {% endfor %}
-                    </table>
+    <!-- Product Timeline Cards -->
+    {% for info in product_infos %}
+    <div class="timeline-card">
+        <!-- Product Header -->
+        <div class="product-header">
+            <div class="product-title">
+                <h2><i class="fas fa-box"></i> {{ info.product_name }}</h2>
+                <div class="product-meta">
+                    <span class="meta-badge">
+                        <i class="fas fa-barcode"></i> Batch: {{ info.batch_number }}
+                    </span>
+                    <span class="meta-badge">
+                        <i class="fas fa-tag"></i> {{ info.product_type|title }}
+                    </span>
+                    <span class="meta-badge">
+                        <i class="fas fa-weight"></i> {{ info.quantity }} {{ info.weight_unit }}
+                    </span>
+                    <span class="meta-badge">
+                        <i class="fas fa-dollar-sign"></i> TZS {{ info.price }}
+                    </span>
                 </div>
-                {% endif %}
             </div>
+            {% if info.product.qr_code %}
+            <div class="qr-section">
+                <img src="/media/{{ info.product.qr_code }}" alt="QR Code" class="qr-code-img">
+            </div>
+            {% endif %}
         </div>
-        {% empty %}
-        <p class="not-recorded">No timeline events recorded yet.</p>
-        {% endfor %}
-    </div>
 
-    {% if inventory_items %}
-    <div class="section">
-        <h2>Current Inventory</h2>
-        <table class="data-table">
-            <thead>
-                <tr>
-                    <th>Shop</th>
-                    <th>Quantity</th>
-                    <th>Min Stock Level</th>
-                    <th>Last Updated</th>
-                    <th>Status</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for item in inventory_items %}
-                <tr>
-                    <td>{{ item.shop.name }}</td>
-                    <td>{{ item.quantity }}</td>
-                    <td>{{ item.min_stock_level }}</td>
-                    <td>{{ item.last_updated|date:"M d, Y H:i" }}</td>
-                    <td>
-                        {% if item.is_low_stock %}
-                        <span style="color: #dc3545; font-weight: bold;">Low Stock</span>
-                        {% else %}
-                        <span style="color: #28a745;">In Stock</span>
-                        {% endif %}
-                    </td>
-                </tr>
+        <!-- Timeline -->
+        <div class="timeline-container">
+            <h3 style="color: var(--primary-color); margin-bottom: 1.5rem;">
+                <i class="fas fa-stream"></i> Product Journey Timeline
+            </h3>
+            
+            {% if info.timeline_events %}
+            <div class="timeline-wrapper">
+                <div class="timeline-line"></div>
+                
+                {% for event in info.timeline_events %}
+                <div class="timeline-event {{ event.category|default:'default' }}">
+                    <div class="timeline-event-card">
+                        <div class="event-header">
+                            <div class="event-stage">
+                                <div class="event-icon">
+                                    <i class="fas {{ event.icon|default:'fa-circle' }}"></i>
+                                </div>
+                                <span>{{ event.stage }}</span>
+                            </div>
+                            <div class="event-timestamp">
+                                <i class="far fa-clock"></i>
+                                {{ event.timestamp|date:"M d, Y H:i" }}
+                            </div>
+                        </div>
+                        
+                        <div class="event-body">
+                            <div class="event-action">
+                                <strong>{{ event.action }}</strong>
+                            </div>
+                            <div class="event-location">
+                                <i class="fas fa-map-marker-alt"></i>
+                                <span>{{ event.location }}</span>
+                            </div>
+                            
+                            {% if event.details %}
+                            <div class="event-details">
+                                {% for key, value in event.details.items %}
+                                <div class="detail-item">
+                                    <div class="detail-label">{{ key }}</div>
+                                    <div class="detail-value">{{ value }}</div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
                 {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    {% endif %}
-
-    {% if receipts %}
-    <div class="section">
-        <h2>Receipt History</h2>
-        <table class="data-table">
-            <thead>
-                <tr>
-                    <th>Shop</th>
-                    <th>Quantity Received</th>
-                    <th>Received At</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for receipt in receipts %}
-                <tr>
-                    <td>{{ receipt.shop.name }}</td>
-                    <td>{{ receipt.received_quantity }}</td>
-                    <td>{{ receipt.received_at|date:"M d, Y H:i" }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    {% endif %}
-
-    {% if order_items %}
-    <div class="section">
-        <h2>Sales History</h2>
-        <table class="data-table">
-            <thead>
-                <tr>
-                    <th>Order ID</th>
-                    <th>Customer</th>
-                    <th>Shop</th>
-                    <th>Quantity</th>
-                    <th>Unit Price</th>
-                    <th>Subtotal</th>
-                    <th>Order Date</th>
-                    <th>Status</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for item in order_items %}
-                <tr>
-                    <td>{{ item.order.id }}</td>
-                    <td>{{ item.order.customer.username }}</td>
-                    <td>{{ item.order.shop.name }}</td>
-                    <td>{{ item.quantity }}</td>
-                    <td>${{ item.unit_price }}</td>
-                    <td>${{ item.subtotal }}</td>
-                    <td>{{ item.order.created_at|date:"M d, Y H:i" }}</td>
-                    <td>
-                        <span class="status-badge status-{{ item.order.status }}">
-                            {{ item.order.status|title }}
-                        </span>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    {% endif %}
-
-    {% if carcass_measurement %}
-    <div class="section">
-        <h2>Carcass Measurements</h2>
-        <table class="data-table">
-            <thead>
-                <tr>
-                    <th>Measurement</th>
-                    <th>Value</th>
-                    <th>Unit</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for measurement in carcass_measurement %}
-                <tr>
-                    <td>{{ measurement.name|title }}</td>
-                    <td>{{ measurement.value }}</td>
-                    <td>{{ measurement.unit }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    {% endif %}
-
-    {% if inventory_count or receipts_count or orders_count %}
-    <div class="section">
-        <h2>Product Statistics</h2>
-        <div class="summary-grid">
-            <div class="summary-item">
-                <h3>Inventory</h3>
-                <p><strong>Current Stock:</strong> {{ inventory_count|default:0 }} locations</p>
             </div>
-            <div class="summary-item">
-                <h3>Receipts</h3>
-                <p><strong>Total Received:</strong> {{ receipts_count|default:0 }} receipts</p>
+            {% else %}
+            <div class="empty-state">
+                <i class="fas fa-info-circle"></i>
+                <p>No timeline events recorded yet for this product.</p>
             </div>
-            <div class="summary-item">
-                <h3>Sales</h3>
-                <p><strong>Total Orders:</strong> {{ orders_count|default:0 }} orders</p>
+            {% endif %}
+        </div>
+
+        <!-- Additional Information Sections -->
+        <div class="row mt-4">
+            <!-- Inventory Section -->
+            {% if info.inventory_count > 0 %}
+            <div class="col-md-6">
+                <div class="info-section">
+                    <h3><i class="fas fa-warehouse"></i> Current Inventory</h3>
+                    <p><strong>{{ info.inventory_count }}</strong> location(s) tracking this product</p>
+                </div>
             </div>
+            {% endif %}
+
+            <!-- Orders Section -->
+            {% if info.orders_count > 0 %}
+            <div class="col-md-6">
+                <div class="info-section">
+                    <h3><i class="fas fa-shopping-bag"></i> Sales</h3>
+                    <p><strong>{{ info.orders_count }}</strong> order(s) placed for this product</p>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- View Details Button -->
+        <div class="text-center mt-4">
+            <a href="{% url 'product_info_view' info.product.id %}" class="btn btn-lg" 
+               style="background: var(--primary-color); color: white; border-radius: 25px; padding: 0.8rem 2rem;">
+                <i class="fas fa-eye"></i> View Complete Details
+            </a>
         </div>
     </div>
-    {% endif %}
+    {% endfor %}
+
+{% else %}
+    <div class="timeline-card">
+        <div class="empty-state">
+            <i class="fas fa-box-open"></i>
+            <h3>No Products Found</h3>
+            <p>There are no product information records in the system yet.</p>
+        </div>
+    </div>
+{% endif %}
+
 {% endblock %}
 
 {% block extra_js %}
-    {% if debug_json %}
-    <script>
-        try {
-            var _meatTraceDebug = JSON.parse('{{ debug_json|escapejs }}');
-            console.group('meat_trace: product_info debug');
-            console.log('Product payload:', _meatTraceDebug.product);
-            console.log('Animal payload:', _meatTraceDebug.animal);
-            console.log('Timeline events:', _meatTraceDebug.timeline);
-            console.log('Carcass measurement:', _meatTraceDebug.carcass_measurement);
-            console.log('Counts: inventory=%s receipts=%s orders=%s', _meatTraceDebug.inventory_count, _meatTraceDebug.receipts_count, _meatTraceDebug.orders_count);
-            console.groupEnd();
-        } catch (e) {
-            console.error('Failed to parse meat_trace debug JSON', e);
-        }
-    </script>
-    {% endif %}
+<script>
+    // Add smooth scrolling
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+        anchor.addEventListener('click', function (e) {
+            e.preventDefault();
+            const target = document.querySelector(this.getAttribute('href'));
+            if (target) {
+                target.scrollIntoView({ behavior: 'smooth' });
+            }
+        });
+    });
+
+    // Add animation on scroll
+    const observerOptions = {
+        threshold: 0.1,
+        rootMargin: '0px 0px -50px 0px'
+    };
+
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                entry.target.style.opacity = '1';
+                entry.target.style.transform = 'translateY(0)';
+            }
+        });
+    }, observerOptions);
+
+    document.querySelectorAll('.timeline-event').forEach(el => {
+        el.style.opacity = '0';
+        el.style.transform = 'translateY(20px)';
+        el.style.transition = 'all 0.5s ease';
+        observer.observe(el);
+    });
+</script>
 {% endblock %}

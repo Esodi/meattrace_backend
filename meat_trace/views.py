@@ -1175,22 +1175,615 @@ def farmer_dashboard(request):
     return Response(data)
 
 
-@login_required
 def product_info_view(request, product_id):
     try:
-        product = Product.objects.get(id=product_id)
-    except Exception:
-        product = None
-    return render(request, 'product_info/view.html', {'product': product})
+        product = Product.objects.select_related(
+            'animal', 'animal__farmer', 'processing_unit', 
+            'category', 'slaughter_part', 'transferred_to',
+            'received_by_shop'
+        ).prefetch_related(
+            'inventory', 'receipts', 'orderitem_set', 
+            'ingredients__slaughter_part',
+            'animal__slaughter_parts'
+        ).get(id=product_id)
+        
+        # Build comprehensive timeline
+        timeline = []
+        
+        # 1. Animal Registration (Farmer Stage)
+        if product.animal:
+            animal = product.animal
+            
+            # Get farmer contact info
+            farmer_details = {
+                'Animal ID': animal.animal_id,
+                'Animal Name': animal.animal_name or 'Not named',
+                'Species': animal.get_species_display(),
+                'Gender': animal.get_gender_display() if hasattr(animal, 'gender') else 'Unknown',
+                'Age': f'{animal.age} months' if animal.age else 'Not recorded',
+                'Live Weight': f'{animal.live_weight} kg' if animal.live_weight else 'Not recorded',
+                'Health Status': animal.health_status or 'Not recorded',
+                'Breed': animal.breed or 'Not specified',
+                'Farmer Name': animal.farmer.get_full_name() if animal.farmer.first_name else animal.farmer.username,
+                'Farmer Email': animal.farmer.email or 'Not provided',
+                'Notes': animal.notes or 'None'
+            }
+            
+            # Add farmer phone if available
+            if hasattr(animal.farmer, 'profile') and hasattr(animal.farmer.profile, 'phone'):
+                farmer_details['Farmer Phone'] = animal.farmer.profile.phone or 'Not provided'
+            elif hasattr(animal.farmer, 'phone_number'):
+                farmer_details['Farmer Phone'] = animal.farmer.phone_number or 'Not provided'
+            
+            timeline.append({
+                'stage': 'Animal Registration',
+                'category': 'farmer',
+                'timestamp': animal.created_at,
+                'location': f'Farm - {animal.farmer.username}',
+                'actor': animal.farmer.get_full_name() if animal.farmer.first_name else animal.farmer.username,
+                'action': f'Animal {animal.animal_id} registered at farm',
+                'icon': 'fa-clipboard-list',
+                'details': farmer_details
+            })
+            
+            # 2. Animal Transfer to Processing Unit
+            if animal.transferred_at and animal.transferred_to:
+                transfer_details = {
+                    'From': f'Farm - {animal.farmer.get_full_name() if animal.farmer.first_name else animal.farmer.username}',
+                    'To': animal.transferred_to.name,
+                    'Transfer Date': animal.transferred_at.strftime('%Y-%m-%d %H:%M:%S'),
+                    'Transfer Mode': 'Live Animal Transport',
+                    'Animal ID': animal.animal_id,
+                    'Animal Species': animal.get_species_display(),
+                    'Live Weight': f'{animal.live_weight} kg' if animal.live_weight else 'Not recorded',
+                    'Health Status': animal.health_status or 'Not recorded',
+                    'Processing Unit': animal.transferred_to.name,
+                    'Processing Unit Location': animal.transferred_to.location if hasattr(animal.transferred_to, 'location') else 'Not specified'
+                }
+                
+                timeline.append({
+                    'stage': 'Animal Transfer to Processing',
+                    'category': 'logistics',
+                    'timestamp': animal.transferred_at,
+                    'location': animal.transferred_to.name,
+                    'actor': animal.farmer.get_full_name() if animal.farmer.first_name else animal.farmer.username,
+                    'action': f'Live animal transported to {animal.transferred_to.name}',
+                    'icon': 'fa-truck',
+                    'details': transfer_details
+                })
+            
+            # 3. Animal Reception at Processing Unit
+            if animal.received_at and animal.received_by:
+                reception_details = {
+                    'Received By': animal.received_by.get_full_name() if animal.received_by.first_name else animal.received_by.username,
+                    'Reception Date': animal.received_at.strftime('%Y-%m-%d %H:%M:%S'),
+                    'Processing Unit': animal.transferred_to.name if animal.transferred_to else 'Unknown',
+                    'Animal ID': animal.animal_id,
+                    'Species': animal.get_species_display(),
+                    'Reception Status': 'Accepted for processing',
+                    'Health Inspection': animal.health_status or 'Passed',
+                }
+                
+                if hasattr(animal.received_by, 'email'):
+                    reception_details['Inspector Email'] = animal.received_by.email or 'Not provided'
+                
+                timeline.append({
+                    'stage': 'Animal Reception & Inspection',
+                    'category': 'processing',
+                    'timestamp': animal.received_at,
+                    'location': animal.transferred_to.name if animal.transferred_to else 'Processing Unit',
+                    'actor': animal.received_by.get_full_name() if animal.received_by.first_name else animal.received_by.username,
+                    'action': f'Animal received, inspected and approved for processing',
+                    'icon': 'fa-check-circle',
+                    'details': reception_details
+                })
+            
+            # 4. Slaughter Event
+            if animal.slaughtered and animal.slaughtered_at:
+                slaughter_details = {
+                    'Animal ID': animal.animal_id,
+                    'Species': animal.get_species_display(),
+                    'Slaughter Date': animal.slaughtered_at.strftime('%Y-%m-%d %H:%M:%S'),
+                    'Processing Unit': animal.transferred_to.name if animal.transferred_to else 'Unknown',
+                    'Abbatoir': animal.abbatoir_name or 'Not specified',
+                    'Pre-Slaughter Weight': f'{animal.live_weight} kg' if animal.live_weight else 'Not recorded',
+                }
+                
+                # Add carcass measurement if available
+                if hasattr(animal, 'carcass_measurement'):
+                    cm = animal.carcass_measurement
+                    if cm:
+                        slaughter_details['Carcass Weight'] = f'{cm.carcass_weight} kg' if hasattr(cm, 'carcass_weight') and cm.carcass_weight else 'Not recorded'
+                        slaughter_details['Dressing Percentage'] = f'{(cm.carcass_weight / animal.live_weight * 100):.1f}%' if animal.live_weight and hasattr(cm, 'carcass_weight') and cm.carcass_weight else 'Not calculated'
+                
+                timeline.append({
+                    'stage': 'Slaughter',
+                    'category': 'processing',
+                    'timestamp': animal.slaughtered_at,
+                    'location': animal.transferred_to.name if animal.transferred_to else 'Processing Unit',
+                    'actor': 'Processing Unit Slaughter Team',
+                    'action': f'Animal {animal.animal_id} ({animal.get_species_display()}) slaughtered',
+                    'icon': 'fa-cut',
+                    'details': slaughter_details
+                })
+                
+                # 5. Carcass Breakdown - Detailed Part Tracking
+                if animal.slaughter_parts.exists():
+                    parts = animal.slaughter_parts.all()
+                    total_parts_weight = sum([p.weight for p in parts if p.weight])
+                    
+                    # Create detailed parts breakdown
+                    parts_breakdown = {
+                        'Total Parts Created': parts.count(),
+                        'Total Parts Weight': f'{total_parts_weight} kg',
+                        'Breakdown Date': animal.slaughtered_at.strftime('%Y-%m-%d %H:%M:%S'),
+                    }
+                    
+                    # List all individual parts with their destinations
+                    for idx, part in enumerate(parts, 1):
+                        part_key = f'Part {idx}'
+                        part_value = f'{part.get_part_type_display()} - {part.weight} kg'
+                        
+                        # Add destination if part was transferred
+                        if hasattr(part, 'transferred_to') and part.transferred_to:
+                            part_value += f' → {part.transferred_to.name}'
+                        elif hasattr(part, 'processing_unit') and part.processing_unit:
+                            part_value += f' (at {part.processing_unit.name})'
+                        
+                        parts_breakdown[part_key] = part_value
+                    
+                    timeline.append({
+                        'stage': 'Carcass Breakdown & Part Distribution',
+                        'category': 'processing',
+                        'timestamp': animal.slaughtered_at,
+                        'location': animal.transferred_to.name if animal.transferred_to else 'Processing Unit',
+                        'actor': 'Butchery Team',
+                        'action': f'Carcass divided into {parts.count()} parts for processing',
+                        'icon': 'fa-th-large',
+                        'details': parts_breakdown
+                    })
+                    
+                    # 5b. Individual Part Transfers (if split carcass scenario)
+                    for part in parts:
+                        if hasattr(part, 'transferred_at') and part.transferred_at and hasattr(part, 'transferred_to') and part.transferred_to:
+                            part_transfer_details = {
+                                'Part Type': part.get_part_type_display(),
+                                'Part Weight': f'{part.weight} kg',
+                                'From': animal.transferred_to.name if animal.transferred_to else 'Origin Processing Unit',
+                                'To': part.transferred_to.name,
+                                'Transfer Date': part.transferred_at.strftime('%Y-%m-%d %H:%M:%S'),
+                                'Part ID': f'Part-{part.id}',
+                                'Original Animal': animal.animal_id,
+                            }
+                            
+                            timeline.append({
+                                'stage': 'Carcass Part Transfer',
+                                'category': 'logistics',
+                                'timestamp': part.transferred_at,
+                                'location': part.transferred_to.name,
+                                'actor': 'Logistics Team',
+                                'action': f'{part.get_part_type_display()} part transferred to different processing unit',
+                                'icon': 'fa-exchange-alt',
+                                'details': part_transfer_details
+                            })
+        
+        # 6. Product Creation - Enhanced Details
+        creation_details = {
+            'Product Name': product.name,
+            'Batch Number': product.batch_number,
+            'Product Type': product.get_product_type_display(),
+            'Quantity': f'{product.quantity} {product.weight_unit}',
+            'Weight': f'{product.weight} {product.weight_unit}' if product.weight else 'Not recorded',
+            'Category': product.category.name if product.category else 'Not categorized',
+            'Processing Unit': product.processing_unit.name if product.processing_unit else 'Unknown',
+            'Creation Date': product.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+        }
+        
+        # Add source information
+        if product.animal:
+            creation_details['Source Animal'] = product.animal.animal_id
+            creation_details['Animal Species'] = product.animal.get_species_display()
+        
+        # Add slaughter part info if this product came from a specific part
+        if product.slaughter_part:
+            creation_details['From Carcass Part'] = product.slaughter_part.get_part_type_display()
+            creation_details['Part Weight'] = f'{product.slaughter_part.weight} kg'
+        
+        # Add ingredients if this is a composite product
+        if product.ingredients.exists():
+            ingredients_list = []
+            for ing in product.ingredients.all():
+                if ing.slaughter_part:
+                    ingredients_list.append(f'{ing.slaughter_part.get_part_type_display()} ({ing.quantity} {ing.weight_unit})')
+            if ingredients_list:
+                creation_details['Ingredients'] = ', '.join(ingredients_list)
+        
+        timeline.append({
+            'stage': 'Product Creation',
+            'category': 'processing',
+            'timestamp': product.created_at,
+            'location': product.processing_unit.name if product.processing_unit else 'Processing Unit',
+            'actor': 'Production Team',
+            'action': f'Product "{product.name}" manufactured',
+            'icon': 'fa-box',
+            'details': creation_details
+        })
+        
+        # 7. Product Transfer to Shop - Enhanced
+        if product.transferred_at and product.transferred_to:
+            transfer_details = {
+                'From': product.processing_unit.name if product.processing_unit else 'Processing Unit',
+                'To': product.transferred_to.name,
+                'Transfer Date': product.transferred_at.strftime('%Y-%m-%d %H:%M:%S'),
+                'Product': product.name,
+                'Batch Number': product.batch_number,
+                'Quantity Transferred': f'{product.quantity} {product.weight_unit}',
+                'Product Type': product.get_product_type_display(),
+            }
+            
+            # Add shop location if available
+            if hasattr(product.transferred_to, 'location'):
+                transfer_details['Shop Location'] = product.transferred_to.location
+            if hasattr(product.transferred_to, 'owner'):
+                transfer_details['Shop Owner'] = product.transferred_to.owner.get_full_name() if product.transferred_to.owner.first_name else product.transferred_to.owner.username
+            
+            timeline.append({
+                'stage': 'Product Transfer to Retail',
+                'category': 'logistics',
+                'timestamp': product.transferred_at,
+                'location': product.transferred_to.name,
+                'actor': product.processing_unit.name if product.processing_unit else 'Processing Unit',
+                'action': f'Product dispatched to {product.transferred_to.name}',
+                'icon': 'fa-truck-loading',
+                'details': transfer_details
+            })
+        
+        # 8. Product Reception at Shop - Enhanced
+        if product.received_at and product.received_by_shop:
+            reception_details = {
+                'Shop Name': product.received_by_shop.name,
+                'Reception Date': product.received_at.strftime('%Y-%m-%d %H:%M:%S'),
+                'Quantity Ordered': f'{product.quantity} {product.weight_unit}',
+                'Quantity Received': f'{product.quantity_received} {product.weight_unit}' if hasattr(product, 'quantity_received') and product.quantity_received else 'Same as ordered',
+                'Batch Number': product.batch_number,
+                'Reception Status': 'Accepted and Added to Inventory',
+            }
+            
+            # Add shop details
+            if hasattr(product.received_by_shop, 'location'):
+                reception_details['Shop Location'] = product.received_by_shop.location
+            if hasattr(product.received_by_shop, 'owner'):
+                owner = product.received_by_shop.owner
+                reception_details['Received By'] = owner.get_full_name() if owner.first_name else owner.username
+                if hasattr(owner, 'email') and owner.email:
+                    reception_details['Contact Email'] = owner.email
+            
+            timeline.append({
+                'stage': 'Product Reception at Shop',
+                'category': 'shop',
+                'timestamp': product.received_at,
+                'location': product.received_by_shop.name,
+                'actor': product.received_by_shop.name,
+                'action': f'Product received and stocked',
+                'icon': 'fa-store',
+                'details': reception_details
+            })
+        
+        # 9. Quality Issues / Rejection - Enhanced
+        if hasattr(product, 'rejected_at') and product.rejected_at and hasattr(product, 'rejection_status') and product.rejection_status:
+            rejection_details = {
+                'Rejected By': product.rejected_by.get_full_name() if product.rejected_by and product.rejected_by.first_name else (product.rejected_by.username if product.rejected_by else 'Unknown'),
+                'Rejection Date': product.rejected_at.strftime('%Y-%m-%d %H:%M:%S'),
+                'Rejection Status': product.get_rejection_status_display() if hasattr(product, 'get_rejection_status_display') else product.rejection_status,
+                'Quantity Rejected': f'{product.quantity_rejected} {product.weight_unit}' if hasattr(product, 'quantity_rejected') and product.quantity_rejected else 'Full quantity',
+                'Reason': product.rejection_reason or 'Not specified',
+                'Location': product.received_by_shop.name if product.received_by_shop else 'Unknown',
+            }
+            
+            if product.rejected_by and hasattr(product.rejected_by, 'email') and product.rejected_by.email:
+                rejection_details['Rejector Email'] = product.rejected_by.email
+            
+            timeline.append({
+                'stage': 'Product Rejection / Quality Issue',
+                'category': 'quality',
+                'timestamp': product.rejected_at,
+                'location': product.received_by_shop.name if product.received_by_shop else 'Shop',
+                'actor': product.rejected_by.get_full_name() if product.rejected_by and product.rejected_by.first_name else (product.rejected_by.username if product.rejected_by else 'Shop Staff'),
+                'action': f'Product rejected: {product.rejection_reason or "Quality concerns"}',
+                'icon': 'fa-times-circle',
+                'details': rejection_details
+            })
+        
+        # 10. Sales Events - COMPREHENSIVE Customer Details with Inventory Tracking
+        sales = []
+        
+        # Calculate running inventory after each sale
+        total_quantity_sold = 0
+        remaining_after_sale = 0
+        initial_inventory = float(product.quantity) if product.quantity else 0
+        
+        order_items = product.orderitem_set.select_related('order', 'order__customer', 'order__shop').order_by('order__created_at')
+        
+        for idx, item in enumerate(order_items, 1):
+            if item.order:
+                customer = item.order.customer
+                shop = item.order.shop
+                order = item.order
+                
+                # Calculate inventory after this sale
+                quantity_sold_in_this_order = float(item.quantity) if hasattr(item, 'quantity') and item.quantity else 0
+                total_quantity_sold += quantity_sold_in_this_order
+                remaining_after_sale = initial_inventory - total_quantity_sold
+                
+                # Build comprehensive sale details
+                sale_details = {
+                    'Sale Number': f'#{idx} of {order_items.count()}',
+                    'Order ID': f'#{order.id}',
+                    'Sale Date & Time': order.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+                    'Day of Week': order.created_at.strftime('%A'),
+                    'Time of Day': order.created_at.strftime('%I:%M %p'),
+                }
+                
+                # Customer Information
+                sale_details['---Customer Information---'] = '---'
+                sale_details['Customer Name'] = customer.get_full_name() if customer and customer.first_name else (customer.username if customer else 'Walk-in Customer')
+                
+                if customer:
+                    sale_details['Customer Username'] = customer.username
+                    
+                    if hasattr(customer, 'email') and customer.email:
+                        sale_details['Customer Email'] = customer.email
+                    
+                    # Try multiple ways to get phone number
+                    phone_found = False
+                    if hasattr(customer, 'profile'):
+                        if hasattr(customer.profile, 'phone') and customer.profile.phone:
+                            sale_details['Customer Phone'] = customer.profile.phone
+                            phone_found = True
+                        elif hasattr(customer.profile, 'phone_number') and customer.profile.phone_number:
+                            sale_details['Customer Phone'] = customer.profile.phone_number
+                            phone_found = True
+                    
+                    if not phone_found and hasattr(customer, 'phone_number') and customer.phone_number:
+                        sale_details['Customer Phone'] = customer.phone_number
+                        phone_found = True
+                    
+                    if not phone_found and hasattr(customer, 'phone') and customer.phone:
+                        sale_details['Customer Phone'] = customer.phone
+                        phone_found = True
+                    
+                    if not phone_found:
+                        sale_details['Customer Phone'] = 'Not provided'
+                    
+                    # Add customer address if available
+                    if hasattr(customer, 'profile'):
+                        if hasattr(customer.profile, 'address') and customer.profile.address:
+                            sale_details['Customer Address'] = customer.profile.address
+                        elif hasattr(customer.profile, 'location') and customer.profile.location:
+                            sale_details['Customer Location'] = customer.profile.location
+                else:
+                    sale_details['Customer Type'] = 'Walk-in (No account)'
+                
+                # Sale Details
+                sale_details['---Sale Details---'] = '---'
+                sale_details['Quantity Sold This Order'] = f'{item.quantity} {product.weight_unit}'
+                sale_details['Unit Price'] = f'${item.unit_price}' if hasattr(item, 'unit_price') and item.unit_price else 'N/A'
+                sale_details['Subtotal for This Item'] = f'${item.subtotal}' if hasattr(item, 'subtotal') and item.subtotal else f'${float(item.quantity) * float(item.unit_price) if hasattr(item, "unit_price") and item.unit_price else 0:.2f}'
+                sale_details['Order Status'] = order.get_status_display() if hasattr(order, 'get_status_display') else order.status
+                
+                # Inventory Tracking
+                sale_details['---Inventory Status---'] = '---'
+                sale_details['Initial Product Quantity'] = f'{initial_inventory} {product.weight_unit}'
+                sale_details['Total Sold Up To Now'] = f'{total_quantity_sold} {product.weight_unit}'
+                sale_details['Remaining After This Sale'] = f'{remaining_after_sale} {product.weight_unit}'
+                sale_details['Percentage Sold'] = f'{(total_quantity_sold / initial_inventory * 100):.1f}%' if initial_inventory > 0 else 'N/A'
+                
+                # Shop Information
+                sale_details['---Shop Information---'] = '---'
+                sale_details['Shop Name'] = shop.name if shop else 'Unknown Shop'
+                if shop and hasattr(shop, 'location'):
+                    sale_details['Shop Location'] = shop.location
+                if shop and hasattr(shop, 'owner'):
+                    sale_details['Shop Owner'] = shop.owner.get_full_name() if shop.owner.first_name else shop.owner.username
+                
+                # Delivery information if available
+                if hasattr(order, 'delivery_address') and order.delivery_address:
+                    sale_details['---Delivery Information---'] = '---'
+                    sale_details['Delivery Address'] = order.delivery_address
+                    if hasattr(order, 'delivery_date') and order.delivery_date:
+                        sale_details['Delivery Date'] = order.delivery_date.strftime('%Y-%m-%d %H:%M:%S')
+                    if hasattr(order, 'delivery_status') and order.delivery_status:
+                        sale_details['Delivery Status'] = order.delivery_status
+                
+                # Payment information
+                if hasattr(order, 'payment_method') or hasattr(order, 'payment_status') or hasattr(order, 'total_amount'):
+                    sale_details['---Payment Information---'] = '---'
+                    if hasattr(order, 'payment_method') and order.payment_method:
+                        sale_details['Payment Method'] = order.payment_method
+                    if hasattr(order, 'payment_status') and order.payment_status:
+                        sale_details['Payment Status'] = order.payment_status
+                    if hasattr(order, 'total_amount') and order.total_amount:
+                        sale_details['Full Order Total'] = f'${order.total_amount}'
+                
+                # Additional order items if this order has multiple products
+                order_total_items = order.orderitem_set.count() if hasattr(order, 'orderitem_set') else 1
+                if order_total_items > 1:
+                    sale_details['---Order Context---'] = '---'
+                    sale_details['Total Items in Order'] = order_total_items
+                    sale_details['This Product is Item'] = f'{idx} in multi-item order'
+                
+                sales.append({
+                    'stage': f'Sale #{idx} to Customer',
+                    'category': 'sale',
+                    'timestamp': order.created_at,
+                    'location': shop.name if shop else 'Retail Shop',
+                    'actor': shop.name if shop else 'Retail Shop',
+                    'action': f'Sold {item.quantity} {product.weight_unit} to {customer.get_full_name() if customer and customer.first_name else (customer.username if customer else "walk-in customer")}',
+                    'icon': 'fa-shopping-cart',
+                    'details': sale_details
+                })
+        
+        timeline.extend(sales)
+        
+        # 11. Current Inventory Status (if product still has remaining stock)
+        if remaining_after_sale > 0 or total_quantity_sold == 0:
+            current_inventory_items = product.inventory.select_related('shop').all()
+            
+            if current_inventory_items.exists():
+                for inv_item in current_inventory_items:
+                    inventory_details = {
+                        'Shop Name': inv_item.shop.name if inv_item.shop else 'Unknown',
+                        'Current Stock': f'{inv_item.quantity} {product.weight_unit}' if hasattr(inv_item, 'quantity') else 'Unknown',
+                        'Stock Status': 'In Stock' if (hasattr(inv_item, 'quantity') and inv_item.quantity > 0) else 'Out of Stock',
+                        'Last Updated': inv_item.updated_at.strftime('%Y-%m-%d %H:%M:%S') if hasattr(inv_item, 'updated_at') and inv_item.updated_at else 'Not tracked',
+                    }
+                    
+                    if hasattr(inv_item.shop, 'location'):
+                        inventory_details['Shop Location'] = inv_item.shop.location
+                    
+                    if total_quantity_sold > 0:
+                        inventory_details['Original Quantity'] = f'{initial_inventory} {product.weight_unit}'
+                        inventory_details['Total Sold'] = f'{total_quantity_sold} {product.weight_unit}'
+                        inventory_details['Sales Count'] = order_items.count()
+                    
+                    timeline.append({
+                        'stage': 'Current Inventory Status',
+                        'category': 'shop',
+                        'timestamp': inv_item.updated_at if hasattr(inv_item, 'updated_at') and inv_item.updated_at else product.created_at,
+                        'location': inv_item.shop.name if inv_item.shop else 'Shop',
+                        'actor': 'Inventory System',
+                        'action': f'Current stock level: {inv_item.quantity if hasattr(inv_item, "quantity") else "Unknown"} {product.weight_unit}',
+                        'icon': 'fa-warehouse',
+                        'details': inventory_details
+                    })
+        
+        # Sort timeline chronologically
+        timeline.sort(key=lambda x: x['timestamp'])
+        
+        # Get related data
+        inventory_items = product.inventory.select_related('shop').all()
+        receipts = product.receipts.select_related('shop').order_by('-received_at')
+        order_items = product.orderitem_set.select_related('order', 'order__customer', 'order__shop').order_by('-order__created_at')
+        
+        # Carcass measurements
+        carcass_measurement = None
+        if product.animal and hasattr(product.animal, 'carcass_measurement'):
+            cm = product.animal.carcass_measurement
+            if hasattr(cm, 'get_all_measurements'):
+                carcass_measurement = cm.get_all_measurements()
+        
+        # Create product_info object that matches template expectations
+        product_info = {
+            'product': product,
+            'product_name': product.name,
+            'batch_number': product.batch_number,
+            'product_type': product.product_type,
+            'quantity': product.quantity,
+            'weight_unit': product.weight_unit,
+            'price': product.price if hasattr(product, 'price') and product.price else '0.00',
+            'timeline_events': timeline,
+            'inventory_count': inventory_items.count(),
+            'orders_count': order_items.count(),
+        }
+        
+        context = {
+            'product_infos': [product_info],  # Wrap in list to match template expectation
+            'product': product,
+            'animal': product.animal,
+            'timeline': timeline,
+            'inventory_items': inventory_items,
+            'receipts': receipts,
+            'order_items': order_items,
+            'carcass_measurement': carcass_measurement,
+            'inventory_count': inventory_items.count(),
+            'receipts_count': receipts.count(),
+            'orders_count': order_items.count(),
+            'qr_code_url': product.qr_code,
+            'total_inventory': inventory_items.count(),
+            'total_orders': order_items.count(),
+        }
+        
+    except Product.DoesNotExist:
+        context = {
+            'error': 'Product not found',
+            'product': None,
+            'product_infos': [],
+            'timeline': []
+        }
+    except Exception as e:
+        context = {
+            'error': f'Error loading product: {str(e)}',
+            'product': None,
+            'product_infos': [],
+            'timeline': []
+        }
+    
+    return render(request, 'meat_trace/product_info.html', context)
 
 
 @login_required
 def product_info_list_view(request):
     try:
-        products = Product.objects.all()[:200]
-    except Exception:
-        products = []
-    return render(request, 'product_info/list.html', {'products': products})
+        from meat_trace.models import ProductInfo, Product
+        
+        # Get or create ProductInfo for all products
+        product_infos = ProductInfo.objects.select_related('product').all()[:50]
+        
+        # If no ProductInfo exists, create them
+        if not product_infos.exists():
+            products = Product.objects.all()[:50]
+            for product in products:
+                try:
+                    # Check if ProductInfo exists
+                    if not hasattr(product, 'info'):
+                        # Create ProductInfo with required fields from product
+                        product_info = ProductInfo(
+                            product=product,
+                            product_name=product.name or 'Unnamed Product',
+                            product_type=product.product_type,
+                            batch_number=product.batch_number or 'BATCH001',
+                            quantity=product.quantity or 0
+                        )
+                        product_info.save()
+                        # Now update with full details
+                        product_info.update_from_product()
+                    else:
+                        # Update existing ProductInfo if timeline is empty
+                        product_info = product.info
+                        if not product_info.timeline_events:
+                            product_info.update_from_product()
+                except Exception as e:
+                    print(f"Error creating ProductInfo for product {product.id}: {e}")
+                    pass
+            product_infos = ProductInfo.objects.select_related('product').all()[:50]
+        
+        # Calculate summary statistics
+        total_inventory = sum(info.inventory_count for info in product_infos)
+        total_orders = sum(info.orders_count for info in product_infos)
+        
+        # Get unique processing units
+        processing_units = set()
+        for info in product_infos:
+            if info.processing_unit_name:
+                processing_units.add(info.processing_unit_name)
+        
+        context = {
+            'product_infos': product_infos,
+            'total_inventory': total_inventory,
+            'total_orders': total_orders,
+            'total_processing_units': len(processing_units),
+        }
+        
+    except Exception as e:
+        context = {
+            'product_infos': [],
+            'error': f'Error loading products: {str(e)}',
+            'total_inventory': 0,
+            'total_orders': 0,
+            'total_processing_units': 0,
+        }
+    
+    return render(request, 'meat_trace/product_info_list.html', context)
 
 
 @login_required
@@ -2332,10 +2925,26 @@ class ProductViewSet(viewsets.ModelViewSet):
                     ).order_by('-created_at')
                 return Product.objects.none()
             
-            # Shop owners can see products they've purchased
+            # Shop owners can see products transferred to their shop(s)
             elif profile.role == 'ShopOwner':
+                # Get all shops where user is an active member via ShopUser
+                user_shop_ids = ShopUser.objects.filter(
+                    user=user,
+                    is_active=True
+                ).values_list('shop_id', flat=True)
+                
+                if user_shop_ids:
+                    # Return products transferred to any of the user's shops
+                    return Product.objects.filter(
+                        transferred_to__id__in=user_shop_ids
+                    ).order_by('-created_at')
+                
+                # Fallback to profile.shop if no ShopUser memberships exist
                 if profile.shop:
-                    return Product.objects.filter(shop=profile.shop).order_by('-created_at')
+                    return Product.objects.filter(
+                        transferred_to=profile.shop
+                    ).order_by('-created_at')
+                
                 return Product.objects.none()
             
             # Farmer can see products from their animals
@@ -2388,6 +2997,19 @@ class ProductViewSet(viewsets.ModelViewSet):
                     {'error': 'User is not associated with any shop'},
                     status=status_module.HTTP_400_BAD_REQUEST
                 )
+            
+            # SECURITY FIX: Verify user is actually an active member of the assigned shop
+            # This prevents users from receiving products for shops they don't belong to
+            if not ShopUser.objects.filter(
+                user=request.user,
+                shop=user_shop,
+                is_active=True
+            ).exists():
+                return Response(
+                    {'error': 'User is not an active member of the assigned shop. Access denied.'},
+                    status=status_module.HTTP_403_FORBIDDEN
+                )
+                
         except UserProfile.DoesNotExist:
             return Response(
                 {'error': 'User profile not found'},
