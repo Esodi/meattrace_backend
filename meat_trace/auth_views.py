@@ -176,25 +176,28 @@ class RegisterView(APIView):
         # Create profile if it doesn't exist (should be created by signal, but ensure it exists)
         try:
             profile = user.profile
-            print(f"[REGISTRATION] Found existing profile for user {user.username}")
+            print(f"[REGISTRATION] Found existing profile for user {user.username}, current role: {profile.role}")
         except UserProfile.DoesNotExist:
             profile = UserProfile.objects.create(user=user)
             print(f"[REGISTRATION] Created new profile for user {user.username}")
 
         # Normalize role to internal value
         # Map frontend role names to backend role values
+        print(f"[REGISTRATION] Role received from frontend: '{role}'")
         role_mapping = {
             'farmer': 'Farmer',
             'processingunit': 'Processor',
             'processing_unit': 'Processor',
             'processor': 'Processor',
-            'shop': 'ShopOwner',
-            'shopowner': 'ShopOwner',
+            'shop': 'Shop',
+            'shopowner': 'Shop',
+            'Shop': 'Shop',  # Added explicit capital S mapping
         }
         normalized_role = role_mapping.get(role.lower(), role)
+        print(f"[REGISTRATION] Normalized role: '{normalized_role}' (from '{role}' -> '{role.lower()}')")
         profile.role = normalized_role
         profile.save()
-        print(f"[REGISTRATION] User {user.username} registered with role: {normalized_role}")
+        print(f"[REGISTRATION] User {user.username} registered with role: {normalized_role}, profile saved")
 
         # Handle ProcessingUnit registration
         if role.lower() in ['processingunit', 'processing_unit']:

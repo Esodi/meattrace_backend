@@ -24,6 +24,10 @@ from .models import Animal, Product, Receipt, UserProfile, ProductCategory, Proc
 from .farmer_dashboard_serializer import FarmerDashboardSerializer
 from .serializers import AnimalSerializer, ProductSerializer, OrderSerializer, ShopSerializer, SlaughterPartSerializer, ActivitySerializer, ProcessingUnitSerializer, JoinRequestSerializer, ProductCategorySerializer, CarcassMeasurementSerializer, SaleSerializer, SaleItemSerializer, NotificationSerializer, UserProfileSerializer
 from .utils.rejection_service import RejectionService
+from .role_utils import (
+    normalize_role, get_user_role, is_farmer, is_processor, is_shop_owner, is_admin,
+    ROLE_FARMER, ROLE_PROCESSOR, ROLE_SHOPOWNER, ROLE_ADMIN
+)
 
 
 class AnimalViewSet(viewsets.ModelViewSet):
@@ -39,37 +43,53 @@ class AnimalViewSet(viewsets.ModelViewSet):
         Filtering logic:
         - Farmers: see their own animals
         - Processors: see animals transferred to ANY processing unit they belong to
+        - Shop Owners: see NO animals (shops work with products, not animals)
         - Admins: see all animals
         """
         user = self.request.user
         queryset = Animal.objects.all().select_related('farmer', 'transferred_to', 'received_by')
 
-        # Farmers see their own animals
-        if hasattr(user, 'profile') and user.profile.role == 'farmer':
-            queryset = queryset.filter(farmer=user)
+        # Get normalized user role
+        user_role = get_user_role(user)
+        
+        print(f"[ANIMAL_QUERYSET] User: {user.username}, Role: {user_role}")
 
-        # ProcessingUnit users see animals transferred to ANY processing unit they belong to
-        elif hasattr(user, 'profile') and user.profile.role == 'processing_unit':
-            # Get all processing units the user is a member of
+        # Farmers see their own animals
+        if user_role == ROLE_FARMER:
+            queryset = queryset.filter(farmer=user)
+            print(f"[ANIMAL_QUERYSET] Farmer filter applied: {queryset.count()} animals")
+
+        # Processors see animals transferred to ANY processing unit they belong to
+        elif user_role == ROLE_PROCESSOR:
             from .models import ProcessingUnitUser
             user_processing_units = ProcessingUnitUser.objects.filter(
                 user=user,
                 is_active=True,
                 is_suspended=False
             ).values_list('processing_unit_id', flat=True)
-            
+
             if user_processing_units:
-                # Show animals transferred to any of the user's processing units (whole or parts)
-                # Exclude rejected animals
                 queryset = queryset.filter(
                     Q(transferred_to_id__in=user_processing_units) |
                     Q(slaughter_parts__transferred_to_id__in=user_processing_units)
                 ).exclude(
                     rejection_status='rejected'
                 ).distinct()
+                print(f"[ANIMAL_QUERYSET] Processor filter applied: {queryset.count()} animals")
             else:
                 queryset = queryset.none()
-
+                print(f"[ANIMAL_QUERYSET] Processor has no units: 0 animals")
+        
+        # Shop owners should NOT see animals (they work with products only)
+        elif user_role == ROLE_SHOPOWNER:
+            queryset = queryset.none()
+            print(f"[ANIMAL_QUERYSET] Shop owner filter applied: 0 animals (shops don't access animals)")
+        
+        # If no specific role matched, return empty queryset for security
+        elif user_role not in [ROLE_ADMIN]:
+            queryset = queryset.none()
+            print(f"[ANIMAL_QUERYSET] Unknown role '{user_role}': 0 animals (default deny)")
+        
         # Apply filters from query parameters
         species = self.request.query_params.get('species')
         if species:
@@ -544,28 +564,29 @@ class SlaughterPartViewSet(viewsets.ModelViewSet):
         Filtering logic:
         - Farmers: see parts from their animals
         - Processors: see parts transferred to or received by them
+        - Shop Owners: see NO slaughter parts (shops work with final products)
         - Admins: see all parts
         """
         user = self.request.user
         queryset = SlaughterPart.objects.all().select_related('animal', 'transferred_to', 'received_by')
 
+        # Get normalized user role
+        user_role = get_user_role(user)
+
         # Farmers see parts from their own animals
-        if hasattr(user, 'profile') and user.profile.role == 'farmer':
+        if user_role == ROLE_FARMER:
             queryset = queryset.filter(animal__farmer=user)
 
-        # ProcessingUnit users see parts transferred to or received by them
-        elif hasattr(user, 'profile') and user.profile.role == 'processing_unit':
-            # Get all processing units the user is a member of
+        # Processors see parts transferred to or received by them
+        elif user_role == ROLE_PROCESSOR:
             from .models import ProcessingUnitUser
             user_processing_units = ProcessingUnitUser.objects.filter(
                 user=user,
                 is_active=True,
                 is_suspended=False
             ).values_list('processing_unit_id', flat=True)
-            
+
             if user_processing_units:
-                # Show parts transferred to any of the user's processing units OR received by the user
-                # Exclude rejected parts
                 queryset = queryset.filter(
                     Q(transferred_to_id__in=user_processing_units) |
                     Q(received_by=user)
@@ -573,12 +594,18 @@ class SlaughterPartViewSet(viewsets.ModelViewSet):
                     rejection_status='rejected'
                 )
             else:
-                # Fallback to parts received by the user directly
-                # Exclude rejected parts
                 queryset = queryset.filter(received_by=user).exclude(
                     rejection_status='rejected'
                 )
-
+        
+        # Shop owners should NOT see slaughter parts
+        elif user_role == ROLE_SHOPOWNER:
+            queryset = queryset.none()
+        
+        # If no specific role matched, return empty queryset for security
+        elif user_role not in [ROLE_ADMIN]:
+            queryset = queryset.none()
+        
         # Apply filters from query parameters
         animal_id = self.request.query_params.get('animal')
         if animal_id:
@@ -1832,8 +1859,8 @@ def production_stats_view(request):
         profile = user.profile
 
         # Only processing unit users get production stats
-        # Support both 'processing_unit' and 'Processor' role values
-        if profile.role not in ['processing_unit', 'Processor']:
+        user_role = get_user_role(user)
+        if user_role != ROLE_PROCESSOR:
             return Response({'production': {}})
 
         # Get user's processing units
@@ -2015,12 +2042,11 @@ def processing_pipeline_view(request):
         profile = user.profile
 
         # Only processing unit users can see pipeline data
-        # Accept canonical role 'processing_unit' and tolerate legacy/capitalized variants
+        user_role = get_user_role(user)
         import logging
         logger = logging.getLogger(__name__)
 
-        allowed_roles = ('processing_unit', 'Processor', 'processor')
-        if profile.role not in allowed_roles:
+        if user_role != ROLE_PROCESSOR:
             logger.info(f"[PROCESSING_PIPELINE] User {user.username} has role '{getattr(profile, 'role', None)}' which is not a processing unit role - returning empty pipeline")
             return Response(empty_pipeline)
 
@@ -2286,13 +2312,14 @@ class CarcassMeasurementViewSet(viewsets.ModelViewSet):
         
         try:
             profile = user.profile
+            user_role = get_user_role(user)
             
             # Admin can see all measurements
-            if profile.role == 'Admin':
+            if user_role == ROLE_ADMIN:
                 return CarcassMeasurement.objects.all()
             
             # Processor can see measurements for animals in their processing unit
-            elif profile.role == 'Processor':
+            elif user_role == ROLE_PROCESSOR:
                 if profile.processing_unit:
                     # Get animals that belong to the processor's unit
                     from .models import Product
@@ -2303,11 +2330,11 @@ class CarcassMeasurementViewSet(viewsets.ModelViewSet):
                 return CarcassMeasurement.objects.none()
             
             # Farmer can see measurements for their own animals
-            elif profile.role == 'Farmer':
+            elif user_role == ROLE_FARMER:
                 return CarcassMeasurement.objects.filter(animal__farmer=user)
             
             # Shop owners can see measurements for animals they've purchased
-            elif profile.role == 'ShopOwner':
+            elif user_role == ROLE_SHOPOWNER:
                 if profile.shop:
                     # Get products bought by this shop
                     from .models import Product
@@ -2417,9 +2444,10 @@ class ActivityViewSet(viewsets.ModelViewSet):
         
         try:
             profile = user.profile
+            user_role = get_user_role(user)
             
             # Admin can see all activities
-            if profile.role == 'Admin':
+            if user_role == ROLE_ADMIN:
                 return Activity.objects.all().order_by('-timestamp')
             
             # Others can only see activities related to them
@@ -2440,13 +2468,14 @@ class UserProfileViewSet(viewsets.ModelViewSet):
         
         try:
             profile = user.profile
+            user_role = get_user_role(user)
             
             # Admin can see all profiles
-            if profile.role == 'Admin':
+            if user_role == ROLE_ADMIN:
                 return UserProfile.objects.all()
             
             # Processor can see profiles in their processing unit
-            elif profile.role == 'Processor':
+            elif user_role == ROLE_PROCESSOR:
                 if profile.processing_unit:
                     unit_user_ids = ProcessingUnitUser.objects.filter(
                         processing_unit=profile.processing_unit
@@ -2455,7 +2484,7 @@ class UserProfileViewSet(viewsets.ModelViewSet):
                 return UserProfile.objects.filter(user=user)
             
             # Shop owners can see profiles in their shop
-            elif profile.role == 'ShopOwner':
+            elif user_role == ROLE_SHOPOWNER:
                 if profile.shop:
                     shop_user_ids = ShopUser.objects.filter(
                         shop=profile.shop
@@ -2481,13 +2510,14 @@ class JoinRequestViewSet(viewsets.ModelViewSet):
         
         try:
             profile = user.profile
+            user_role = get_user_role(user)
             
             # Admin can see all requests
-            if profile.role == 'Admin':
+            if user_role == ROLE_ADMIN:
                 return JoinRequest.objects.all().order_by('-created_at')
             
             # Processor can see requests for their processing unit
-            elif profile.role == 'Processor':
+            elif user_role == ROLE_PROCESSOR:
                 if profile.processing_unit:
                     return JoinRequest.objects.filter(
                         processing_unit=profile.processing_unit
@@ -2495,7 +2525,7 @@ class JoinRequestViewSet(viewsets.ModelViewSet):
                 return JoinRequest.objects.filter(user=user).order_by('-created_at')
             
             # Shop owners can see requests for their shop
-            elif profile.role == 'ShopOwner':
+            elif user_role == ROLE_SHOPOWNER:
                 if profile.shop:
                     return JoinRequest.objects.filter(
                         shop=profile.shop
@@ -2520,22 +2550,37 @@ class ShopViewSet(viewsets.ModelViewSet):
         
         try:
             profile = user.profile
+            user_role = get_user_role(user)
             
             # Admin can see all shops
-            if profile.role == 'Admin':
+            if user_role == ROLE_ADMIN:
                 return Shop.objects.all()
             
-            # Shop owners can see their own shop
-            elif profile.role == 'ShopOwner':
-                if profile.shop:
+            # Shop owners can see their own shop(s)
+            elif user_role == ROLE_SHOPOWNER:
+                # Get all shops where user is an active member
+                user_shop_ids = ShopUser.objects.filter(
+                    user=user,
+                    is_active=True
+                ).values_list('shop_id', flat=True)
+                
+                if user_shop_ids:
+                    return Shop.objects.filter(id__in=user_shop_ids)
+                elif profile.shop:
+                    # Fallback to profile.shop
                     return Shop.objects.filter(id=profile.shop.id)
                 return Shop.objects.none()
             
-            # Others can see all shops (for browsing)
-            return Shop.objects.all()
+            # Processors and Farmers can see all shops (for browsing/selecting transfer destinations)
+            elif user_role in [ROLE_PROCESSOR, ROLE_FARMER]:
+                return Shop.objects.all()
+            
+            # Default deny for unknown roles
+            return Shop.objects.none()
             
         except UserProfile.DoesNotExist:
-            return Shop.objects.all()
+            # Security: deny access if no profile exists
+            return Shop.objects.none()
 
     @action(detail=False, methods=['post'], url_path='register', permission_classes=[IsAuthenticated])
     def register(self, request):
@@ -2562,14 +2607,15 @@ class ShopViewSet(viewsets.ModelViewSet):
             # Check if user already owns a shop
             try:
                 profile = user.profile
-                if profile.shop and profile.role == 'ShopOwner':
+                user_role = get_user_role(user)
+                if profile.shop and user_role == ROLE_SHOPOWNER:
                     return Response(
                         {'error': 'You already own a shop. You cannot create another one.'},
                         status=status_module.HTTP_400_BAD_REQUEST
                     )
             except UserProfile.DoesNotExist:
                 # Create profile if it doesn't exist
-                profile = UserProfile.objects.create(user=user, role='ShopOwner')
+                profile = UserProfile.objects.create(user=user, role=ROLE_SHOPOWNER)
             
             # Create the shop
             shop = Shop.objects.create(
@@ -2599,7 +2645,7 @@ class ShopViewSet(viewsets.ModelViewSet):
             
             # Update user profile
             profile.shop = shop
-            profile.role = 'ShopOwner'
+            profile.role = ROLE_SHOPOWNER
             profile.save()
             logger.info(f"[SHOP_VIEWSET] Updated user profile with Shop ID {shop.id}")
             
@@ -2828,19 +2874,20 @@ class OrderViewSet(viewsets.ModelViewSet):
         
         try:
             profile = user.profile
+            user_role = get_user_role(user)
             
             # Admin can see all orders
-            if profile.role == 'Admin':
+            if user_role == ROLE_ADMIN:
                 return Order.objects.all().order_by('-created_at')
             
             # Shop owners can see orders for their shop
-            elif profile.role == 'ShopOwner':
+            elif user_role == ROLE_SHOPOWNER:
                 if profile.shop:
                     return Order.objects.filter(shop=profile.shop).order_by('-created_at')
                 return Order.objects.none()
             
             # Processor can see orders related to their processing unit
-            elif profile.role == 'Processor':
+            elif user_role == ROLE_PROCESSOR:
                 if profile.processing_unit:
                     return Order.objects.filter(
                         items__product__processing_unit=profile.processing_unit
@@ -2912,13 +2959,14 @@ class ProductViewSet(viewsets.ModelViewSet):
         
         try:
             profile = user.profile
+            user_role = get_user_role(user)
             
             # Admin can see all products
-            if profile.role == 'Admin':
+            if user_role == ROLE_ADMIN:
                 return Product.objects.all().order_by('-created_at')
             
             # Processor can see products from their processing unit
-            elif profile.role == 'Processor':
+            elif user_role == ROLE_PROCESSOR:
                 if profile.processing_unit:
                     return Product.objects.filter(
                         processing_unit=profile.processing_unit
@@ -2926,7 +2974,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                 return Product.objects.none()
             
             # Shop owners can see products transferred to OR received by their shop(s)
-            elif profile.role == 'ShopOwner':
+            elif user_role == ROLE_SHOPOWNER:
                 # Get all shops where user is an active member via ShopUser
                 user_shop_ids = ShopUser.objects.filter(
                     user=user,
@@ -2978,13 +3026,15 @@ class ProductViewSet(viewsets.ModelViewSet):
                 return Product.objects.none()
             
             # Farmer can see products from their animals
-            elif profile.role == 'Farmer':
+            elif user_role == ROLE_FARMER:
                 return Product.objects.filter(animal__farmer=user).order_by('-created_at')
             
-            return Product.objects.all().order_by('-created_at')
+            # Default deny for unknown roles
+            return Product.objects.none()
             
         except UserProfile.DoesNotExist:
-            return Product.objects.all().order_by('-created_at')
+            # Security: deny access if no profile exists
+            return Product.objects.none()
 
     @action(detail=False, methods=['post'], url_path='receive_products')
     def receive_products(self, request):
@@ -3220,7 +3270,8 @@ class ProductViewSet(viewsets.ModelViewSet):
         # Verify user is a processor
         try:
             profile = user.profile
-            if profile.role != 'Processor':
+            user_role = get_user_role(user)
+            if user_role != ROLE_PROCESSOR:
                 return Response(
                     {'error': 'Only processors can transfer products'},
                     status=status_module.HTTP_403_FORBIDDEN
@@ -3463,19 +3514,20 @@ class SaleViewSet(viewsets.ModelViewSet):
         # Fall back to UserProfile (old system)
         try:
             profile = user.profile
+            user_role = get_user_role(user)
             
             # Admin can see all sales
-            if profile.role == 'Admin':
+            if user_role == ROLE_ADMIN:
                 return Sale.objects.all().order_by('-created_at')
             
             # Shop owners can see sales from their shop
-            elif profile.role == 'ShopOwner':
+            elif user_role == ROLE_SHOPOWNER:
                 if profile.shop:
                     return Sale.objects.filter(shop=profile.shop).order_by('-created_at')
                 return Sale.objects.none()
             
             # Processor can see sales of products from their processing unit
-            elif profile.role == 'Processor':
+            elif user_role == ROLE_PROCESSOR:
                 if profile.processing_unit:
                     return Sale.objects.filter(
                         items__product__processing_unit=profile.processing_unit

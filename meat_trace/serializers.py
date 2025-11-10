@@ -9,6 +9,7 @@ from .models import (
     SystemAlert, PerformanceMetric, ComplianceAudit, Certification,
     SystemHealth, SecurityLog, TransferRequest, BackupSchedule, Sale, SaleItem
 )
+from .role_utils import normalize_role, ROLE_FARMER, ROLE_PROCESSOR, ROLE_SHOPOWNER, ROLE_ADMIN
 
 
 class UserAuditLogSerializer(serializers.ModelSerializer):
@@ -504,11 +505,28 @@ class UserProfileSerializer(serializers.ModelSerializer):
                            'user_first_name', 'user_last_name', 'verification_token']
 
     def validate_role(self, value):
-        """Ensure role is one of the valid choices"""
-        valid_roles = ['farmer', 'processing_unit', 'shop']
-        if value not in valid_roles:
-            raise serializers.ValidationError(f"Role must be one of: {', '.join(valid_roles)}")
-        return value
+        """
+        Normalize and validate role to canonical form.
+        Accepts both naming conventions:
+        - API format: 'farmer', 'processing_unit', 'shop', 'admin'
+        - Model format: 'Farmer', 'Processor', 'ShopOwner', 'Admin'
+        
+        Returns the canonical model format.
+        """
+        if not value:
+            raise serializers.ValidationError("Role is required")
+        
+        # Normalize the role to canonical form
+        normalized_role = normalize_role(value)
+        
+        # Check if it's a valid role
+        valid_roles = [ROLE_FARMER, ROLE_PROCESSOR, ROLE_SHOPOWNER, ROLE_ADMIN]
+        if normalized_role not in valid_roles:
+            raise serializers.ValidationError(
+                f"Invalid role. Must be one of: farmer, processing_unit/processor, shop/shop_owner, admin"
+            )
+        
+        return normalized_role
 
     def validate_phone(self, value):
         """Validate phone number format"""

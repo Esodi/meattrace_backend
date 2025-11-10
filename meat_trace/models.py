@@ -159,12 +159,11 @@ class UserProfile(models.Model):
 
 @receiver(post_save, sender=User)
 def create_user_profile(sender, instance, created, **kwargs):
+    """Create UserProfile when a new User is created"""
     if created:
         UserProfile.objects.create(user=instance)
-
-@receiver(post_save, sender=User)
-def save_user_profile(sender, instance, **kwargs):
-    instance.profile.save()
+        # Note: Profile is created with default role='Farmer'
+        # The role should be updated immediately after user creation by the registration code
 
 
 class UserAuditLog(models.Model):
