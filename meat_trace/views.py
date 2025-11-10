@@ -2925,7 +2925,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                     ).order_by('-created_at')
                 return Product.objects.none()
             
-            # Shop owners can see products transferred to their shop(s)
+            # Shop owners can see products transferred to OR received by their shop(s)
             elif profile.role == 'ShopOwner':
                 # Get all shops where user is an active member via ShopUser
                 user_shop_ids = ShopUser.objects.filter(
@@ -2934,16 +2934,46 @@ class ProductViewSet(viewsets.ModelViewSet):
                 ).values_list('shop_id', flat=True)
                 
                 if user_shop_ids:
-                    # Return products transferred to any of the user's shops
-                    return Product.objects.filter(
-                        transferred_to__id__in=user_shop_ids
+                    # Return products transferred to or received by any of the user's shops
+                    queryset = Product.objects.filter(
+                        Q(transferred_to__id__in=user_shop_ids) | Q(received_by_shop__id__in=user_shop_ids)
                     ).order_by('-created_at')
+                    
+                    # If pending_receipt parameter is provided, filter further
+                    pending_receipt = self.request.query_params.get('pending_receipt')
+                    if pending_receipt and pending_receipt.lower() == 'true':
+                        # Only show products transferred to shop but not fully received yet
+                        queryset = queryset.filter(
+                            transferred_to__id__in=user_shop_ids,
+                            rejection_status__isnull=True  # Not fully rejected
+                        ).exclude(
+                            Q(quantity_received__gte=models.F('quantity')) |  # Not fully received
+                            Q(quantity_rejected__gte=models.F('quantity'))   # Not fully rejected
+                        )
+                    
+                    return queryset
                 
                 # Fallback to profile.shop if no ShopUser memberships exist
                 if profile.shop:
-                    return Product.objects.filter(
-                        transferred_to=profile.shop
+                    # Show products transferred to this shop OR already received by this shop
+                    # Filter by pending_receipt query param if provided
+                    queryset = Product.objects.filter(
+                        Q(transferred_to=profile.shop) | Q(received_by_shop=profile.shop)
                     ).order_by('-created_at')
+                    
+                    # If pending_receipt parameter is provided, filter further
+                    pending_receipt = self.request.query_params.get('pending_receipt')
+                    if pending_receipt and pending_receipt.lower() == 'true':
+                        # Only show products transferred to shop but not fully received yet
+                        queryset = queryset.filter(
+                            transferred_to=profile.shop,
+                            rejection_status__isnull=True  # Not fully rejected
+                        ).exclude(
+                            Q(quantity_received__gte=models.F('quantity')) |  # Not fully received
+                            Q(quantity_rejected__gte=models.F('quantity'))   # Not fully rejected
+                        )
+                    
+                    return queryset
                 
                 return Product.objects.none()
             

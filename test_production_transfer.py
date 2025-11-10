@@ -1,9 +1,14 @@
 #!/usr/bin/env python
 """
-Test transfer to production server
+Remote Production Transfer Endpoint Tester
+Tests the /api/v2/products/transfer/ endpoint on production server
+without needing local database access.
+
+Usage: python test_production_transfer.py <username> <password>
 """
 import requests
 import json
+import sys
 
 PROD_URL = 'https://dev.shambabora.co.tz'
 
