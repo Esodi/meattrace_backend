@@ -3,15 +3,15 @@ from .models import UserProfile, ShopUser
 
 class IsFarmer(permissions.BasePermission):
     def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.profile.role == 'farmer'
+        return request.user.is_authenticated and request.user.profile.role == 'Farmer'
 
 class IsProcessingUnit(permissions.BasePermission):
     def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.profile.role == 'processing_unit'
+        return request.user.is_authenticated and request.user.profile.role == 'Processor'
 
 class IsShop(permissions.BasePermission):
     def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.profile.role == 'shop'
+        return request.user.is_authenticated and request.user.profile.role == 'ShopOwner'
 
 class IsOwnerOrReadOnly(permissions.BasePermission):
     """

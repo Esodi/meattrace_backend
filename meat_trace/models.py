@@ -119,13 +119,14 @@ class ShopUser(models.Model):
 
 class UserProfile(models.Model):
     ROLE_CHOICES = [
-        ('farmer', 'Farmer'),
-        ('processing_unit', 'Processing Unit'),
-        ('shop', 'Shop'),
+        ('Farmer', 'Farmer'),
+        ('Processor', 'Processor'),
+        ('ShopOwner', 'Shop Owner'),
+        ('Admin', 'Administrator'),
     ]
 
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
-    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='farmer')
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='Farmer')
     # Link to processing unit for users who are part of processing units
     processing_unit = models.ForeignKey(ProcessingUnit, on_delete=models.SET_NULL, null=True, blank=True, related_name='user_profiles')
     # Link to shop for users who are part of shops

@@ -182,9 +182,16 @@ class RegisterView(APIView):
             print(f"[REGISTRATION] Created new profile for user {user.username}")
 
         # Normalize role to internal value
-        normalized_role = role.lower()
-        if normalized_role == 'processingunit':
-            normalized_role = 'processing_unit'
+        # Map frontend role names to backend role values
+        role_mapping = {
+            'farmer': 'Farmer',
+            'processingunit': 'Processor',
+            'processing_unit': 'Processor',
+            'processor': 'Processor',
+            'shop': 'ShopOwner',
+            'shopowner': 'ShopOwner',
+        }
+        normalized_role = role_mapping.get(role.lower(), role)
         profile.role = normalized_role
         profile.save()
         print(f"[REGISTRATION] User {user.username} registered with role: {normalized_role}")

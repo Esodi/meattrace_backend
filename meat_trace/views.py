@@ -1969,14 +1969,14 @@ class ShopViewSet(viewsets.ModelViewSet):
             # Check if user already owns a shop
             try:
                 profile = user.profile
-                if profile.shop and profile.role == 'shop':
+                if profile.shop and profile.role == 'ShopOwner':
                     return Response(
                         {'error': 'You already own a shop. You cannot create another one.'},
                         status=status_module.HTTP_400_BAD_REQUEST
                     )
             except UserProfile.DoesNotExist:
                 # Create profile if it doesn't exist
-                profile = UserProfile.objects.create(user=user, role='shop')
+                profile = UserProfile.objects.create(user=user, role='ShopOwner')
             
             # Create the shop
             shop = Shop.objects.create(
@@ -2006,7 +2006,7 @@ class ShopViewSet(viewsets.ModelViewSet):
             
             # Update user profile
             profile.shop = shop
-            profile.role = 'shop'
+            profile.role = 'ShopOwner'
             profile.save()
             logger.info(f"[SHOP_VIEWSET] Updated user profile with Shop ID {shop.id}")
             
