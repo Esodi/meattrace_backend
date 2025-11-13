@@ -34,7 +34,7 @@ ALLOWED_HOSTS = ['*']
 # Application definition
 
 INSTALLED_APPS = [
-    'django.contrib.admin',
+    # 'django.contrib.admin',  # Removed - admin implementation removed from project
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
@@ -60,6 +60,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    # 'meat_trace.middleware.AdminAuthenticationMiddleware',  # Removed - admin implementation removed
 ]
 
 ROOT_URLCONF = 'meattrace_backend.urls'
@@ -89,15 +90,36 @@ WSGI_APPLICATION = 'meattrace_backend.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
+# Using SQLite for development - simpler setup, no external database required
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'db.sqlite3',
-        'OPTIONS': {
-            'init_command': "PRAGMA journal_mode=WAL;",
-        },
     }
 }
+
+# PostgreSQL configuration (commented out - uncomment to use PostgreSQL)
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': os.environ.get('DB_NAME', 'meattrace'),
+#         'USER': os.environ.get('DB_USER', 'admin'),
+#         'PASSWORD': os.environ.get('DB_PASSWORD', 'password'),
+#         'HOST': os.environ.get('DB_HOST', 'localhost'),
+#         'PORT': os.environ.get('DB_PORT', '5432'),
+#     },
+#     'read_replica': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': os.environ.get('DB_READ_NAME', 'meattrace_read'),
+#         'USER': os.environ.get('DB_READ_USER', 'readonly'),
+#         'PASSWORD': os.environ.get('DB_READ_PASSWORD', 'password'),
+#         'HOST': os.environ.get('DB_READ_HOST', 'localhost'),
+#         'PORT': os.environ.get('DB_READ_PORT', '5432'),
+#     }
+# }
+
+# Database routing for read replicas
+# DATABASE_ROUTERS = ['meat_trace.db_router.AdminReadReplicaRouter']  # Removed - admin implementation removed
 
 
 # Password validation
@@ -269,6 +291,66 @@ LOGGING = {
             'propagate': False,
         },
     },
+}
+
+# Redis configuration
+REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+
+# Celery configuration
+CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', REDIS_URL)
+CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', REDIS_URL)
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = TIME_ZONE
+
+# Celery Beat schedule for periodic tasks
+from celery.schedules import crontab
+CELERY_BEAT_SCHEDULE = {
+    'cleanup-expired-tokens': {
+        'task': 'meat_trace.tasks.cleanup_expired_tokens',
+        'schedule': crontab(hour=2, minute=0),  # Daily at 2 AM
+    },
+    # 'generate-admin-reports': {  # Removed - admin implementation removed
+    #     'task': 'meat_trace.tasks.generate_admin_reports',
+    #     'schedule': crontab(hour=6, minute=0),  # Daily at 6 AM
+    # },
+}
+
+# Cache configuration - Use local memory cache for development if Redis not available
+try:
+    import django_redis
+    CACHES = {
+        'default': {
+            'BACKEND': 'django_redis.cache.RedisCache',
+            'LOCATION': REDIS_URL,
+            'OPTIONS': {
+                'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            }
+        }
+    }
+except ImportError:
+    # Fallback to local memory cache if Redis not available
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        }
+    }
+
+# Session configuration
+SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+SESSION_CACHE_ALIAS = 'default'
+
+# Rate limiting configuration
+REST_FRAMEWORK['DEFAULT_THROTTLE_CLASSES'] = [
+    'rest_framework.throttling.AnonRateThrottle',
+    'rest_framework.throttling.UserRateThrottle',
+    # 'meat_trace.throttling.AdminRateThrottle',  # Removed - admin implementation removed
+]
+REST_FRAMEWORK['DEFAULT_THROTTLE_RATES'] = {
+    'anon': '100/hour',
+    'user': '1000/hour',
+    # 'admin': '100/minute',  # Removed - admin implementation removed
 }
 
 # drf-spectacular settings for API documentation

@@ -1,731 +1,696 @@
 from rest_framework import serializers
-from django.utils import timezone
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
 from .models import (
-    Animal, Product, Receipt, UserProfile, ProductCategory, ProcessingStage,
-    ProductTimelineEvent, Inventory, Order, OrderItem, CarcassMeasurement,
-    SlaughterPart, ProcessingUnit, ProcessingUnitUser, ProductIngredient,
-    Shop, ShopUser, UserAuditLog, JoinRequest, Notification, Activity,
-    SystemAlert, PerformanceMetric, ComplianceAudit, Certification,
-    SystemHealth, SecurityLog, TransferRequest, BackupSchedule, Sale, SaleItem
+    Animal, Product, Order, Shop, SlaughterPart, CarcassMeasurement,
+    ProductIngredient, UserProfile, ProcessingUnit, ProcessingUnitUser,
+    ShopUser, JoinRequest, Notification, Activity, SystemAlert,
+    PerformanceMetric, ComplianceAudit, Certification, SystemHealth,
+    SecurityLog, TransferRequest, BackupSchedule, Sale, SaleItem,
+    RejectionReason, ComplianceStatus, AuditTrail, ConfigurationHistory,
+    FeatureFlag, Backup, DataExport, DataImport, GDPRRequest, DataValidation,
+    ProductCategory, NotificationTemplate, NotificationChannel,
+    NotificationDelivery, NotificationSchedule
 )
-from .role_utils import normalize_role, ROLE_FARMER, ROLE_PROCESSOR, ROLE_SHOPOWNER, ROLE_ADMIN
+
+User = get_user_model()
 
 
-class UserAuditLogSerializer(serializers.ModelSerializer):
-    performed_by_username = serializers.CharField(source='performed_by.username', read_only=True)
-    affected_user_username = serializers.CharField(source='affected_user.username', read_only=True)
-    processing_unit_name = serializers.CharField(source='processing_unit.name', read_only=True)
-    shop_name = serializers.CharField(source='shop.name', read_only=True)
+class SystemHealthSerializer(serializers.ModelSerializer):
+    """Serializer for system health data."""
+    class Meta:
+        model = SystemHealth
+        fields = '__all__'
+
+
+class PerformanceMetricSerializer(serializers.ModelSerializer):
+    """Serializer for performance metrics."""
+    class Meta:
+        model = PerformanceMetric
+        fields = '__all__'
+
+
+class SystemAlertSerializer(serializers.ModelSerializer):
+    """Serializer for system alerts."""
+    acknowledged_by_name = serializers.CharField(source='acknowledged_by.username', read_only=True)
 
     class Meta:
-        model = UserAuditLog
-        fields = [
-            'id', 'performed_by', 'performed_by_username', 'affected_user',
-            'affected_user_username', 'processing_unit', 'processing_unit_name',
-            'shop', 'shop_name', 'action', 'description', 'old_values',
-            'new_values', 'metadata', 'timestamp'
-        ]
-        read_only_fields = ['id', 'timestamp']
+        model = SystemAlert
+        fields = '__all__'
+        read_only_fields = ('created_at', 'updated_at')
 
 
-class ProcessingUnitUserSerializer(serializers.ModelSerializer):
+class ComplianceAuditSerializer(serializers.ModelSerializer):
+    """Serializer for compliance audits."""
+    class Meta:
+        model = ComplianceAudit
+        fields = '__all__'
+
+
+class CertificationSerializer(serializers.ModelSerializer):
+    """Serializer for certifications."""
+    class Meta:
+        model = Certification
+        fields = '__all__'
+
+
+class SecurityLogSerializer(serializers.ModelSerializer):
+    """Serializer for security logs."""
     user_username = serializers.CharField(source='user.username', read_only=True)
-    user_email = serializers.CharField(source='user.email', read_only=True)
-    invited_by_username = serializers.CharField(source='invited_by.username', read_only=True)
-    processing_unit_name = serializers.CharField(source='processing_unit.name', read_only=True)
 
     class Meta:
-        model = ProcessingUnitUser
-        fields = [
-            'id', 'user', 'user_username', 'user_email', 'processing_unit',
-            'processing_unit_name', 'role', 'permissions', 'granular_permissions',
-            'invited_by', 'invited_by_username', 'invited_at', 'joined_at',
-            'is_active', 'is_suspended', 'suspension_reason', 'suspension_date',
-            'last_active'
-        ]
-        read_only_fields = ['id', 'invited_at', 'joined_at', 'invited_by_username', 'processing_unit_name']
+        model = SecurityLog
+        fields = '__all__'
 
+
+class BackupScheduleSerializer(serializers.ModelSerializer):
+    """Serializer for backup schedules."""
+    class Meta:
+        model = BackupSchedule
+        fields = '__all__'
+
+
+class DataExportSerializer(serializers.ModelSerializer):
+    """Serializer for data exports."""
+    class Meta:
+        model = DataExport
+        fields = '__all__'
+
+
+class DataImportSerializer(serializers.ModelSerializer):
+    """Serializer for data imports."""
+    class Meta:
+        model = DataImport
+        fields = '__all__'
+
+
+class GDPRRequestSerializer(serializers.ModelSerializer):
+    """Serializer for GDPR requests."""
+    class Meta:
+        model = GDPRRequest
+        fields = '__all__'
+
+
+class DataValidationSerializer(serializers.ModelSerializer):
+    """Serializer for data validations."""
+    class Meta:
+        model = DataValidation
+        fields = '__all__'
+
+
+class ComplianceStatusSerializer(serializers.ModelSerializer):
+    """Serializer for compliance status."""
+    class Meta:
+        model = ComplianceStatus
+        fields = '__all__'
+
+
+class AuditTrailSerializer(serializers.ModelSerializer):
+    """Serializer for audit trail entries."""
+    user_username = serializers.CharField(source='user.username', read_only=True)
+
+    class Meta:
+        model = AuditTrail
+        fields = '__all__'
+
+
+class ConfigurationHistorySerializer(serializers.ModelSerializer):
+    """Serializer for configuration history."""
+    changed_by_name = serializers.CharField(source='changed_by.username', read_only=True)
+
+    class Meta:
+        model = ConfigurationHistory
+        fields = '__all__'
+
+
+class FeatureFlagSerializer(serializers.ModelSerializer):
+    """Serializer for feature flags."""
+    created_by_name = serializers.CharField(source='created_by.username', read_only=True)
+    updated_by_name = serializers.CharField(source='updated_by.username', read_only=True)
+
+    class Meta:
+        model = FeatureFlag
+        fields = '__all__'
+
+
+class BackupSerializer(serializers.ModelSerializer):
+    """Serializer for backups."""
+    created_by_name = serializers.CharField(source='created_by.username', read_only=True)
+    initiated_by_name = serializers.CharField(source='initiated_by.username', read_only=True)
+
+    class Meta:
+        model = Backup
+        fields = '__all__'
+
+
+# Monitoring-specific serializers
+
+class SystemHealthCheckSerializer(serializers.Serializer):
+    """Serializer for system health check responses."""
+    timestamp = serializers.DateTimeField()
+    overall_status = serializers.CharField()
+    uptime = serializers.DictField()
+    components = serializers.DictField()
+    alerts = serializers.ListField()
+    health_history = serializers.ListField(required=False)
+    system_metrics = serializers.DictField(required=False)
+
+
+class PerformanceMetricsSerializer(serializers.Serializer):
+    """Serializer for performance monitoring responses."""
+    period = serializers.CharField()
+    timestamp = serializers.DateTimeField()
+    metrics = serializers.DictField()
+    trends = serializers.DictField()
+
+
+class AlertListSerializer(serializers.Serializer):
+    """Serializer for alert list responses."""
+    alerts = serializers.ListField()
+    pagination = serializers.DictField()
+    summary = serializers.DictField()
+
+
+class HistoricalDataSerializer(serializers.Serializer):
+    """Serializer for historical monitoring data."""
+    metric = serializers.CharField()
+    period = serializers.DictField()
+    data_points = serializers.ListField()
+    trends = serializers.DictField()
+    insights = serializers.ListField()
+
+
+class AlertAcknowledgeSerializer(serializers.Serializer):
+    """Serializer for alert acknowledgment."""
+    notes = serializers.CharField(required=False, allow_blank=True)
+    estimated_resolution_minutes = serializers.IntegerField(required=False, min_value=1)
+
+
+class AlertResolveSerializer(serializers.Serializer):
+    """Serializer for alert resolution."""
+    resolution = serializers.CharField()
+    notes = serializers.CharField(required=False, allow_blank=True)
+    preventive_measures = serializers.CharField(required=False, allow_blank=True)
+
+
+class DiagnosticRunSerializer(serializers.Serializer):
+    """Serializer for diagnostic run requests."""
+    tests = serializers.ListField(child=serializers.CharField())
+    include_load_test = serializers.BooleanField(default=False)
+    timeout_seconds = serializers.IntegerField(default=300, min_value=30, max_value=1800)
+
+
+class DiagnosticResultSerializer(serializers.Serializer):
+    """Serializer for diagnostic test results."""
+    diagnostic_run_id = serializers.CharField()
+    status = serializers.CharField()
+    started_at = serializers.DateTimeField()
+    completed_at = serializers.DateTimeField()
+    duration_seconds = serializers.IntegerField()
+    results = serializers.DictField()
+    recommendations = serializers.ListField()
+    overall_status = serializers.CharField()
+
+
+class AlertConfigurationSerializer(serializers.Serializer):
+    """Serializer for alert rule configuration."""
+    name = serializers.CharField(max_length=200)
+    component = serializers.CharField(max_length=50)
+    metric = serializers.CharField(max_length=100)
+    condition = serializers.DictField()
+    severity = serializers.ChoiceField(choices=['low', 'medium', 'high', 'critical'])
+    notification_channels = serializers.ListField(child=serializers.CharField())
+    cooldown_minutes = serializers.IntegerField(default=30, min_value=1)
+    auto_resolve_minutes = serializers.IntegerField(default=60, min_value=1)
+    description = serializers.CharField(required=False, allow_blank=True)
+
+
+class AlertConfigListSerializer(serializers.Serializer):
+    """Serializer for alert configuration list."""
+    alert_rules = serializers.ListField()
+
+
+class RealTimeMetricsSerializer(serializers.Serializer):
+    """Serializer for real-time monitoring data."""
+    type = serializers.CharField()
+    timestamp = serializers.DateTimeField()
+    data = serializers.DictField()
+
+
+# Existing serializers (keeping for compatibility)
 
 class AnimalSerializer(serializers.ModelSerializer):
-    farmer_username = serializers.CharField(source='farmer.username', read_only=True)
-    transferred_to_name = serializers.CharField(source='transferred_to.name', read_only=True, allow_null=True)
-    received_by_username = serializers.CharField(source='received_by.username', read_only=True, allow_null=True)
-    is_split_carcass = serializers.BooleanField(read_only=True)
-    has_slaughter_parts = serializers.BooleanField(read_only=True)
-    slaughter_parts = serializers.SerializerMethodField()
-    carcass_measurement = serializers.SerializerMethodField()
-    
-    # Lifecycle status fields
-    lifecycle_status = serializers.CharField(read_only=True)
-    is_healthy = serializers.BooleanField(read_only=True)
-    is_slaughtered_status = serializers.BooleanField(read_only=True)
-    is_transferred_status = serializers.BooleanField(read_only=True)
-    is_semi_transferred_status = serializers.BooleanField(read_only=True)
+    farmer_name = serializers.CharField(source='farmer.username', read_only=True)
+    processing_unit_name = serializers.CharField(source='transferred_to.name', read_only=True)
+    shop_name = serializers.CharField(source='received_by_shop.name', read_only=True)
 
     class Meta:
         model = Animal
-        fields = [
-            'id', 'farmer', 'farmer_username', 'species', 'age', 'live_weight', 'remaining_weight',
-            'created_at', 'slaughtered', 'slaughtered_at', 'transferred_to',
-            'transferred_to_name', 'transferred_at', 'received_by',
-            'received_by_username', 'received_at', 'processed', 'animal_id',
-            'animal_name', 'breed', 'health_status', 'abbatoir_name', 'photo',
-            'gender', 'notes',
-            'is_split_carcass', 'has_slaughter_parts', 'slaughter_parts', 'carcass_measurement',
-            'age_in_years', 'age_in_days',
-            'lifecycle_status', 'is_healthy', 'is_slaughtered_status',
-            'is_transferred_status', 'is_semi_transferred_status'
-        ]
-        read_only_fields = ['id', 'created_at', 'farmer_username', 'transferred_to_name', 'received_by_username',
-                           'is_split_carcass', 'has_slaughter_parts', 'age_in_years', 'age_in_days', 'farmer',
-                           'lifecycle_status', 'is_healthy', 'is_slaughtered_status',
-                           'is_transferred_status', 'is_semi_transferred_status']
-
-    def validate_animal_id(self, value):
-        """Validate animal_id format and uniqueness"""
-        if value:
-            # Check length
-            if len(value) < 3:
-                raise serializers.ValidationError("Animal ID must be at least 3 characters long")
-            if len(value) > 50:
-                raise serializers.ValidationError("Animal ID cannot exceed 50 characters")
-
-            # Check format - allow alphanumeric, hyphens, underscores
-            import re
-            if not re.match(r'^[A-Za-z0-9\-_]+$', value):
-                raise serializers.ValidationError("Animal ID can only contain letters, numbers, hyphens, and underscores")
-
-            # Check uniqueness (only if creating new animal)
-            if self.instance is None:  # Creating new animal
-                if Animal.objects.filter(animal_id=value).exists():
-                    raise serializers.ValidationError("An animal with this ID already exists")
-        return value
-
-    def validate_health_status(self, value):
-        # Optional: enforce health status normalization (allow any but trim)
-        if value is None:
-            return value
-        return value.strip()
-
-    def validate_age(self, value):
-        """Validate age is reasonable (not negative, not too old for livestock)"""
-        if value is not None:
-            if value < 0:
-                raise serializers.ValidationError("Age cannot be negative")
-            if value > 1200:  # 100 years in months
-                raise serializers.ValidationError("Age seems unreasonably high (more than 100 years)")
-        return value
-
-    def validate_live_weight(self, value):
-        """Validate live weight is reasonable"""
-        if value is not None:
-            if value < 0:
-                raise serializers.ValidationError("Live weight cannot be negative")
-            if value > 5000:  # 5 tons - very heavy for livestock
-                raise serializers.ValidationError("Live weight seems unreasonably high")
-        return value
-    
-    def get_slaughter_parts(self, obj):
-        """Include slaughter parts if they exist, excluding rejected parts"""
-        if obj.has_slaughter_parts:
-            from .serializers import SlaughterPartSerializer
-            # Exclude rejected parts from the serialized output
-            parts = obj.slaughter_parts.exclude(rejection_status='rejected')
-            return SlaughterPartSerializer(parts, many=True).data
-        return []
-    
-    def get_carcass_measurement(self, obj):
-        """Include carcass measurement if it exists"""
-        try:
-            measurement = obj.carcass_measurement
-        except CarcassMeasurement.DoesNotExist:
-            return None
-        from .serializers import CarcassMeasurementSerializer
-        return CarcassMeasurementSerializer(measurement).data
+        fields = '__all__'
 
 
 class ProductSerializer(serializers.ModelSerializer):
-    # ProcessingUnit model exposes `name` (not `username`). Fix source to use the correct attribute.
+    animal_id = serializers.CharField(source='animal.animal_id', read_only=True)
     processing_unit_name = serializers.CharField(source='processing_unit.name', read_only=True)
-    animal_animal_id = serializers.CharField(source='animal.animal_id', read_only=True)
-    animal_species = serializers.CharField(source='animal.species', read_only=True)
-    transferred_to_name = serializers.CharField(source='transferred_to.name', read_only=True, allow_null=True)
-    received_by_shop_name = serializers.CharField(source='received_by_shop.name', read_only=True, allow_null=True)
-    slaughter_part_name = serializers.SerializerMethodField()
-    slaughter_part_type = serializers.CharField(source='slaughter_part.part_type', read_only=True, allow_null=True)
-
-    def get_slaughter_part_name(self, obj):
-        """Get the display name of the slaughter part"""
-        if obj.slaughter_part:
-            # Return the display name from the PART_CHOICES
-            return obj.slaughter_part.get_part_type_display()
-        return None
+    transferred_to_name = serializers.CharField(source='transferred_to.name', read_only=True)
+    received_by_shop_name = serializers.CharField(source='received_by_shop.name', read_only=True)
 
     class Meta:
         model = Product
-        fields = [
-            'id', 'processing_unit', 'processing_unit_name', 'animal', 'animal_animal_id',
-            'animal_species', 'slaughter_part', 'slaughter_part_name', 'slaughter_part_type',
-            'name', 'product_type', 'quantity', 'weight', 'weight_unit',
-            'price', 'description', 'manufacturer', 'batch_number', 'category', 'created_at',
-            'transferred_to', 'transferred_to_name', 'transferred_at', 'received_by_shop',
-            'received_by_shop_name', 'received_at', 'qr_code', 'quantity_received',
-            'rejection_status', 'rejection_reason', 'quantity_rejected', 'rejected_by', 'rejected_at'
-        ]
-        read_only_fields = [
-            'id', 'created_at', 'processing_unit_name', 'animal_animal_id', 'animal_species',
-            'slaughter_part_name', 'slaughter_part_type', 'transferred_to_name', 'received_by_shop_name'
-        ]
-
-
-class ReceiptSerializer(serializers.ModelSerializer):
-    shop_name = serializers.CharField(source='shop.name', read_only=True)
-
-    class Meta:
-        model = Receipt
-        fields = ['id', 'product', 'shop', 'shop_name', 'received_quantity', 'received_at']
-        read_only_fields = ['id', 'received_at', 'shop_name']
-
-
-class ProductCategorySerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ProductCategory
-        fields = ['id', 'name', 'description']
-
-
-class ProcessingStageSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ProcessingStage
-        fields = ['id', 'name', 'description', 'order']
-
-
-class ProductTimelineEventSerializer(serializers.ModelSerializer):
-    stage_name = serializers.CharField(source='stage.name', read_only=True)
-
-    class Meta:
-        model = ProductTimelineEvent
-        fields = ['id', 'product', 'stage', 'stage_name', 'location', 'action', 'timestamp']
-        read_only_fields = ['id', 'timestamp']
-
-
-class InventorySerializer(serializers.ModelSerializer):
-    shop_username = serializers.CharField(source='shop.username', read_only=True)
-    product_name = serializers.CharField(source='product.name', read_only=True)
-
-    class Meta:
-        model = Inventory
-        fields = ['id', 'product', 'product_name', 'shop', 'shop_username', 'quantity', 'min_stock_level', 'last_updated']
-        read_only_fields = ['id', 'last_updated', 'shop_username', 'product_name']
+        fields = '__all__'
 
 
 class OrderSerializer(serializers.ModelSerializer):
-    customer_username = serializers.CharField(source='customer.username', read_only=True)
-    shop_username = serializers.CharField(source='shop.username', read_only=True)
+    customer_name = serializers.CharField(source='customer.username', read_only=True)
+    shop_name = serializers.CharField(source='shop.name', read_only=True)
 
     class Meta:
         model = Order
-        fields = [
-            'id', 'customer', 'customer_username', 'shop', 'shop_username', 'status',
-            'total_amount', 'created_at', 'updated_at', 'delivery_address', 'notes', 'qr_code'
-        ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'customer_username', 'shop_username']
-
-
-class OrderItemSerializer(serializers.ModelSerializer):
-    product_name = serializers.CharField(source='product.name', read_only=True)
-    order_customer_username = serializers.CharField(source='order.customer.username', read_only=True)
-    order_shop_username = serializers.CharField(source='order.shop.username', read_only=True)
-
-    class Meta:
-        model = OrderItem
-        fields = [
-            'id', 'order', 'product', 'product_name', 'quantity', 'unit_price',
-            'subtotal', 'order_customer_username', 'order_shop_username'
-        ]
-        read_only_fields = ['id', 'subtotal', 'order_customer_username', 'order_shop_username']
-
-
-class CarcassMeasurementSerializer(serializers.ModelSerializer):
-    animal_animal_id = serializers.CharField(source='animal.animal_id', read_only=True)
-    animal_species = serializers.CharField(source='animal.species', read_only=True)
-    animal_farmer_username = serializers.CharField(source='animal.farmer.username', read_only=True)
-
-    class Meta:
-        model = CarcassMeasurement
-        fields = [
-            'id', 'animal', 'animal_animal_id', 'animal_species', 'animal_farmer_username',
-            'carcass_type', 'head_weight', 'feet_weight', 'left_carcass_weight', 'right_carcass_weight',
-            'whole_carcass_weight', 'organs_weight', 'measurements', 'created_at', 'updated_at'
-        ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'animal_animal_id', 'animal_species', 'animal_farmer_username']
-
-    def validate_animal(self, value):
-        """
-        Accept either numeric ID or animal_id string.
-        If a string is provided, look up the animal by animal_id.
-        """
-        import logging
-        logger = logging.getLogger(__name__)
-        
-        logger.info(f"[CARCASS_MEASUREMENT] validate_animal called with value: {value} (type: {type(value)})")
-        
-        if isinstance(value, str):
-            # It's an animal_id string, look up the animal
-            try:
-                from .models import Animal
-                animal = Animal.objects.get(animal_id=value)
-                logger.info(f"[CARCASS_MEASUREMENT] Found animal by animal_id: {animal.id}")
-                return animal
-            except Animal.DoesNotExist:
-                logger.error(f"[CARCASS_MEASUREMENT] Animal with animal_id '{value}' not found")
-                raise serializers.ValidationError(f"Animal with animal_id '{value}' not found.")
-        # It's already an Animal instance or numeric ID
-        logger.info(f"[CARCASS_MEASUREMENT] Using numeric ID or Animal instance: {value}")
-        return value
-
-    def to_representation(self, instance):
-        """
-        Conditionally expose fields based on carcass type.
-        For 'whole' carcass: show head_weight, feet_weight, whole_carcass_weight
-        For 'split' carcass: show left_carcass_weight, right_carcass_weight, feet_weight, organs_weight
-        """
-        data = super().to_representation(instance)
-        if instance.carcass_type == 'whole':
-            # Hide split carcass fields for whole carcass
-            data.pop('left_carcass_weight', None)
-            data.pop('right_carcass_weight', None)
-            data.pop('organs_weight', None)
-        elif instance.carcass_type == 'split':
-            # Hide whole carcass fields for split carcass
-            data.pop('head_weight', None)
-            data.pop('whole_carcass_weight', None)
-        return data
-
-    def validate(self, attrs):
-        import logging
-        logger = logging.getLogger(__name__)
-        
-        logger.info(f"[CARCASS_MEASUREMENT] validate() called with attrs keys: {list(attrs.keys())}")
-        logger.info(f"[CARCASS_MEASUREMENT] Raw attrs: {attrs}")
-        
-        carcass_type = attrs.get('carcass_type')
-        measurements = attrs.get('measurements', {})
-        
-        logger.info(f"[CARCASS_MEASUREMENT] carcass_type: {carcass_type}")
-        logger.info(f"[CARCASS_MEASUREMENT] measurements: {measurements}")
-        
-        # If measurements JSON is provided, extract weight fields from it
-        if measurements:
-            logger.info(f"[CARCASS_MEASUREMENT] Extracting weights from measurements JSON...")
-            # Extract weights from measurements JSON and populate the individual fields
-            for field_name in ['head_weight', 'feet_weight', 'left_carcass_weight', 
-                             'right_carcass_weight', 'whole_carcass_weight', 'organs_weight', 'torso_weight']:
-                if field_name in measurements:
-                    measurement_data = measurements[field_name]
-                    logger.info(f"[CARCASS_MEASUREMENT] Processing {field_name}: {measurement_data}")
-                    if isinstance(measurement_data, dict) and 'value' in measurement_data:
-                        attrs[field_name] = measurement_data['value']
-                        logger.info(f"[CARCASS_MEASUREMENT] Set {field_name} = {measurement_data['value']}")
-
-        logger.info(f"[CARCASS_MEASUREMENT] After extraction, attrs: {attrs}")
-
-        # Validate measurements are positive numbers
-        weight_fields = ['head_weight', 'feet_weight', 'left_carcass_weight', 'right_carcass_weight',
-                        'whole_carcass_weight', 'organs_weight', 'torso_weight']
-
-        for field_name in weight_fields:
-            weight = attrs.get(field_name)
-            if weight is not None:
-                logger.info(f"[CARCASS_MEASUREMENT] Validating {field_name}: {weight}")
-                if weight <= 0:
-                    logger.error(f"[CARCASS_MEASUREMENT] {field_name} is not positive: {weight}")
-                    raise serializers.ValidationError(f"{field_name.replace('_', ' ').title()} must be a positive number.")
-                # Check for unrealistic weights (too large for typical livestock)
-                if weight > 2000:
-                    logger.error(f"[CARCASS_MEASUREMENT] {field_name} is too large: {weight}")
-                    raise serializers.ValidationError(f"{field_name.replace('_', ' ').title()} seems unreasonably high (over 2000 kg). Please verify the measurement.")
-
-        if carcass_type == 'whole':
-            whole_carcass_weight = attrs.get('whole_carcass_weight')
-            logger.info(f"[CARCASS_MEASUREMENT] Whole carcass validation - whole_carcass_weight: {whole_carcass_weight}")
-            if whole_carcass_weight is None:
-                logger.error(f"[CARCASS_MEASUREMENT] whole_carcass_weight is required but missing")
-                raise serializers.ValidationError("For whole carcass type, whole_carcass_weight is required.")
-        elif carcass_type == 'split':
-            # For split carcass, validate that we have the necessary measurements
-            left_carcass_weight = attrs.get('left_carcass_weight')
-            right_carcass_weight = attrs.get('right_carcass_weight')
-            logger.info(f"[CARCASS_MEASUREMENT] Split carcass validation - left: {left_carcass_weight}, right: {right_carcass_weight}")
-            # Split carcass should have at least left and right carcass weights
-            if left_carcass_weight is None or right_carcass_weight is None:
-                logger.error(f"[CARCASS_MEASUREMENT] left_carcass_weight or right_carcass_weight is missing")
-                raise serializers.ValidationError("For split carcass type, both left_carcass_weight and right_carcass_weight are required.")
-
-        logger.info(f"[CARCASS_MEASUREMENT] Validation passed successfully")
-        return attrs
-
-
-class SlaughterPartSerializer(serializers.ModelSerializer):
-    animal_animal_id = serializers.CharField(source='animal.animal_id', read_only=True)
-    animal_species = serializers.CharField(source='animal.species', read_only=True)
-    transferred_to_name = serializers.CharField(source='transferred_to.name', read_only=True, allow_null=True)
-    received_by_username = serializers.CharField(source='received_by.username', read_only=True, allow_null=True)
-
-    class Meta:
-        model = SlaughterPart
-        fields = [
-            'id', 'animal', 'animal_animal_id', 'animal_species', 'part_type', 'weight', 'remaining_weight',
-            'weight_unit', 'description', 'created_at', 'transferred_to', 'transferred_to_name',
-            'transferred_at', 'received_by', 'received_by_username', 'received_at',
-            'used_in_product', 'is_selected_for_transfer', 'part_id'
-        ]
-        read_only_fields = ['id', 'created_at', 'animal_animal_id', 'animal_species', 'transferred_to_name', 'received_by_username', 'part_id']
-
-
-class ProcessingUnitSerializer(serializers.ModelSerializer):
-    def to_representation(self, instance):
-        data = super().to_representation(instance)
-        print(f"[PROCESSING_UNIT_SERIALIZER] Serializing unit ID {instance.id}: {instance.name}")
-        return data
-
-    class Meta:
-        model = ProcessingUnit
-        fields = [
-            'id', 'name', 'description', 'location', 'contact_email', 'contact_phone',
-            'license_number', 'created_at', 'updated_at'
-        ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
-
-
-class ProductIngredientSerializer(serializers.ModelSerializer):
-    slaughter_part_part_type = serializers.CharField(source='slaughter_part.part_type', read_only=True)
-    slaughter_part_weight = serializers.DecimalField(source='slaughter_part.weight', max_digits=5, decimal_places=2, read_only=True)
-
-    class Meta:
-        model = ProductIngredient
-        fields = [
-            'id', 'product', 'slaughter_part', 'slaughter_part_part_type',
-            'slaughter_part_weight', 'quantity_used', 'quantity_unit'
-        ]
-        read_only_fields = ['id', 'slaughter_part_part_type', 'slaughter_part_weight']
+        fields = '__all__'
 
 
 class ShopSerializer(serializers.ModelSerializer):
     class Meta:
         model = Shop
-        fields = [
-            'id', 'name', 'description', 'location', 'contact_email', 'contact_phone',
-            'business_license', 'tax_id', 'created_at', 'updated_at', 'is_active'
-        ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        fields = '__all__'
 
 
-class ShopUserSerializer(serializers.ModelSerializer):
-    user_username = serializers.CharField(source='user.username', read_only=True)
-    user_email = serializers.CharField(source='user.email', read_only=True)
-    invited_by_username = serializers.CharField(source='invited_by.username', read_only=True)
-    shop_name = serializers.CharField(source='shop.name', read_only=True)
+class SlaughterPartSerializer(serializers.ModelSerializer):
+    animal_id = serializers.CharField(source='animal.animal_id', read_only=True)
 
     class Meta:
-        model = ShopUser
-        fields = [
-            'id', 'user', 'user_username', 'user_email', 'shop', 'shop_name',
-            'role', 'permissions', 'invited_by', 'invited_by_username',
-            'invited_at', 'joined_at', 'is_active'
-        ]
-        read_only_fields = ['id', 'invited_at', 'joined_at', 'invited_by_username', 'shop_name']
+        model = SlaughterPart
+        fields = '__all__'
 
 
-class JoinRequestSerializer(serializers.ModelSerializer):
-    user_username = serializers.CharField(source='user.username', read_only=True)
-    user_email = serializers.CharField(source='user.email', read_only=True)
-    processing_unit_name = serializers.CharField(source='processing_unit.name', read_only=True)
-    shop_name = serializers.CharField(source='shop.name', read_only=True)
-    reviewed_by_username = serializers.CharField(source='reviewed_by.username', read_only=True)
+class CarcassMeasurementSerializer(serializers.ModelSerializer):
+    animal_id = serializers.CharField(source='animal.animal_id', read_only=True)
 
     class Meta:
-        model = JoinRequest
-        fields = [
-            'id', 'user', 'user_username', 'user_email', 'request_type', 'status',
-            'processing_unit', 'processing_unit_name', 'shop', 'shop_name',
-            'requested_role', 'message', 'qualifications', 'reviewed_by',
-            'reviewed_by_username', 'response_message', 'reviewed_at',
-            'expires_at', 'created_at', 'updated_at'
-        ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'reviewed_by_username']
+        model = CarcassMeasurement
+        fields = '__all__'
 
 
-class NotificationSerializer(serializers.ModelSerializer):
+class ProductCategorySerializer(serializers.ModelSerializer):
     class Meta:
-        model = Notification
-        fields = [
-            'id', 'notification_type', 'title', 'message', 'data', 'priority',
-            'is_dismissed', 'dismissed_at', 'action_type', 'is_archived',
-            'archived_at', 'group_key', 'is_batch_notification', 'is_read',
-            'read_at', 'action_url', 'action_text', 'created_at', 'expires_at'
-        ]
-        read_only_fields = ['id', 'created_at', 'dismissed_at', 'archived_at']
+        model = ProductCategory
+        fields = '__all__'
 
 
-class ActivitySerializer(serializers.ModelSerializer):
-    username = serializers.CharField(source='user.username', read_only=True)
+class ProductIngredientSerializer(serializers.ModelSerializer):
+    slaughter_part_type = serializers.CharField(source='slaughter_part.part_type', read_only=True)
 
     class Meta:
-        model = Activity
-        fields = [
-            'id', 'user', 'username', 'activity_type', 'title', 'description',
-            'entity_id', 'entity_type', 'metadata', 'target_route', 'timestamp',
-            'created_at'
-        ]
-        read_only_fields = ['id', 'created_at', 'username']
-
-    def create(self, validated_data):
-        # Set user from request context if not provided
-        if 'user' not in validated_data:
-            validated_data['user'] = self.context['request'].user
-        return super().create(validated_data)
+        model = ProductIngredient
+        fields = '__all__'
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
     user_username = serializers.CharField(source='user.username', read_only=True)
     user_email = serializers.CharField(source='user.email', read_only=True)
-    user_first_name = serializers.CharField(source='user.first_name', read_only=True)
-    user_last_name = serializers.CharField(source='user.last_name', read_only=True)
+    processing_unit_name = serializers.CharField(source='processing_unit.name', read_only=True)
+    shop_name = serializers.CharField(source='shop.name', read_only=True)
 
     class Meta:
         model = UserProfile
-        fields = [
-            'id', 'user', 'user_username', 'user_email', 'user_first_name', 'user_last_name',
-            'role', 'processing_unit', 'shop', 'is_profile_complete', 'profile_completion_step',
-            'avatar', 'phone', 'address', 'bio', 'preferred_species', 'notification_preferences',
-            'is_email_verified', 'is_phone_verified', 'verification_token', 'created_at', 'updated_at'
-        ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'user_username', 'user_email',
-                           'user_first_name', 'user_last_name', 'verification_token']
+        fields = '__all__'
 
-    def validate_role(self, value):
-        """
-        Normalize and validate role to canonical form.
-        Accepts both naming conventions:
-        - API format: 'farmer', 'processing_unit', 'shop', 'admin'
-        - Model format: 'Farmer', 'Processor', 'ShopOwner', 'Admin'
-        
-        Returns the canonical model format.
-        """
-        if not value:
-            raise serializers.ValidationError("Role is required")
-        
-        # Normalize the role to canonical form
-        normalized_role = normalize_role(value)
-        
-        # Check if it's a valid role
-        valid_roles = [ROLE_FARMER, ROLE_PROCESSOR, ROLE_SHOPOWNER, ROLE_ADMIN]
-        if normalized_role not in valid_roles:
-            raise serializers.ValidationError(
-                f"Invalid role. Must be one of: farmer, processing_unit/processor, shop/shop_owner, admin"
-            )
-        
-        return normalized_role
 
-    def validate_phone(self, value):
-        """Validate phone number format"""
-        if value:
-            import re
-            # Basic phone validation - allow digits, spaces, hyphens, plus signs
-            if not re.match(r'^[\d\s\-\+\(\)]+$', value):
-                raise serializers.ValidationError("Phone number contains invalid characters")
-        return value
+class ProcessingUnitSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProcessingUnit
+        fields = '__all__'
+
+
+class ProcessingUnitUserSerializer(serializers.ModelSerializer):
+    user_username = serializers.CharField(source='user.username', read_only=True)
+    processing_unit_name = serializers.CharField(source='processing_unit.name', read_only=True)
+
+    class Meta:
+        model = ProcessingUnitUser
+        fields = '__all__'
+
+
+class ShopUserSerializer(serializers.ModelSerializer):
+    user_username = serializers.CharField(source='user.username', read_only=True)
+    shop_name = serializers.CharField(source='shop.name', read_only=True)
+
+    class Meta:
+        model = ShopUser
+        fields = '__all__'
+
+
+class JoinRequestSerializer(serializers.ModelSerializer):
+    user_username = serializers.CharField(source='user.username', read_only=True)
+    processing_unit_name = serializers.CharField(source='processing_unit.name', read_only=True)
+    shop_name = serializers.CharField(source='shop.name', read_only=True)
+
+    class Meta:
+        model = JoinRequest
+        fields = '__all__'
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notification
+        fields = '__all__'
+
+
+class NotificationTemplateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NotificationTemplate
+        fields = '__all__'
+
+
+class NotificationChannelSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NotificationChannel
+        fields = '__all__'
+
+
+class NotificationDeliverySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NotificationDelivery
+        fields = '__all__'
+
+
+class NotificationScheduleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NotificationSchedule
+        fields = '__all__'
+
+
+class ActivitySerializer(serializers.ModelSerializer):
+    user_username = serializers.CharField(source='user.username', read_only=True)
+
+    class Meta:
+        model = Activity
+        fields = '__all__'
+
+
+class TransferRequestSerializer(serializers.ModelSerializer):
+    requested_by_name = serializers.CharField(source='requested_by.username', read_only=True)
+    approved_by_name = serializers.CharField(source='approved_by.username', read_only=True)
+    from_processing_unit_name = serializers.CharField(source='from_processing_unit.name', read_only=True)
+    to_processing_unit_name = serializers.CharField(source='to_processing_unit.name', read_only=True)
+
+    class Meta:
+        model = TransferRequest
+        fields = '__all__'
+
+
+class SaleSerializer(serializers.ModelSerializer):
+    shop_name = serializers.CharField(source='shop.name', read_only=True)
+    sold_by_name = serializers.CharField(source='sold_by.username', read_only=True)
+
+    class Meta:
+        model = Sale
+        fields = '__all__'
+
+
+class SaleItemSerializer(serializers.ModelSerializer):
+    product_name = serializers.CharField(source='product.name', read_only=True)
+
+    class Meta:
+        model = SaleItem
+        fields = '__all__'
+
+
+class RejectionReasonSerializer(serializers.ModelSerializer):
+    rejected_by_name = serializers.CharField(source='rejected_by.username', read_only=True)
+    animal_id = serializers.CharField(source='animal.animal_id', read_only=True)
+    processing_unit_name = serializers.CharField(source='processing_unit.name', read_only=True)
+
+    class Meta:
+        model = RejectionReason
+        fields = '__all__'
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ADMIN DASHBOARD SERIALIZERS
 # ══════════════════════════════════════════════════════════════════════════════
 
-class SystemAlertSerializer(serializers.ModelSerializer):
-    acknowledged_by_username = serializers.CharField(source='acknowledged_by.username', read_only=True)
-    processing_unit_name = serializers.CharField(source='processing_unit.name', read_only=True)
-    shop_name = serializers.CharField(source='shop.name', read_only=True)
-    user_username = serializers.CharField(source='user.username', read_only=True)
+class AdminDashboardStatsSerializer(serializers.Serializer):
+    """Serializer for admin dashboard overview statistics"""
+    total_users = serializers.IntegerField()
+    total_farmers = serializers.IntegerField()
+    total_processors = serializers.IntegerField()
+    total_shop_owners = serializers.IntegerField()
+    total_admins = serializers.IntegerField()
+
+    total_processing_units = serializers.IntegerField()
+    total_shops = serializers.IntegerField()
+    active_processing_units = serializers.IntegerField()
+    active_shops = serializers.IntegerField()
+
+    total_animals = serializers.IntegerField()
+    total_products = serializers.IntegerField()
+    total_orders = serializers.IntegerField()
+    total_sales = serializers.IntegerField()
+
+    recent_animals_count = serializers.IntegerField()
+    recent_products_count = serializers.IntegerField()
+    recent_orders_count = serializers.IntegerField()
+    recent_activities_count = serializers.IntegerField()
+
+    system_health_status = serializers.CharField()
+    active_alerts_count = serializers.IntegerField()
+
+
+class AdminUserListSerializer(serializers.ModelSerializer):
+    """Serializer for admin user management list view"""
+    profile_role = serializers.CharField(source='profile.role', read_only=True)
+    profile_processing_unit = serializers.CharField(source='profile.processing_unit.name', read_only=True)
+    profile_shop = serializers.CharField(source='profile.shop.name', read_only=True)
+    is_active = serializers.BooleanField(read_only=True)
+    date_joined = serializers.DateTimeField(read_only=True)
+    last_login = serializers.DateTimeField(read_only=True)
 
     class Meta:
-        model = SystemAlert
+        model = User
         fields = [
-            'id', 'title', 'message', 'alert_type', 'category', 'processing_unit',
-            'processing_unit_name', 'shop', 'shop_name', 'user', 'user_username',
-            'is_active', 'is_acknowledged', 'acknowledged_by', 'acknowledged_by_username',
-            'acknowledged_at', 'auto_resolve', 'resolved_at', 'metadata',
-            'created_at', 'updated_at'
-        ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'acknowledged_by_username']
-
-
-class PerformanceMetricSerializer(serializers.ModelSerializer):
-    processing_unit_name = serializers.CharField(source='processing_unit.name', read_only=True)
-    shop_name = serializers.CharField(source='shop.name', read_only=True)
-
-    class Meta:
-        model = PerformanceMetric
-        fields = [
-            'id', 'name', 'metric_type', 'value', 'unit', 'processing_unit',
-            'processing_unit_name', 'shop', 'shop_name', 'period_start', 'period_end',
-            'target_value', 'warning_threshold', 'critical_threshold', 'metadata', 'created_at'
-        ]
-        read_only_fields = ['id', 'created_at']
-
-
-class ComplianceAuditSerializer(serializers.ModelSerializer):
-    processing_unit_name = serializers.CharField(source='processing_unit.name', read_only=True)
-    shop_name = serializers.CharField(source='shop.name', read_only=True)
-
-    class Meta:
-        model = ComplianceAudit
-        fields = [
-            'id', 'title', 'audit_type', 'status', 'processing_unit', 'processing_unit_name',
-            'shop', 'shop_name', 'auditor', 'auditor_organization', 'scheduled_date',
-            'completed_date', 'score', 'findings', 'recommendations', 'follow_up_required',
-            'follow_up_date', 'follow_up_notes', 'metadata', 'created_at', 'updated_at'
-        ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
-
-
-class CertificationSerializer(serializers.ModelSerializer):
-    processing_unit_name = serializers.CharField(source='processing_unit.name', read_only=True)
-    shop_name = serializers.CharField(source='shop.name', read_only=True)
-
-    class Meta:
-        model = Certification
-        fields = [
-            'id', 'name', 'cert_type', 'status', 'processing_unit', 'processing_unit_name',
-            'shop', 'shop_name', 'issuing_authority', 'certificate_number', 'issue_date',
-            'expiry_date', 'certificate_file', 'notes', 'metadata', 'created_at', 'updated_at'
-        ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
-
-
-class SystemHealthSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = SystemHealth
-        fields = [
-            'id', 'component', 'status', 'response_time', 'uptime_percentage',
-            'message', 'last_check', 'next_check', 'warning_threshold',
-            'critical_threshold', 'metadata'
-        ]
-        read_only_fields = ['id']
-
-
-class SecurityLogSerializer(serializers.ModelSerializer):
-    user_username = serializers.CharField(source='user.username', read_only=True)
-    processing_unit_name = serializers.CharField(source='processing_unit.name', read_only=True)
-    shop_name = serializers.CharField(source='shop.name', read_only=True)
-
-    class Meta:
-        model = SecurityLog
-        fields = [
-            'id', 'user', 'user_username', 'event_type', 'severity', 'description',
-            'ip_address', 'user_agent', 'processing_unit', 'processing_unit_name',
-            'shop', 'shop_name', 'resource', 'action', 'metadata', 'timestamp'
-        ]
-        read_only_fields = ['id', 'timestamp']
-
-
-class TransferRequestSerializer(serializers.ModelSerializer):
-    from_processing_unit_name = serializers.CharField(source='from_processing_unit.name', read_only=True)
-    to_processing_unit_name = serializers.CharField(source='to_processing_unit.name', read_only=True)
-    requested_by_username = serializers.CharField(source='requested_by.username', read_only=True)
-    approved_by_username = serializers.CharField(source='approved_by.username', read_only=True)
-    animal_animal_id = serializers.CharField(source='animal.animal_id', read_only=True)
-    product_name = serializers.CharField(source='product.name', read_only=True)
-
-    class Meta:
-        model = TransferRequest
-        fields = [
-            'id', 'request_type', 'status', 'from_processing_unit', 'from_processing_unit_name',
-            'to_processing_unit', 'to_processing_unit_name', 'requested_by', 'requested_by_username',
-            'approved_by', 'approved_by_username', 'approved_at', 'animal', 'animal_animal_id',
-            'product', 'product_name', 'quantity', 'notes', 'approval_required', 'priority',
-            'metadata', 'created_at', 'updated_at'
-        ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
-
-
-class BackupScheduleSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = BackupSchedule
-        fields = [
-            'id', 'name', 'frequency', 'backup_type', 'scheduled_time', 'last_run',
-            'next_run', 'include_database', 'include_files', 'include_media',
-            'retention_days', 'is_active', 'last_status', 'metadata', 'created_at', 'updated_at'
+            'id', 'username', 'email', 'first_name', 'last_name',
+            'profile_role', 'profile_processing_unit', 'profile_shop',
+            'is_active', 'date_joined', 'last_login'
         ]
 
 
-class SaleItemSerializer(serializers.ModelSerializer):
-    product_name = serializers.CharField(source='product.name', read_only=True)
-    
-    class Meta:
-        model = SaleItem
-        fields = ['id', 'sale', 'product', 'product_name', 'quantity', 'unit_price', 'subtotal']
-        read_only_fields = ['id', 'subtotal', 'sale']
+class AdminUserDetailSerializer(serializers.ModelSerializer):
+    """Serializer for admin user management detail view"""
+    profile = UserProfileSerializer(read_only=True)
 
-
-class SaleSerializer(serializers.ModelSerializer):
-    shop_name = serializers.CharField(source='shop.name', read_only=True)
-    sold_by_username = serializers.CharField(source='sold_by.username', read_only=True)
-    items = SaleItemSerializer(many=True)
-    
     class Meta:
-        model = Sale
+        model = User
         fields = [
-            'id', 'shop', 'shop_name', 'sold_by', 'sold_by_username',
-            'customer_name', 'customer_phone', 'total_amount', 'payment_method',
-            'created_at', 'qr_code', 'items'
+            'id', 'username', 'email', 'first_name', 'last_name',
+            'is_active', 'is_staff', 'is_superuser', 'date_joined', 'last_login',
+            'profile'
         ]
-        read_only_fields = ['id', 'created_at', 'qr_code', 'shop_name', 'sold_by_username', 'shop', 'sold_by']
-    
-    def validate(self, data):
-        """Add logging to validation"""
-        print(f"[SALE_SERIALIZER] Validating data: {data}")
-        
-        # Check if items exist
-        if 'items' not in data or not data['items']:
-            print(f"[SALE_SERIALIZER] ❌ Validation failed: No items provided")
-            raise serializers.ValidationError("At least one item is required for a sale")
-        
-        print(f"[SALE_SERIALIZER] ✅ Validation passed with {len(data['items'])} items")
-        return data
-    
+
+
+class AdminUserCreateUpdateSerializer(serializers.ModelSerializer):
+    """Serializer for creating/updating users in admin panel"""
+    password = serializers.CharField(write_only=True, required=False)
+    role = serializers.ChoiceField(choices=[], write_only=True, required=False)  # Choices set in __init__
+    processing_unit_id = serializers.IntegerField(write_only=True, required=False)
+    shop_id = serializers.IntegerField(write_only=True, required=False)
+
+    class Meta:
+        model = User
+        fields = [
+            'id', 'username', 'email', 'first_name', 'last_name',
+            'password', 'is_active', 'role', 'processing_unit_id', 'shop_id'
+        ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['role'].choices = UserProfile.ROLE_CHOICES
+
     def create(self, validated_data):
-        print(f"[SALE_SERIALIZER] Creating sale with validated_data: {validated_data}")
-        items_data = validated_data.pop('items')
-        print(f"[SALE_SERIALIZER] Items data: {items_data}")
-        
-        sale = Sale.objects.create(**validated_data)
-        print(f"[SALE_SERIALIZER] Sale created with ID: {sale.id}")
-        
-        for idx, item_data in enumerate(items_data):
-            print(f"[SALE_SERIALIZER] Creating sale item {idx+1}: {item_data}")
-            
-            # Get the product and reduce its quantity
-            product = item_data['product']
-            quantity_sold = item_data['quantity']
-            
-            print(f"[SALE_SERIALIZER] Product {product.id} ({product.name}): Current quantity = {product.quantity}")
-            
-            # Check if sufficient quantity is available
-            if product.quantity < quantity_sold:
-                raise serializers.ValidationError(
-                    f"Insufficient quantity for product '{product.name}'. "
-                    f"Available: {product.quantity}, Requested: {quantity_sold}"
-                )
-            
-            # Reduce product quantity
-            product.quantity -= quantity_sold
-            product.save()
-            print(f"[SALE_SERIALIZER] Product {product.id}: Updated quantity = {product.quantity} (reduced by {quantity_sold})")
-            
-            # Create the sale item
-            SaleItem.objects.create(sale=sale, **item_data)
-        
-        print(f"[SALE_SERIALIZER] ✅ Sale created successfully with {len(items_data)} items")
-        return sale
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        role = validated_data.pop('role', None)
+        processing_unit_id = validated_data.pop('processing_unit_id', None)
+        shop_id = validated_data.pop('shop_id', None)
+        password = validated_data.pop('password', None)
+
+        user = User.objects.create_user(**validated_data)
+        if password:
+            user.set_password(password)
+            user.save()
+
+        # Create or update profile
+        profile_data = {}
+        if role:
+            profile_data['role'] = role
+        if processing_unit_id:
+            try:
+                profile_data['processing_unit'] = ProcessingUnit.objects.get(id=processing_unit_id)
+            except ProcessingUnit.DoesNotExist:
+                pass
+        if shop_id:
+            try:
+                profile_data['shop'] = Shop.objects.get(id=shop_id)
+            except Shop.DoesNotExist:
+                pass
+
+        if profile_data:
+            UserProfile.objects.update_or_create(user=user, defaults=profile_data)
+
+        return user
+
+    def update(self, instance, validated_data):
+        role = validated_data.pop('role', None)
+        processing_unit_id = validated_data.pop('processing_unit_id', None)
+        shop_id = validated_data.pop('shop_id', None)
+        password = validated_data.pop('password', None)
+
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        if password:
+            instance.set_password(password)
+        instance.save()
+
+        # Update profile
+        profile_data = {}
+        if role:
+            profile_data['role'] = role
+        if processing_unit_id:
+            try:
+                profile_data['processing_unit'] = ProcessingUnit.objects.get(id=processing_unit_id)
+            except ProcessingUnit.DoesNotExist:
+                pass
+        if shop_id:
+            try:
+                profile_data['shop'] = Shop.objects.get(id=shop_id)
+            except Shop.DoesNotExist:
+                pass
+
+        if profile_data:
+            UserProfile.objects.update_or_create(user=instance, defaults=profile_data)
+
+        return instance
+
+
+class AdminProcessingUnitSerializer(serializers.ModelSerializer):
+    """Serializer for admin processing unit management"""
+    member_count = serializers.SerializerMethodField()
+    active_members_count = serializers.SerializerMethodField()
+    product_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProcessingUnit
+        fields = '__all__'
+        read_only_fields = ('created_at', 'updated_at')
+
+    def get_member_count(self, obj):
+        return obj.members.count()
+
+    def get_active_members_count(self, obj):
+        return obj.members.filter(is_active=True).count()
+
+    def get_product_count(self, obj):
+        return obj.products.count()
+
+
+class AdminShopSerializer(serializers.ModelSerializer):
+    """Serializer for admin shop management"""
+    member_count = serializers.SerializerMethodField()
+    active_members_count = serializers.SerializerMethodField()
+    inventory_count = serializers.SerializerMethodField()
+    order_count = serializers.SerializerMethodField()
+    sale_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Shop
+        fields = '__all__'
+        read_only_fields = ('created_at', 'updated_at')
+
+    def get_member_count(self, obj):
+        return obj.members.count()
+
+    def get_active_members_count(self, obj):
+        return obj.members.filter(is_active=True).count()
+
+    def get_inventory_count(self, obj):
+        return obj.inventory.count()
+
+    def get_order_count(self, obj):
+        return obj.orders.count()
+
+    def get_sale_count(self, obj):
+        return obj.sales.count()
+
+
+class AdminAnimalOverviewSerializer(serializers.ModelSerializer):
+    """Serializer for admin animal traceability overview"""
+    farmer_name = serializers.CharField(source='farmer.username', read_only=True)
+    processing_unit_name = serializers.CharField(source='transferred_to.name', read_only=True)
+    lifecycle_status = serializers.ReadOnlyField()
+    has_rejections = serializers.SerializerMethodField()
+    has_appeals = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Animal
+        fields = [
+            'id', 'animal_id', 'animal_name', 'species', 'age', 'live_weight',
+            'farmer_name', 'processing_unit_name', 'slaughtered', 'slaughtered_at',
+            'transferred_at', 'lifecycle_status', 'has_rejections', 'has_appeals',
+            'created_at'
+        ]
+
+    def get_has_rejections(self, obj):
+        return obj.rejection_reasons.exists()
+
+    def get_has_appeals(self, obj):
+        return obj.appeal_status is not None
+
+
+class AdminProductOverviewSerializer(serializers.ModelSerializer):
+    """Serializer for admin product traceability overview"""
+    animal_id = serializers.CharField(source='animal.animal_id', read_only=True)
+    processing_unit_name = serializers.CharField(source='processing_unit.name', read_only=True)
+    transferred_to_name = serializers.CharField(source='transferred_to.name', read_only=True)
+    received_by_shop_name = serializers.CharField(source='received_by_shop.name', read_only=True)
+    category_name = serializers.CharField(source='category.name', read_only=True)
+
+    class Meta:
+        model = Product
+        fields = [
+            'id', 'name', 'batch_number', 'product_type', 'quantity', 'weight',
+            'animal_id', 'processing_unit_name', 'transferred_to_name',
+            'received_by_shop_name', 'category_name', 'created_at', 'transferred_at'
+        ]
+
+
+class AdminAnalyticsSerializer(serializers.Serializer):
+    """Serializer for admin analytics data"""
+    period = serializers.CharField()
+    start_date = serializers.DateField()
+    end_date = serializers.DateField()
+
+    # User metrics
+    new_users_count = serializers.IntegerField()
+    active_users_count = serializers.IntegerField()
+
+    # Entity metrics
+    new_animals_count = serializers.IntegerField()
+    new_products_count = serializers.IntegerField()
+    new_orders_count = serializers.IntegerField()
+    new_sales_count = serializers.IntegerField()
+
+    # Processing metrics
+    processing_efficiency = serializers.DecimalField(max_digits=5, decimal_places=2)
+    transfer_success_rate = serializers.DecimalField(max_digits=5, decimal_places=2)
+
+    # Financial metrics
+    total_sales_value = serializers.DecimalField(max_digits=10, decimal_places=2)
+    average_order_value = serializers.DecimalField(max_digits=10, decimal_places=2)
+
+    # System metrics
+    system_uptime = serializers.DecimalField(max_digits=5, decimal_places=2)
+    error_rate = serializers.DecimalField(max_digits=5, decimal_places=2)
+
+
+class AdminRecentActivitySerializer(serializers.Serializer):
+    """Serializer for recent activity feed in admin dashboard"""
+    activities = serializers.ListField()
+    total_count = serializers.IntegerField()
+    pagination = serializers.DictField()

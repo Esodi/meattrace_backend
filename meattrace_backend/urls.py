@@ -14,7 +14,7 @@ Including another URLconf
     1. Import the include() function: from django.urls import include, path
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
-from django.contrib import admin
+# from django.contrib import admin  # Removed - admin implementation removed from project
 from django.urls import path, include
 from django.views.generic import RedirectView
 from django.conf import settings
@@ -39,9 +39,7 @@ schema_view = get_schema_view(
 )
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
-    # Backwards-compatibility redirect: old app-level admin dashboard paths
-    path('admin/dashboard/', RedirectView.as_view(url='/site-admin/dashboard/', permanent=False)),
+   # Include main app URLs
     path('', include('meat_trace.urls')),
     path('api-token-auth/', authtoken_views.obtain_auth_token),
     # Legacy drf-yasg documentation (keeping for backward compatibility)

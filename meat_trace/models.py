@@ -1,6 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import User
-from django.core.validators import MinValueValidator
+from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils import timezone
 from django.db.models.signals import post_save
 from django.dispatch import receiver
@@ -946,6 +946,349 @@ class JoinRequest(models.Model):
         return f"{self.user.username} -> {entity_name} ({self.status})"
 
 
+class NotificationTemplate(models.Model):
+    """Model for notification templates with variable substitution"""
+    TEMPLATE_TYPE_CHOICES = [
+        ('email', 'Email'),
+        ('sms', 'SMS'),
+        ('push', 'Push Notification'),
+        ('in_app', 'In-App Notification'),
+    ]
+
+    name = models.CharField(max_length=100, unique=True)
+    template_type = models.CharField(max_length=10, choices=TEMPLATE_TYPE_CHOICES)
+    subject = models.CharField(max_length=200, blank=True, help_text="Email subject (for email templates)")
+    content = models.TextField(help_text="Template content with {{variable}} placeholders")
+    variables = models.JSONField(default=list, help_text="List of available variables for this template")
+
+    # Template metadata
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_templates')
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.template_type}: {self.name}"
+
+    def render_content(self, context):
+        """Render template content with variable substitution"""
+        import re
+        content = self.content
+        for var in self.variables:
+            placeholder = f"{{{{{var}}}}}"
+            value = context.get(var, '')
+            content = content.replace(placeholder, str(value))
+        return content
+
+    def render_subject(self, context):
+        """Render email subject with variable substitution"""
+        if not self.subject:
+            return ""
+        import re
+        subject = self.subject
+        for var in self.variables:
+            placeholder = f"{{{{{var}}}}}"
+            value = context.get(var, '')
+            subject = subject.replace(placeholder, str(value))
+        return subject
+
+
+class NotificationChannel(models.Model):
+    """Model for notification delivery channels"""
+    CHANNEL_TYPE_CHOICES = [
+        ('email', 'Email'),
+        ('sms', 'SMS'),
+        ('push', 'Push Notification'),
+        ('in_app', 'In-App Notification'),
+    ]
+
+    name = models.CharField(max_length=100, unique=True)
+    channel_type = models.CharField(max_length=10, choices=CHANNEL_TYPE_CHOICES)
+    is_active = models.BooleanField(default=True)
+
+    # Channel configuration
+    config = models.JSONField(default=dict, help_text="Channel-specific configuration (API keys, endpoints, etc.)")
+
+    # Rate limiting
+    rate_limit_per_minute = models.PositiveIntegerField(default=60)
+    rate_limit_per_hour = models.PositiveIntegerField(default=1000)
+    rate_limit_per_day = models.PositiveIntegerField(default=10000)
+
+    # Provider settings
+    provider_name = models.CharField(max_length=100, blank=True, help_text="Name of the service provider")
+    provider_config = models.JSONField(default=dict, help_text="Provider-specific configuration")
+
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.channel_type}: {self.name}"
+
+    def is_rate_limited(self, user=None):
+        """Check if channel is rate limited for a user"""
+        from django.utils import timezone
+        from datetime import timedelta
+
+        now = timezone.now()
+        minute_ago = now - timedelta(minutes=1)
+        hour_ago = now - timedelta(hours=1)
+        day_ago = now - timedelta(days=1)
+
+        base_queryset = NotificationDelivery.objects.filter(
+            channel=self,
+            created_at__gte=day_ago
+        )
+
+        if user:
+            base_queryset = base_queryset.filter(recipient=user)
+
+        # Check rate limits
+        minute_count = base_queryset.filter(created_at__gte=minute_ago).count()
+        hour_count = base_queryset.filter(created_at__gte=hour_ago).count()
+        day_count = base_queryset.count()
+
+        return (
+            minute_count >= self.rate_limit_per_minute or
+            hour_count >= self.rate_limit_per_hour or
+            day_count >= self.rate_limit_per_day
+        )
+
+
+class NotificationDelivery(models.Model):
+    """Model for tracking notification delivery attempts and status"""
+    DELIVERY_STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('sent', 'Sent'),
+        ('delivered', 'Delivered'),
+        ('failed', 'Failed'),
+        ('retrying', 'Retrying'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    notification = models.ForeignKey('Notification', on_delete=models.CASCADE, related_name='deliveries')
+    channel = models.ForeignKey(NotificationChannel, on_delete=models.CASCADE)
+    recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notification_deliveries')
+
+    # Delivery details
+    status = models.CharField(max_length=20, choices=DELIVERY_STATUS_CHOICES, default='pending')
+    external_id = models.CharField(max_length=255, blank=True, help_text="External service message ID")
+    error_message = models.TextField(blank=True, help_text="Error message if delivery failed")
+
+    # Retry logic
+    retry_count = models.PositiveIntegerField(default=0)
+    max_retries = models.PositiveIntegerField(default=3)
+    next_retry_at = models.DateTimeField(null=True, blank=True)
+
+    # Timing
+    sent_at = models.DateTimeField(null=True, blank=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    failed_at = models.DateTimeField(null=True, blank=True)
+
+    # Metadata
+    metadata = models.JSONField(default=dict, blank=True, help_text="Delivery-specific metadata")
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['notification', 'status']),
+            models.Index(fields=['channel', 'status']),
+            models.Index(fields=['recipient', 'status']),
+            models.Index(fields=['status', 'next_retry_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.notification.title} -> {self.recipient.username} via {self.channel.name} ({self.status})"
+
+    def can_retry(self):
+        """Check if delivery can be retried"""
+        return (
+            self.status in ['failed', 'pending'] and
+            self.retry_count < self.max_retries and
+            self.notification.expires_at is None or timezone.now() < self.notification.expires_at
+        )
+
+    def mark_sent(self, external_id=None):
+        """Mark delivery as sent"""
+        self.status = 'sent'
+        self.sent_at = timezone.now()
+        if external_id:
+            self.external_id = external_id
+        self.save()
+
+    def mark_delivered(self):
+        """Mark delivery as delivered"""
+        self.status = 'delivered'
+        self.delivered_at = timezone.now()
+        self.save()
+
+    def mark_failed(self, error_message=None):
+        """Mark delivery as failed"""
+        self.status = 'failed'
+        self.failed_at = timezone.now()
+        if error_message:
+            self.error_message = error_message
+        self.retry_count += 1
+
+        # Schedule next retry if possible
+        if self.can_retry():
+            self.status = 'retrying'
+            # Exponential backoff: 5 minutes * 2^retry_count
+            delay_minutes = 5 * (2 ** self.retry_count)
+            self.next_retry_at = timezone.now() + timezone.timedelta(minutes=delay_minutes)
+
+        self.save()
+
+
+class NotificationRateLimit(models.Model):
+    """Model for tracking rate limiting per user/channel"""
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='rate_limits')
+    channel = models.ForeignKey(NotificationChannel, on_delete=models.CASCADE)
+
+    # Rate limit counters
+    minute_count = models.PositiveIntegerField(default=0)
+    hour_count = models.PositiveIntegerField(default=0)
+    day_count = models.PositiveIntegerField(default=0)
+
+    # Reset timestamps
+    minute_reset = models.DateTimeField(default=timezone.now)
+    hour_reset = models.DateTimeField(default=timezone.now)
+    day_reset = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        unique_together = ['user', 'channel']
+        indexes = [
+            models.Index(fields=['user', 'channel']),
+            models.Index(fields=['minute_reset']),
+            models.Index(fields=['hour_reset']),
+            models.Index(fields=['day_reset']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.username} - {self.channel.name} rate limits"
+
+    def reset_if_needed(self):
+        """Reset counters if time windows have passed"""
+        now = timezone.now()
+
+        if now >= self.minute_reset + timezone.timedelta(minutes=1):
+            self.minute_count = 0
+            self.minute_reset = now
+
+        if now >= self.hour_reset + timezone.timedelta(hours=1):
+            self.hour_count = 0
+            self.hour_reset = now
+
+        if now >= self.day_reset + timezone.timedelta(days=1):
+            self.day_count = 0
+            self.day_reset = now
+
+        self.save()
+
+    def increment_and_check(self):
+        """Increment counters and check if limit exceeded"""
+        self.reset_if_needed()
+
+        self.minute_count += 1
+        self.hour_count += 1
+        self.day_count += 1
+        self.save()
+
+        return (
+            self.minute_count > self.channel.rate_limit_per_minute or
+            self.hour_count > self.channel.rate_limit_per_hour or
+            self.day_count > self.channel.rate_limit_per_day
+        )
+
+
+class NotificationSchedule(models.Model):
+    """Model for scheduling notifications"""
+    SCHEDULE_TYPE_CHOICES = [
+        ('one_time', 'One Time'),
+        ('recurring', 'Recurring'),
+    ]
+
+    FREQUENCY_CHOICES = [
+        ('daily', 'Daily'),
+        ('weekly', 'Weekly'),
+        ('monthly', 'Monthly'),
+    ]
+
+    title = models.CharField(max_length=200)
+    schedule_type = models.CharField(max_length=10, choices=SCHEDULE_TYPE_CHOICES, default='one_time')
+
+    # Recipients
+    recipient_users = models.ManyToManyField(User, blank=True, related_name='scheduled_notifications')
+    recipient_groups = models.JSONField(default=list, blank=True, help_text="Groups to send to (e.g., ['farmers', 'processors'])")
+
+    # Content
+    notification_type = models.CharField(max_length=30, choices=[
+        ('join_request', 'Join Request'),
+        ('join_approved', 'Join Request Approved'),
+        ('join_rejected', 'Join Request Rejected'),
+        ('invitation', 'User Invitation'),
+        ('role_change', 'Role Changed'),
+        ('profile_update', 'Profile Update Required'),
+        ('verification', 'Account Verification'),
+        ('animal_rejected', 'Animal Rejected'),
+        ('part_rejected', 'Slaughter Part Rejected'),
+        ('appeal_submitted', 'Appeal Submitted'),
+        ('appeal_approved', 'Appeal Approved'),
+        ('appeal_denied', 'Appeal Denied'),
+        ('system_alert', 'System Alert'),
+        ('maintenance', 'Maintenance Notice'),
+        ('custom', 'Custom Notification'),
+    ])
+    title_template = models.CharField(max_length=200)
+    message_template = models.TextField()
+    template_variables = models.JSONField(default=dict, blank=True)
+
+    # Scheduling
+    scheduled_at = models.DateTimeField(null=True, blank=True)
+    frequency = models.CharField(max_length=10, choices=FREQUENCY_CHOICES, null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    # Channels
+    channels = models.ManyToManyField(NotificationChannel, blank=True)
+
+    # Metadata
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_schedules')
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-scheduled_at']
+
+    def __str__(self):
+        return f"{self.schedule_type}: {self.title}"
+
+    def should_send_now(self):
+        """Check if notification should be sent now"""
+        if not self.is_active:
+            return False
+
+        now = timezone.now()
+
+        if self.schedule_type == 'one_time':
+            return self.scheduled_at and now >= self.scheduled_at
+        elif self.schedule_type == 'recurring':
+            # For recurring, check if it's time based on frequency
+            # This is a simplified implementation
+            if self.frequency == 'daily':
+                return now.hour == self.scheduled_at.hour and now.minute == self.scheduled_at.minute
+            elif self.frequency == 'weekly':
+                return (now.weekday() == self.scheduled_at.weekday() and
+                       now.hour == self.scheduled_at.hour and
+                       now.minute == self.scheduled_at.minute)
+            elif self.frequency == 'monthly':
+                return (now.day == self.scheduled_at.day and
+                       now.hour == self.scheduled_at.hour and
+                       now.minute == self.scheduled_at.minute)
+
+        return False
+
+
 class Notification(models.Model):
     """Model for system notifications"""
     NOTIFICATION_TYPE_CHOICES = [
@@ -961,6 +1304,9 @@ class Notification(models.Model):
         ('appeal_submitted', 'Appeal Submitted'),
         ('appeal_approved', 'Appeal Approved'),
         ('appeal_denied', 'Appeal Denied'),
+        ('system_alert', 'System Alert'),
+        ('maintenance', 'Maintenance Notice'),
+        ('custom', 'Custom Notification'),
     ]
 
     PRIORITY_CHOICES = [
@@ -996,6 +1342,10 @@ class Notification(models.Model):
     group_key = models.CharField(max_length=100, blank=True, help_text="Groups related notifications together")
     is_batch_notification = models.BooleanField(default=False, help_text="Indicates if this is part of a batch notification")
 
+    # Template and scheduling
+    template = models.ForeignKey(NotificationTemplate, on_delete=models.SET_NULL, null=True, blank=True)
+    schedule = models.ForeignKey(NotificationSchedule, on_delete=models.SET_NULL, null=True, blank=True)
+
     is_read = models.BooleanField(default=False)
     read_at = models.DateTimeField(null=True, blank=True)
 
@@ -1015,10 +1365,51 @@ class Notification(models.Model):
             models.Index(fields=['user', 'is_archived']),
             models.Index(fields=['priority', 'created_at']),
             models.Index(fields=['group_key', 'created_at']),
+            models.Index(fields=['notification_type', 'created_at']),
         ]
 
     def __str__(self):
         return f"{self.notification_type} for {self.user.username}: {self.title}"
+
+    def send_via_channels(self, channels=None):
+        """Send notification via specified channels"""
+        from .utils.notification_service import NotificationService
+
+        if channels is None:
+            # Default channels based on notification type and priority
+            channels = self._get_default_channels()
+
+        for channel in channels:
+            NotificationService.send_via_channel(self, channel)
+
+    def _get_default_channels(self):
+        """Get default channels for this notification"""
+        channels = []
+
+        # Always include in-app
+        try:
+            in_app_channel = NotificationChannel.objects.get(channel_type='in_app', is_active=True)
+            channels.append(in_app_channel)
+        except NotificationChannel.DoesNotExist:
+            pass
+
+        # Add email for high priority notifications
+        if self.priority in ['high', 'urgent']:
+            try:
+                email_channel = NotificationChannel.objects.get(channel_type='email', is_active=True)
+                channels.append(email_channel)
+            except NotificationChannel.DoesNotExist:
+                pass
+
+        # Add SMS for urgent notifications
+        if self.priority == 'urgent':
+            try:
+                sms_channel = NotificationChannel.objects.get(channel_type='sms', is_active=True)
+                channels.append(sms_channel)
+            except NotificationChannel.DoesNotExist:
+                pass
+
+        return channels
 
 
 class Activity(models.Model):
@@ -1847,6 +2238,1015 @@ class SaleItem(models.Model):
         # Auto-calculate subtotal
         self.subtotal = self.quantity * self.unit_price
         super().save(*args, **kwargs)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# COMPLIANCE AND AUDIT MODELS
+# ══════════════════════════════════════════════════════════════════════════════
+
+class ComplianceStatus(models.Model):
+    """Model for tracking compliance status of entities (processing units, shops, products)"""
+
+    ENTITY_TYPE_CHOICES = [
+        ('processing_unit', 'Processing Unit'),
+        ('shop', 'Shop'),
+        ('product', 'Product'),
+        ('animal', 'Animal'),
+        ('user', 'User'),
+    ]
+
+    COMPLIANCE_LEVEL_CHOICES = [
+        ('compliant', 'Compliant'),
+        ('warning', 'Warning'),
+        ('non_compliant', 'Non-Compliant'),
+        ('critical', 'Critical Violation'),
+    ]
+
+    # Entity being tracked
+    entity_type = models.CharField(max_length=20, choices=ENTITY_TYPE_CHOICES)
+    entity_id = models.PositiveIntegerField(help_text="ID of the entity being tracked")
+
+    # Compliance details
+    compliance_level = models.CharField(max_length=20, choices=COMPLIANCE_LEVEL_CHOICES, default='compliant')
+    compliance_score = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0), MaxValueValidator(100)], help_text="Compliance score (0-100)")
+
+    # Issues and violations
+    issues_count = models.PositiveIntegerField(default=0, help_text="Number of compliance issues")
+    critical_issues_count = models.PositiveIntegerField(default=0, help_text="Number of critical compliance issues")
+    last_violation_date = models.DateTimeField(null=True, blank=True, help_text="Date of last compliance violation")
+
+    # Compliance requirements
+    required_certifications = models.JSONField(default=list, help_text="List of required certifications")
+    obtained_certifications = models.JSONField(default=list, help_text="List of obtained certifications")
+    certification_expiry_dates = models.JSONField(default=dict, help_text="Certification expiry dates")
+
+    # Traceability compliance
+    traceability_score = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0), MaxValueValidator(100)], default=100, help_text="Traceability compliance score")
+    documentation_completeness = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0), MaxValueValidator(100)], default=100, help_text="Documentation completeness score")
+
+    # Quality compliance
+    quality_score = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0), MaxValueValidator(100)], default=100, help_text="Quality compliance score")
+    safety_score = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0), MaxValueValidator(100)], default=100, help_text="Safety compliance score")
+
+    # Metadata
+    last_audit_date = models.DateTimeField(null=True, blank=True, help_text="Date of last compliance audit")
+    next_audit_due = models.DateTimeField(null=True, blank=True, help_text="Date when next audit is due")
+    audit_frequency_days = models.PositiveIntegerField(default=90, help_text="Audit frequency in days")
+
+    # Status tracking
+    is_active = models.BooleanField(default=True, help_text="Whether this compliance record is active")
+    status_updated_at = models.DateTimeField(auto_now=True)
+    status_updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='compliance_status_updates')
+
+    # Additional data
+    compliance_notes = models.TextField(blank=True, null=True, help_text="Additional compliance notes")
+    metadata = models.JSONField(default=dict, blank=True, help_text="Additional compliance metadata")
+
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ['entity_type', 'entity_id']
+        indexes = [
+            models.Index(fields=['entity_type', 'compliance_level']),
+            models.Index(fields=['compliance_level', 'last_violation_date']),
+            models.Index(fields=['next_audit_due', 'is_active']),
+            models.Index(fields=['compliance_score']),
+            models.Index(fields=['traceability_score']),
+            models.Index(fields=['quality_score']),
+            models.Index(fields=['safety_score']),
+        ]
+
+    def __str__(self):
+        return f"{self.entity_type} {self.entity_id} - {self.compliance_level} ({self.compliance_score}%)"
+
+    def calculate_overall_score(self):
+        """Calculate overall compliance score based on component scores"""
+        weights = {
+            'traceability': 0.4,
+            'documentation': 0.3,
+            'quality': 0.15,
+            'safety': 0.15
+        }
+
+        overall_score = (
+            self.traceability_score * weights['traceability'] +
+            self.documentation_completeness * weights['documentation'] +
+            self.quality_score * weights['quality'] +
+            self.safety_score * weights['safety']
+        )
+
+        self.compliance_score = round(overall_score, 2)
+
+        # Update compliance level based on score
+        if self.compliance_score >= 90:
+            self.compliance_level = 'compliant'
+        elif self.compliance_score >= 70:
+            self.compliance_level = 'warning'
+        elif self.compliance_score >= 50:
+            self.compliance_level = 'non_compliant'
+        else:
+            self.compliance_level = 'critical'
+
+        return self.compliance_score
+
+    def update_certification_status(self):
+        """Update certification compliance based on expiry dates"""
+        from datetime import timedelta
+        now = timezone.now()
+        warning_period = timedelta(days=30)  # Warn 30 days before expiry
+
+        expired_certs = []
+        expiring_soon_certs = []
+
+        for cert_name, expiry_date_str in self.certification_expiry_dates.items():
+            try:
+                expiry_date = timezone.datetime.fromisoformat(expiry_date_str.replace('Z', '+00:00'))
+                if expiry_date < now:
+                    expired_certs.append(cert_name)
+                elif expiry_date < now + warning_period:
+                    expiring_soon_certs.append(cert_name)
+            except (ValueError, TypeError):
+                continue
+
+        # Update metadata with certification status
+        self.metadata['expired_certifications'] = expired_certs
+        self.metadata['expiring_soon_certifications'] = expiring_soon_certs
+
+        # Adjust compliance score for expired certifications
+        if expired_certs:
+            penalty = min(len(expired_certs) * 20, 50)  # Max 50 point penalty
+            self.compliance_score = max(0, self.compliance_score - penalty)
+            if self.compliance_score < 50:
+                self.compliance_level = 'critical'
+
+
+class AuditTrail(models.Model):
+    """Partitioned model for comprehensive audit trail logging"""
+
+    ACTION_TYPE_CHOICES = [
+        ('create', 'Create'),
+        ('update', 'Update'),
+        ('delete', 'Delete'),
+        ('view', 'View'),
+        ('export', 'Export'),
+        ('login', 'Login'),
+        ('logout', 'Logout'),
+        ('transfer', 'Transfer'),
+        ('reject', 'Reject'),
+        ('approve', 'Approve'),
+        ('audit', 'Audit'),
+        ('compliance_check', 'Compliance Check'),
+        ('system', 'System Action'),
+    ]
+
+    ENTITY_TYPE_CHOICES = [
+        ('user', 'User'),
+        ('animal', 'Animal'),
+        ('slaughter_part', 'Slaughter Part'),
+        ('product', 'Product'),
+        ('processing_unit', 'Processing Unit'),
+        ('shop', 'Shop'),
+        ('order', 'Order'),
+        ('sale', 'Sale'),
+        ('inventory', 'Inventory'),
+        ('system', 'System'),
+    ]
+
+    SEVERITY_CHOICES = [
+        ('low', 'Low'),
+        ('medium', 'Medium'),
+        ('high', 'High'),
+        ('critical', 'Critical'),
+    ]
+
+    # Partitioning field - must be part of primary key for partitioning
+    event_date = models.DateField(help_text="Date of the audit event (used for partitioning)")
+
+    # Audit event details
+    timestamp = models.DateTimeField(default=timezone.now, help_text="Exact timestamp of the event")
+    action_type = models.CharField(max_length=20, choices=ACTION_TYPE_CHOICES)
+    entity_type = models.CharField(max_length=20, choices=ENTITY_TYPE_CHOICES)
+    entity_id = models.PositiveIntegerField(null=True, blank=True, help_text="ID of the entity being audited")
+
+    # User information
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='audit_trail_entries')
+    user_role = models.CharField(max_length=20, blank=True, null=True, help_text="Role of the user at time of action")
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.TextField(blank=True, null=True)
+
+    # Action details
+    action_description = models.TextField(help_text="Description of the action performed")
+    old_values = models.JSONField(default=dict, blank=True, help_text="Previous values before the change")
+    new_values = models.JSONField(default=dict, blank=True, help_text="New values after the change")
+
+    # Compliance and security
+    severity = models.CharField(max_length=10, choices=SEVERITY_CHOICES, default='low')
+    compliance_related = models.BooleanField(default=False, help_text="Whether this action is compliance-related")
+    security_event = models.BooleanField(default=False, help_text="Whether this is a security-related event")
+
+    # Context information
+    processing_unit = models.ForeignKey(ProcessingUnit, on_delete=models.SET_NULL, null=True, blank=True, related_name='audit_trail')
+    shop = models.ForeignKey(Shop, on_delete=models.SET_NULL, null=True, blank=True, related_name='audit_trail')
+
+    # Additional metadata
+    session_id = models.CharField(max_length=100, blank=True, null=True, help_text="User session identifier")
+    request_id = models.CharField(max_length=100, blank=True, null=True, help_text="Request identifier for tracing")
+    api_endpoint = models.CharField(max_length=200, blank=True, null=True, help_text="API endpoint accessed")
+    http_method = models.CharField(max_length=10, blank=True, null=True, help_text="HTTP method used")
+
+    # Audit metadata
+    audit_batch_id = models.CharField(max_length=100, blank=True, null=True, help_text="Batch ID for grouped audit operations")
+    retention_class = models.CharField(max_length=20, default='standard', help_text="Data retention classification")
+
+    # Additional data
+    metadata = models.JSONField(default=dict, blank=True, help_text="Additional audit metadata")
+    tags = models.JSONField(default=list, blank=True, help_text="Tags for categorization and filtering")
+
+    class Meta:
+        ordering = ['-timestamp']
+        # Partitioning by event_date for efficient querying and retention
+        # Note: Actual partitioning is configured in migration files
+        indexes = [
+            models.Index(fields=['event_date', 'timestamp']),
+            models.Index(fields=['entity_type', 'entity_id', 'event_date']),
+            models.Index(fields=['user', 'event_date']),
+            models.Index(fields=['action_type', 'event_date']),
+            models.Index(fields=['severity', 'event_date']),
+            models.Index(fields=['compliance_related', 'event_date']),
+            models.Index(fields=['security_event', 'event_date']),
+            models.Index(fields=['processing_unit', 'event_date']),
+            models.Index(fields=['shop', 'event_date']),
+            models.Index(fields=['retention_class', 'event_date']),
+            models.Index(fields=['audit_batch_id']),
+            models.Index(fields=['session_id']),
+            models.Index(fields=['request_id']),
+        ]
+
+    def __str__(self):
+        user_info = self.user.username if self.user else 'System'
+        return f"{self.action_type} on {self.entity_type} {self.entity_id or ''} by {user_info} at {self.timestamp}"
+
+    def save(self, *args, **kwargs):
+        # Ensure event_date is set from timestamp
+        if not self.event_date:
+            self.event_date = self.timestamp.date()
+
+        # Set user role if user is provided
+        if self.user and not self.user_role:
+            try:
+                self.user_role = self.user.profile.role
+            except:
+                self.user_role = 'Unknown'
+
+        super().save(*args, **kwargs)
+
+    @property
+    def changes_summary(self):
+        """Generate a summary of changes made"""
+        if not self.old_values and not self.new_values:
+            return "No changes recorded"
+
+        changes = []
+        all_keys = set(self.old_values.keys()) | set(self.new_values.keys())
+
+        for key in all_keys:
+            old_val = self.old_values.get(key, 'Not set')
+            new_val = self.new_values.get(key, 'Not set')
+            if old_val != new_val:
+                changes.append(f"{key}: {old_val} → {new_val}")
+
+        return "; ".join(changes) if changes else "No changes detected"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CONFIGURATION MANAGEMENT MODELS
+# ══════════════════════════════════════════════════════════════════════════════
+
+class SystemConfiguration(models.Model):
+    """Model for system-wide configuration settings with versioning and validation"""
+
+    DATA_TYPE_CHOICES = [
+        ('string', 'String'),
+        ('integer', 'Integer'),
+        ('float', 'Float'),
+        ('boolean', 'Boolean'),
+        ('json', 'JSON'),
+    ]
+
+    CATEGORY_CHOICES = [
+        ('general', 'General'),
+        ('database', 'Database'),
+        ('cache', 'Cache'),
+        ('logging', 'Logging'),
+        ('monitoring', 'Monitoring'),
+        ('security', 'Security'),
+        ('api', 'API'),
+        ('notification', 'Notification'),
+    ]
+
+    ENVIRONMENT_CHOICES = [
+        ('development', 'Development'),
+        ('staging', 'Staging'),
+        ('production', 'Production'),
+    ]
+
+    # Configuration key
+    key = models.CharField(max_length=255, unique=True, help_text="Configuration key (e.g., 'database.connection_pool.max_size')")
+
+    # Current value
+    value = models.TextField(help_text="Current configuration value")
+    default_value = models.TextField(blank=True, null=True, help_text="Default value if not set")
+
+    # Metadata
+    data_type = models.CharField(max_length=20, choices=DATA_TYPE_CHOICES, default='string')
+    category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default='general')
+    environment = models.CharField(max_length=20, choices=ENVIRONMENT_CHOICES, default='production')
+
+    # Validation and constraints
+    validation_rules = models.JSONField(default=dict, blank=True, help_text="JSON validation rules (min, max, required, etc.)")
+    is_sensitive = models.BooleanField(default=False, help_text="Whether this config contains sensitive data")
+    requires_restart = models.BooleanField(default=False, help_text="Whether changing this config requires system restart")
+
+    # Description and tags
+    description = models.TextField(blank=True, null=True)
+    tags = models.JSONField(default=list, blank=True, help_text="List of tags for organization")
+
+    # Versioning
+    version = models.PositiveIntegerField(default=1, help_text="Current version number")
+
+    # Audit fields
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_configs')
+    updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='updated_configs')
+
+    class Meta:
+        ordering = ['category', 'key']
+        indexes = [
+            models.Index(fields=['category', 'environment']),
+            models.Index(fields=['key']),
+            models.Index(fields=['is_sensitive']),
+            models.Index(fields=['requires_restart']),
+        ]
+
+    def __str__(self):
+        return f"{self.key} ({self.environment})"
+
+    def save(self, *args, **kwargs):
+        # Increment version on update
+        if self.pk:
+            self.version += 1
+        super().save(*args, **kwargs)
+
+    def get_typed_value(self):
+        """Return the value cast to the appropriate data type"""
+        if self.data_type == 'integer':
+            return int(self.value)
+        elif self.data_type == 'float':
+            return float(self.value)
+        elif self.data_type == 'boolean':
+            return self.value.lower() in ('true', '1', 'yes', 'on')
+        elif self.data_type == 'json':
+            return json.loads(self.value)
+        return self.value
+
+    def validate_value(self, value):
+        """Validate a value against the configuration rules"""
+        rules = self.validation_rules or {}
+
+        if rules.get('required', False) and not value:
+            raise ValueError("Value is required")
+
+        if self.data_type == 'integer':
+            try:
+                int_val = int(value)
+                if 'min' in rules and int_val < rules['min']:
+                    raise ValueError(f"Value must be >= {rules['min']}")
+                if 'max' in rules and int_val > rules['max']:
+                    raise ValueError(f"Value must be <= {rules['max']}")
+            except ValueError:
+                raise ValueError("Value must be a valid integer")
+
+        elif self.data_type == 'float':
+            try:
+                float_val = float(value)
+                if 'min' in rules and float_val < rules['min']:
+                    raise ValueError(f"Value must be >= {rules['min']}")
+                if 'max' in rules and float_val > rules['max']:
+                    raise ValueError(f"Value must be <= {rules['max']}")
+            except ValueError:
+                raise ValueError("Value must be a valid number")
+
+        return True
+
+
+class ConfigurationHistory(models.Model):
+    """Model for tracking configuration changes over time"""
+
+    ACTION_CHOICES = [
+        ('created', 'Created'),
+        ('updated', 'Updated'),
+        ('deleted', 'Deleted'),
+        ('rollback', 'Rolled Back'),
+    ]
+
+    # Related configuration
+    configuration = models.ForeignKey(SystemConfiguration, on_delete=models.CASCADE, related_name='history')
+
+    # Change details
+    action = models.CharField(max_length=20, choices=ACTION_CHOICES)
+    old_value = models.TextField(blank=True, null=True)
+    new_value = models.TextField(blank=True, null=True)
+
+    # Version info
+    version = models.PositiveIntegerField(help_text="Version number at time of change")
+
+    # Change metadata
+    reason = models.TextField(blank=True, null=True, help_text="Reason for the change")
+    validation_status = models.CharField(max_length=20, default='passed', help_text="Validation status of the change")
+    rollback_available = models.BooleanField(default=True, help_text="Whether this change can be rolled back to")
+
+    # Audit
+    changed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='config_changes')
+    changed_at = models.DateTimeField(default=timezone.now)
+
+    # Additional metadata
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ['-changed_at']
+        indexes = [
+            models.Index(fields=['configuration', 'changed_at']),
+            models.Index(fields=['action', 'changed_at']),
+            models.Index(fields=['changed_by', 'changed_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.configuration.key} v{self.version} - {self.action}"
+
+
+class FeatureFlag(models.Model):
+    """Model for feature flags with rollout control and targeting"""
+
+    STATUS_CHOICES = [
+        ('enabled', 'Enabled'),
+        ('disabled', 'Disabled'),
+        ('scheduled', 'Scheduled'),
+    ]
+
+    TARGET_TYPE_CHOICES = [
+        ('all_users', 'All Users'),
+        ('percentage', 'Percentage Rollout'),
+        ('user_list', 'Specific Users'),
+        ('user_segments', 'User Segments'),
+    ]
+
+    # Basic flag info
+    name = models.CharField(max_length=100, unique=True)
+    key = models.CharField(max_length=100, unique=True, help_text="Unique identifier for the feature flag")
+    description = models.TextField(blank=True, null=True)
+
+    # Status and environment
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='disabled')
+    environment = models.CharField(max_length=20, choices=SystemConfiguration.ENVIRONMENT_CHOICES, default='production')
+
+    # Targeting rules
+    target_audience = models.JSONField(default=dict, help_text="""
+    Targeting rules: {
+        "type": "percentage|user_list|user_segments|all_users",
+        "percentage": 50,  # for percentage type
+        "user_ids": [1,2,3],  # for user_list type
+        "user_segments": ["admins", "farmers"],  # for user_segments type
+        "excluded_users": [4,5]  # users to exclude
+    }
+    """)
+
+    # Rollout scheduling
+    rollout_schedule = models.JSONField(default=dict, blank=True, help_text="""
+    Rollout schedule: {
+        "start_date": "2025-11-01T00:00:00Z",
+        "end_date": null,
+        "gradual_rollout": true,
+        "rollout_percentage_per_day": 10
+    }
+    """)
+
+    # Safety features
+    kill_switch_enabled = models.BooleanField(default=True, help_text="Whether this flag can be quickly disabled")
+    monitoring_enabled = models.BooleanField(default=True, help_text="Whether usage is being monitored")
+
+    # Dependencies and relationships
+    dependencies = models.JSONField(default=list, blank=True, help_text="List of feature flag keys this depends on")
+    tags = models.JSONField(default=list, blank=True, help_text="Tags for organization")
+
+    # Versioning
+    version = models.PositiveIntegerField(default=1)
+
+    # Audit
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_flags')
+    updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='updated_flags')
+
+    class Meta:
+        ordering = ['name']
+        indexes = [
+            models.Index(fields=['key']),
+            models.Index(fields=['status', 'environment']),
+            models.Index(fields=['created_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.status})"
+
+    def is_enabled_for_user(self, user):
+        """Check if this feature flag is enabled for a specific user"""
+        if self.status != 'enabled':
+            return False
+
+        audience = self.target_audience or {}
+
+        # Check if user is excluded
+        excluded_users = audience.get('excluded_users', [])
+        if user.id in excluded_users:
+            return False
+
+        target_type = audience.get('type', 'all_users')
+
+        if target_type == 'all_users':
+            return True
+        elif target_type == 'percentage':
+            percentage = audience.get('percentage', 0)
+            # Simple percentage-based rollout using user ID hash
+            return (user.id % 100) < percentage
+        elif target_type == 'user_list':
+            user_ids = audience.get('user_ids', [])
+            return user.id in user_ids
+        elif target_type == 'user_segments':
+            # This would need to be implemented based on user roles/segments
+            # For now, return False as placeholder
+            return False
+
+        return False
+
+    def get_rollout_progress(self):
+        """Get current rollout progress information"""
+        schedule = self.rollout_schedule or {}
+        if not schedule.get('gradual_rollout', False):
+            return {'progress': 100 if self.status == 'enabled' else 0}
+
+        # Calculate progress based on schedule
+        start_date = schedule.get('start_date')
+        end_date = schedule.get('end_date')
+        percentage_per_day = schedule.get('rollout_percentage_per_day', 0)
+
+        if not start_date:
+            return {'progress': 0}
+
+        # This is a simplified calculation - in production you'd want more sophisticated logic
+        return {'progress': 50}  # Placeholder
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DATA MANAGEMENT MODELS
+# ══════════════════════════════════════════════════════════════════════════════
+
+class Backup(models.Model):
+    """Model for tracking system backups with scheduling and status"""
+
+    BACKUP_TYPE_CHOICES = [
+        ('full', 'Full Backup'),
+        ('incremental', 'Incremental Backup'),
+        ('differential', 'Differential Backup'),
+    ]
+
+    STATUS_CHOICES = [
+        ('scheduled', 'Scheduled'),
+        ('running', 'Running'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    # Backup identification
+    name = models.CharField(max_length=200, help_text="Descriptive name for the backup")
+    backup_id = models.CharField(max_length=50, unique=True, editable=False, help_text="Auto-generated unique backup identifier")
+
+    # Backup configuration
+    backup_type = models.CharField(max_length=20, choices=BACKUP_TYPE_CHOICES, default='full')
+    include_database = models.BooleanField(default=True, help_text="Include database in backup")
+    include_files = models.BooleanField(default=True, help_text="Include uploaded files in backup")
+    include_media = models.BooleanField(default=True, help_text="Include media files in backup")
+
+    # Backup scope and filters
+    tables_to_include = models.JSONField(default=list, blank=True, help_text="Specific tables to include (empty means all)")
+    tables_to_exclude = models.JSONField(default=list, blank=True, help_text="Tables to exclude from backup")
+
+    # Status and progress
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='scheduled')
+    progress_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    file_path = models.CharField(max_length=500, blank=True, null=True, help_text="Path to backup file")
+    file_size_bytes = models.BigIntegerField(null=True, blank=True, help_text="Size of backup file in bytes")
+
+    # Timing
+    scheduled_at = models.DateTimeField(null=True, blank=True, help_text="When the backup was scheduled")
+    started_at = models.DateTimeField(null=True, blank=True, help_text="When the backup started")
+    completed_at = models.DateTimeField(null=True, blank=True, help_text="When the backup completed")
+
+    # Error handling
+    error_message = models.TextField(blank=True, null=True, help_text="Error message if backup failed")
+    retry_count = models.PositiveIntegerField(default=0, help_text="Number of retry attempts")
+
+    # Retention and cleanup
+    retention_days = models.PositiveIntegerField(default=30, help_text="How long to keep this backup")
+    is_archived = models.BooleanField(default=False, help_text="Whether backup has been archived")
+    archived_at = models.DateTimeField(null=True, blank=True, help_text="When backup was archived")
+
+    # Audit
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_backups')
+    initiated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='initiated_backups')
+
+    # Metadata
+    metadata = models.JSONField(default=dict, blank=True, help_text="Additional backup metadata")
+    checksum = models.CharField(max_length=128, blank=True, null=True, help_text="Checksum for backup integrity verification")
+
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status', 'created_at']),
+            models.Index(fields=['backup_type', 'status']),
+            models.Index(fields=['scheduled_at', 'status']),
+            models.Index(fields=['is_archived', 'retention_days']),
+            models.Index(fields=['backup_id']),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.backup_type} - {self.status})"
+
+    def save(self, *args, **kwargs):
+        # Generate backup_id if not set
+        if not self.backup_id:
+            self.backup_id = self._generate_backup_id()
+        super().save(*args, **kwargs)
+
+    def _generate_backup_id(self):
+        """Generate a unique backup ID"""
+        return f"BKP_{uuid.uuid4().hex[:12].upper()}"
+
+    @property
+    def duration(self):
+        """Calculate backup duration"""
+        if self.started_at and self.completed_at:
+            return self.completed_at - self.started_at
+        return None
+
+    @property
+    def is_expired(self):
+        """Check if backup has expired based on retention policy"""
+        if not self.retention_days:
+            return False
+        expiry_date = self.created_at + timezone.timedelta(days=self.retention_days)
+        return timezone.now() > expiry_date
+
+    @property
+    def file_size_mb(self):
+        """Get file size in MB"""
+        if self.file_size_bytes:
+            return round(self.file_size_bytes / (1024 * 1024), 2)
+        return None
+
+
+class DataExport(models.Model):
+    """Model for tracking data export operations"""
+
+    EXPORT_FORMAT_CHOICES = [
+        ('csv', 'CSV'),
+        ('json', 'JSON'),
+        ('xml', 'XML'),
+        ('excel', 'Excel'),
+    ]
+
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('running', 'Running'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    # Export identification
+    name = models.CharField(max_length=200, help_text="Descriptive name for the export")
+    export_id = models.CharField(max_length=50, unique=True, editable=False, help_text="Auto-generated unique export identifier")
+
+    # Export configuration
+    export_format = models.CharField(max_length=10, choices=EXPORT_FORMAT_CHOICES, default='csv')
+    include_related_data = models.BooleanField(default=True, help_text="Include related/foreign key data")
+
+    # Data scope
+    models_to_export = models.JSONField(default=list, blank=True, help_text="Specific models to export (empty means all)")
+    filters = models.JSONField(default=dict, blank=True, help_text="Filters to apply to exported data")
+    date_range_start = models.DateTimeField(null=True, blank=True, help_text="Start date for data filtering")
+    date_range_end = models.DateTimeField(null=True, blank=True, help_text="End date for data filtering")
+
+    # Status and progress
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    progress_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    records_exported = models.PositiveIntegerField(default=0, help_text="Number of records exported")
+    file_path = models.CharField(max_length=500, blank=True, null=True, help_text="Path to exported file")
+    file_size_bytes = models.BigIntegerField(null=True, blank=True, help_text="Size of exported file in bytes")
+
+    # Timing
+    scheduled_at = models.DateTimeField(null=True, blank=True, help_text="When the export was scheduled")
+    started_at = models.DateTimeField(null=True, blank=True, help_text="When the export started")
+    completed_at = models.DateTimeField(null=True, blank=True, help_text="When the export completed")
+
+    # Error handling
+    error_message = models.TextField(blank=True, null=True, help_text="Error message if export failed")
+
+    # Audit
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_exports')
+    initiated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='initiated_exports')
+
+    # Metadata
+    metadata = models.JSONField(default=dict, blank=True, help_text="Additional export metadata")
+
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status', 'created_at']),
+            models.Index(fields=['export_format', 'status']),
+            models.Index(fields=['scheduled_at', 'status']),
+            models.Index(fields=['export_id']),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.export_format} - {self.status})"
+
+    def save(self, *args, **kwargs):
+        # Generate export_id if not set
+        if not self.export_id:
+            self.export_id = self._generate_export_id()
+        super().save(*args, **kwargs)
+
+    def _generate_export_id(self):
+        """Generate a unique export ID"""
+        return f"EXP_{uuid.uuid4().hex[:12].upper()}"
+
+
+class DataImport(models.Model):
+    """Model for tracking data import operations"""
+
+    IMPORT_FORMAT_CHOICES = [
+        ('csv', 'CSV'),
+        ('json', 'JSON'),
+        ('xml', 'XML'),
+        ('excel', 'Excel'),
+    ]
+
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('validating', 'Validating'),
+        ('running', 'Running'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    # Import identification
+    name = models.CharField(max_length=200, help_text="Descriptive name for the import")
+    import_id = models.CharField(max_length=50, unique=True, editable=False, help_text="Auto-generated unique import identifier")
+
+    # Import configuration
+    import_format = models.CharField(max_length=10, choices=IMPORT_FORMAT_CHOICES, default='csv')
+    source_file_path = models.CharField(max_length=500, help_text="Path to source file for import")
+    target_model = models.CharField(max_length=100, help_text="Django model to import data into")
+
+    # Import options
+    update_existing = models.BooleanField(default=False, help_text="Update existing records if they match")
+    skip_duplicates = models.BooleanField(default=True, help_text="Skip duplicate records")
+    validate_data = models.BooleanField(default=True, help_text="Validate data before import")
+
+    # Status and progress
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    progress_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    records_processed = models.PositiveIntegerField(default=0, help_text="Number of records processed")
+    records_imported = models.PositiveIntegerField(default=0, help_text="Number of records successfully imported")
+    records_failed = models.PositiveIntegerField(default=0, help_text="Number of records that failed to import")
+
+    # Validation results
+    validation_errors = models.JSONField(default=list, blank=True, help_text="List of validation errors")
+    duplicate_records = models.JSONField(default=list, blank=True, help_text="List of duplicate records found")
+
+    # Timing
+    scheduled_at = models.DateTimeField(null=True, blank=True, help_text="When the import was scheduled")
+    started_at = models.DateTimeField(null=True, blank=True, help_text="When the import started")
+    completed_at = models.DateTimeField(null=True, blank=True, help_text="When the import completed")
+
+    # Error handling
+    error_message = models.TextField(blank=True, null=True, help_text="Error message if import failed")
+
+    # Audit
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_imports')
+    initiated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='initiated_imports')
+
+    # Metadata
+    metadata = models.JSONField(default=dict, blank=True, help_text="Additional import metadata")
+
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status', 'created_at']),
+            models.Index(fields=['import_format', 'status']),
+            models.Index(fields=['target_model', 'status']),
+            models.Index(fields=['scheduled_at', 'status']),
+            models.Index(fields=['import_id']),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.import_format} - {self.status})"
+
+    def save(self, *args, **kwargs):
+        # Generate import_id if not set
+        if not self.import_id:
+            self.import_id = self._generate_import_id()
+        super().save(*args, **kwargs)
+
+    def _generate_import_id(self):
+        """Generate a unique import ID"""
+        return f"IMP_{uuid.uuid4().hex[:12].upper()}"
+
+
+class GDPRRequest(models.Model):
+    """Model for tracking GDPR compliance requests (data deletion, anonymization)"""
+
+    REQUEST_TYPE_CHOICES = [
+        ('data_deletion', 'Data Deletion'),
+        ('data_anonymization', 'Data Anonymization'),
+        ('data_portability', 'Data Portability'),
+        ('access_request', 'Access Request'),
+    ]
+
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('processing', 'Processing'),
+        ('completed', 'Completed'),
+        ('rejected', 'Rejected'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    # Request identification
+    request_id = models.CharField(max_length=50, unique=True, editable=False, help_text="Auto-generated unique request identifier")
+
+    # Request details
+    request_type = models.CharField(max_length=20, choices=REQUEST_TYPE_CHOICES)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='gdpr_requests', help_text="User making the request")
+    justification = models.TextField(blank=True, null=True, help_text="User's justification for the request")
+
+    # Data scope
+    data_categories = models.JSONField(default=list, blank=True, help_text="Categories of data to process")
+    date_range_start = models.DateTimeField(null=True, blank=True, help_text="Start date for data processing")
+    date_range_end = models.DateTimeField(null=True, blank=True, help_text="End date for data processing")
+
+    # Status and progress
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    progress_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+
+    # Processing details
+    processed_data_summary = models.JSONField(default=dict, blank=True, help_text="Summary of data processed")
+    anonymized_fields = models.JSONField(default=list, blank=True, help_text="Fields that were anonymized")
+    deleted_records = models.JSONField(default=list, blank=True, help_text="Records that were deleted")
+
+    # Response
+    admin_notes = models.TextField(blank=True, null=True, help_text="Admin notes on processing")
+    response_message = models.TextField(blank=True, null=True, help_text="Response message to user")
+
+    # Timing
+    requested_at = models.DateTimeField(default=timezone.now, help_text="When the request was made")
+    processed_at = models.DateTimeField(null=True, blank=True, help_text="When the request was processed")
+    completed_at = models.DateTimeField(null=True, blank=True, help_text="When the request was completed")
+
+    # Audit
+    processed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='processed_gdpr_requests')
+
+    # Metadata
+    metadata = models.JSONField(default=dict, blank=True, help_text="Additional GDPR request metadata")
+
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-requested_at']
+        indexes = [
+            models.Index(fields=['status', 'requested_at']),
+            models.Index(fields=['request_type', 'status']),
+            models.Index(fields=['user', 'status']),
+            models.Index(fields=['request_id']),
+        ]
+
+    def __str__(self):
+        return f"GDPR {self.request_type} for {self.user.username} ({self.status})"
+
+    def save(self, *args, **kwargs):
+        # Generate request_id if not set
+        if not self.request_id:
+            self.request_id = self._generate_request_id()
+        super().save(*args, **kwargs)
+
+    def _generate_request_id(self):
+        """Generate a unique GDPR request ID"""
+        return f"GDPR_{uuid.uuid4().hex[:12].upper()}"
+
+
+class DataValidation(models.Model):
+    """Model for tracking data validation and integrity checks"""
+
+    VALIDATION_TYPE_CHOICES = [
+        ('schema_validation', 'Schema Validation'),
+        ('referential_integrity', 'Referential Integrity'),
+        ('data_consistency', 'Data Consistency'),
+        ('business_rules', 'Business Rules'),
+        ('custom_validation', 'Custom Validation'),
+    ]
+
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('running', 'Running'),
+        ('passed', 'Passed'),
+        ('failed', 'Failed'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    # Validation identification
+    name = models.CharField(max_length=200, help_text="Descriptive name for the validation")
+    validation_id = models.CharField(max_length=50, unique=True, editable=False, help_text="Auto-generated unique validation identifier")
+
+    # Validation configuration
+    validation_type = models.CharField(max_length=25, choices=VALIDATION_TYPE_CHOICES)
+    target_models = models.JSONField(default=list, blank=True, help_text="Models to validate")
+    validation_rules = models.JSONField(default=dict, blank=True, help_text="Validation rules and parameters")
+
+    # Status and results
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    progress_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+
+    # Results
+    records_checked = models.PositiveIntegerField(default=0, help_text="Number of records checked")
+    records_passed = models.PositiveIntegerField(default=0, help_text="Number of records that passed validation")
+    records_failed = models.PositiveIntegerField(default=0, help_text="Number of records that failed validation")
+
+    # Error details
+    validation_errors = models.JSONField(default=list, blank=True, help_text="List of validation errors found")
+    error_summary = models.JSONField(default=dict, blank=True, help_text="Summary of validation errors")
+
+    # Timing
+    scheduled_at = models.DateTimeField(null=True, blank=True, help_text="When the validation was scheduled")
+    started_at = models.DateTimeField(null=True, blank=True, help_text="When the validation started")
+    completed_at = models.DateTimeField(null=True, blank=True, help_text="When the validation completed")
+
+    # Error handling
+    error_message = models.TextField(blank=True, null=True, help_text="Error message if validation failed")
+
+    # Audit
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_validations')
+    initiated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='initiated_validations')
+
+    # Metadata
+    metadata = models.JSONField(default=dict, blank=True, help_text="Additional validation metadata")
+
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status', 'created_at']),
+            models.Index(fields=['validation_type', 'status']),
+            models.Index(fields=['scheduled_at', 'status']),
+            models.Index(fields=['validation_id']),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.validation_type} - {self.status})"
+
+    def save(self, *args, **kwargs):
+        # Generate validation_id if not set
+        if not self.validation_id:
+            self.validation_id = self._generate_validation_id()
+        super().save(*args, **kwargs)
+
+    def _generate_validation_id(self):
+        """Generate a unique validation ID"""
+        return f"VAL_{uuid.uuid4().hex[:12].upper()}"
 
 
 @receiver(post_save, sender=Sale)
