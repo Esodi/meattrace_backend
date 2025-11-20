@@ -31,6 +31,13 @@ class RejectionService:
             animal.rejection_notes = rejection_data.get('notes', '')
             animal.rejected_by = rejected_by
             animal.rejected_at = timezone.now()
+            
+            # Clear transfer and receive fields to return animal to farmer
+            animal.transferred_to = None
+            animal.transferred_at = None
+            animal.received_by = None
+            animal.received_at = None
+            
             animal.save()
 
             # Create rejection reason record
@@ -107,6 +114,13 @@ class RejectionService:
             part.rejection_notes = rejection_data.get('notes', '')
             part.rejected_by = rejected_by
             part.rejected_at = timezone.now()
+            
+            # Clear transfer and receive fields to return part to farmer
+            part.transferred_to = None
+            part.transferred_at = None
+            part.received_by = None
+            part.received_at = None
+            
             part.save()
 
             # Create rejection reason record

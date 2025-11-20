@@ -161,9 +161,11 @@ class UserProfile(models.Model):
 def create_user_profile(sender, instance, created, **kwargs):
     """Create UserProfile when a new User is created"""
     if created:
-        UserProfile.objects.create(user=instance)
-        # Note: Profile is created with default role='Farmer'
-        # The role should be updated immediately after user creation by the registration code
+        # If the user is a staff/superuser (created via createsuperuser or admin tools),
+        # create the profile with the Admin role so they are shown correctly in admin dashboards.
+        role = 'Admin' if (getattr(instance, 'is_staff', False) or getattr(instance, 'is_superuser', False)) else 'Farmer'
+        UserProfile.objects.create(user=instance, role=role)
+        # Note: existing registration code can still override this if needed.
 
 
 class UserAuditLog(models.Model):
@@ -346,23 +348,29 @@ class Animal(models.Model):
     @property
     def lifecycle_status(self):
         """
-        Determine the animal's lifecycle status based on four distinct categories:
-        1. HEALTHY - Alive, in good condition, no transfers or processing
-        2. SLAUGHTERED - Processed and no longer alive (but NOT transferred)
-        3. TRANSFERRED - Entire body/all parts completely transferred
-        4. SEMI-TRANSFERRED - Partially transferred (some parts moved, others remain)
+        Determine the animal's lifecycle status based on five distinct categories:
+        1. REJECTED - Animal was rejected by processing unit and returned to farmer
+        2. HEALTHY - Alive, in good condition, no transfers or processing
+        3. SLAUGHTERED - Processed and no longer alive (but NOT transferred)
+        4. TRANSFERRED - Entire body/all parts completely transferred
+        5. SEMI-TRANSFERRED - Partially transferred (some parts moved, others remain)
         
         Priority order:
-        1. Check transfer status first (whole animal or all parts)
-        2. Check for partial transfers
-        3. Check if slaughtered (but not transferred)
-        4. Default to healthy
+        1. Check rejection status first (highest priority)
+        2. Check transfer status (whole animal or all parts)
+        3. Check for partial transfers
+        4. Check if slaughtered (but not transferred)
+        5. Default to healthy
         """
-        # Priority 1: Check if whole animal is transferred
+        # Priority 1: Check if animal is rejected (highest priority)
+        if self.rejection_status == 'rejected':
+            return 'REJECTED'
+        
+        # Priority 2: Check if whole animal is transferred
         if self.transferred_to is not None:
             return 'TRANSFERRED'
         
-        # Priority 2: Check for partial or complete part transfers
+        # Priority 3: Check for partial or complete part transfers
         if self.has_slaughter_parts:
             parts = self.slaughter_parts.all()
             transferred_parts = [p for p in parts if p.transferred_to is not None]
@@ -375,7 +383,7 @@ class Animal(models.Model):
                 else:
                     return 'SEMI-TRANSFERRED'
         
-        # Priority 3: Check if slaughtered (but not transferred)
+        # Priority 4: Check if slaughtered (but not transferred)
         if self.slaughtered:
             return 'SLAUGHTERED'
         

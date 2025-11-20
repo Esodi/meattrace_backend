@@ -36,19 +36,30 @@ def create_slaughter_parts_from_measurement(animal: Animal, measurement: Carcass
         'organs_weight': 'internal_organs',
     }
     
-    # Create parts from individual weight fields
+    # FIX: Get measurements from the measurements JSON field, not direct attributes
+    measurements_data = measurement.measurements if hasattr(measurement, 'measurements') else {}
+    logger.info(f"[CARCASS_PARTS] Measurements data: {measurements_data}")
+    
+    # Create parts from measurements JSON field
     for field_name, part_type in field_to_part_type_map.items():
-        weight = getattr(measurement, field_name, None)
-        if weight is not None and weight > 0:
-            part_id = f"PART_{uuid.uuid4().hex[:12].upper()}"
-            logger.info(f"[CARCASS_PARTS] Creating part: {part_type} with weight {weight}kg (part_id: {part_id})")
-            parts_to_create.append(SlaughterPart(
-                part_id=part_id,
-                animal=animal,
-                part_type=part_type,
-                weight=weight,
-                weight_unit='kg'
-            ))
+        # Check if this measurement exists in the measurements JSON
+        if field_name in measurements_data:
+            measurement_entry = measurements_data[field_name]
+            # Extract weight value from the nested dict structure
+            weight = measurement_entry.get('value') if isinstance(measurement_entry, dict) else measurement_entry
+            weight_unit = measurement_entry.get('unit', 'kg') if isinstance(measurement_entry, dict) else 'kg'
+            
+            if weight is not None and float(weight) > 0:
+                part_id = f"PART_{uuid.uuid4().hex[:12].upper()}"
+                logger.info(f"[CARCASS_PARTS] Creating part: {part_type} with weight {weight}{weight_unit} (part_id: {part_id})")
+                parts_to_create.append(SlaughterPart(
+                    part_id=part_id,
+                    animal=animal,
+                    part_type=part_type,
+                    weight=Decimal(str(weight)),
+                    weight_unit=weight_unit,
+                    remaining_weight=Decimal(str(weight))  # Initialize remaining weight
+                ))
 
     if parts_to_create:
         SlaughterPart.objects.bulk_create(parts_to_create)

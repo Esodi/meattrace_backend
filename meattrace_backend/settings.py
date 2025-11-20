@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'channels',  # WebSocket support
     'rest_framework',
     'rest_framework_simplejwt',
     'rest_framework.authtoken',
@@ -60,6 +61,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'meat_trace.middleware.APILoggingMiddleware',  # Custom API logging
     # 'meat_trace.middleware.AdminAuthenticationMiddleware',  # Removed - admin implementation removed
 ]
 
@@ -85,6 +87,27 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'meattrace_backend.wsgi.application'
+
+# ASGI Application for WebSocket support
+ASGI_APPLICATION = 'meattrace_backend.asgi.application'
+
+# Channel Layers Configuration
+# Using in-memory channel layer for development
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+    },
+}
+
+# For production, use Redis for channel layers:
+# CHANNEL_LAYERS = {
+#     'default': {
+#         'BACKEND': 'channels_redis.core.RedisChannelLayer',
+#         'CONFIG': {
+#             "hosts": [('127.0.0.1', 6379)],
+#         },
+#     },
+# }
 
 
 # Database
@@ -193,6 +216,8 @@ REST_FRAMEWORK = {
     'ORDERING_PARAM': 'ordering',
     # Add drf-spectacular schema generation
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    # Custom exception handler for detailed error logging
+    # 'EXCEPTION_HANDLER': 'meat_trace.exception_handler.custom_exception_handler',
 }
 
 # JWT settings

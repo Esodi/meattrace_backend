@@ -237,15 +237,38 @@ class RealTimeMetricsSerializer(serializers.Serializer):
 
 
 # Existing serializers (keeping for compatibility)
+# NOTE: Order matters to avoid circular imports - define nested serializers first
+
+class SlaughterPartSerializer(serializers.ModelSerializer):
+    animal_id = serializers.CharField(source='animal.animal_id', read_only=True)
+
+    class Meta:
+        model = SlaughterPart
+        fields = '__all__'
+
+
+class CarcassMeasurementSerializer(serializers.ModelSerializer):
+    animal_id = serializers.CharField(source='animal.animal_id', read_only=True)
+
+    class Meta:
+        model = CarcassMeasurement
+        fields = '__all__'
+
 
 class AnimalSerializer(serializers.ModelSerializer):
     farmer_name = serializers.CharField(source='farmer.username', read_only=True)
     processing_unit_name = serializers.CharField(source='transferred_to.name', read_only=True)
     shop_name = serializers.CharField(source='received_by_shop.name', read_only=True)
+    # FIX: Include nested carcass_measurement and slaughter_parts for split carcass detection
+    carcass_measurement = CarcassMeasurementSerializer(read_only=True)
+    slaughter_parts = SlaughterPartSerializer(many=True, read_only=True)
 
     class Meta:
         model = Animal
         fields = '__all__'
+        read_only_fields = ['farmer', 'animal_id', 'created_at', 'slaughtered_at',
+                           'transferred_at', 'received_at', 'rejected_at',
+                           'appealed_at', 'appeal_resolved_at']
 
 
 class ProductSerializer(serializers.ModelSerializer):
@@ -271,22 +294,6 @@ class OrderSerializer(serializers.ModelSerializer):
 class ShopSerializer(serializers.ModelSerializer):
     class Meta:
         model = Shop
-        fields = '__all__'
-
-
-class SlaughterPartSerializer(serializers.ModelSerializer):
-    animal_id = serializers.CharField(source='animal.animal_id', read_only=True)
-
-    class Meta:
-        model = SlaughterPart
-        fields = '__all__'
-
-
-class CarcassMeasurementSerializer(serializers.ModelSerializer):
-    animal_id = serializers.CharField(source='animal.animal_id', read_only=True)
-
-    class Meta:
-        model = CarcassMeasurement
         fields = '__all__'
 
 
@@ -322,12 +329,25 @@ class ProcessingUnitSerializer(serializers.ModelSerializer):
 
 
 class ProcessingUnitUserSerializer(serializers.ModelSerializer):
+    # Add fields with names expected by Flutter app
+    user = serializers.IntegerField(source='user_id', read_only=True)
     user_username = serializers.CharField(source='user.username', read_only=True)
+    user_email = serializers.CharField(source='user.email', read_only=True)
+    processing_unit = serializers.IntegerField(source='processing_unit_id', read_only=True)
     processing_unit_name = serializers.CharField(source='processing_unit.name', read_only=True)
+    invited_by = serializers.IntegerField(source='invited_by_id', read_only=True, allow_null=True)
+    invited_by_username = serializers.CharField(source='invited_by.username', read_only=True, allow_null=True)
 
     class Meta:
         model = ProcessingUnitUser
-        fields = '__all__'
+        fields = [
+            'id', 'user', 'user_username', 'user_email',
+            'processing_unit', 'processing_unit_name',
+            'role', 'permissions', 'granular_permissions',
+            'invited_by', 'invited_by_username', 'invited_at',
+            'joined_at', 'is_active', 'is_suspended', 'suspension_reason',
+            'suspension_date', 'last_active'
+        ]
 
 
 class ShopUserSerializer(serializers.ModelSerializer):
@@ -341,8 +361,13 @@ class ShopUserSerializer(serializers.ModelSerializer):
 
 class JoinRequestSerializer(serializers.ModelSerializer):
     user_username = serializers.CharField(source='user.username', read_only=True)
+    user_email = serializers.CharField(source='user.email', read_only=True)
     processing_unit_name = serializers.CharField(source='processing_unit.name', read_only=True)
     shop_name = serializers.CharField(source='shop.name', read_only=True)
+    
+    # Add these fields for backward compatibility with Flutter app
+    username = serializers.CharField(source='user.username', read_only=True)
+    email = serializers.CharField(source='user.email', read_only=True)
 
     class Meta:
         model = JoinRequest

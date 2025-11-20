@@ -196,3 +196,101 @@ class ProcessingUpdateConsumer(AsyncWebsocketConsumer):
             }
         except:
             return {'role': None, 'processing_unit_id': None}
+
+
+class AuthProgressConsumer(AsyncWebsocketConsumer):
+    """
+    WebSocket consumer for real-time authentication progress updates.
+    Allows unauthenticated users to receive status updates during login/signup.
+    """
+
+    async def connect(self):
+        """Handle WebSocket connection"""
+        # Get session ID from query string (used to identify the auth session)
+        self.session_id = self.scope['url_route']['kwargs'].get('session_id', '')
+        
+        if not self.session_id:
+            await self.close()
+            return
+
+        # Join session-specific group for auth updates
+        self.auth_group = f'auth_progress_{self.session_id}'
+        await self.channel_layer.group_add(
+            self.auth_group,
+            self.channel_name
+        )
+
+        await self.accept()
+        
+        # Send connection confirmation
+        await self.send(text_data=json.dumps({
+            'type': 'connected',
+            'message': 'Connected to authentication progress updates',
+            'session_id': self.session_id
+        }))
+
+    async def disconnect(self, close_code):
+        """Handle WebSocket disconnection"""
+        if hasattr(self, 'auth_group'):
+            await self.channel_layer.group_discard(
+                self.auth_group,
+                self.channel_name
+            )
+
+    async def receive(self, text_data):
+        """Handle incoming messages from client"""
+        try:
+            data = json.loads(text_data)
+            message_type = data.get('type', '')
+            
+            # Echo back acknowledgment
+            if message_type == 'ping':
+                await self.send(text_data=json.dumps({
+                    'type': 'pong',
+                    'timestamp': data.get('timestamp', '')
+                }))
+        except Exception as e:
+            pass  # Silently ignore malformed messages
+
+    async def auth_progress(self, event):
+        """
+        Handle authentication progress events.
+        This method is called when auth status updates are sent.
+        """
+        progress_data = event.get('data', {})
+        
+        await self.send(text_data=json.dumps({
+            'type': 'progress',
+            'step': progress_data.get('step', ''),
+            'message': progress_data.get('message', ''),
+            'status': progress_data.get('status', 'info'),  # info, success, warning, error
+            'timestamp': progress_data.get('timestamp', ''),
+            'details': progress_data.get('details', {})
+        }))
+
+    async def auth_complete(self, event):
+        """
+        Handle authentication completion event.
+        """
+        result_data = event.get('data', {})
+        
+        await self.send(text_data=json.dumps({
+            'type': 'complete',
+            'success': result_data.get('success', False),
+            'message': result_data.get('message', ''),
+            'user': result_data.get('user', {}),
+            'timestamp': result_data.get('timestamp', '')
+        }))
+
+    async def auth_error(self, event):
+        """
+        Handle authentication error event.
+        """
+        error_data = event.get('data', {})
+        
+        await self.send(text_data=json.dumps({
+            'type': 'error',
+            'message': error_data.get('message', 'An error occurred'),
+            'code': error_data.get('code', 'unknown'),
+            'timestamp': error_data.get('timestamp', '')
+        }))

@@ -30,13 +30,12 @@ except Exception:
     # If UserProfileViewSet not present at import time, router registration will be skipped
     pass
 
-# Admin viewsets removed - admin implementation removed from project
-# try:
-#     from .views import AdminProcessingUnitViewSet as ProcessingUnitViewSet
-#     router.register(r'processing-units', ProcessingUnitViewSet, basename='processing-units')
-# except Exception:
-#     # Optional registration
-#     pass
+try:
+    from .views import ProcessingUnitViewSet
+    router.register(r'processing-units', ProcessingUnitViewSet, basename='processing-units')
+except Exception:
+    # Optional registration
+    pass
 
 try:
     from .views import JoinRequestViewSet
@@ -121,51 +120,51 @@ except Exception:
 try:
     from .viewsets import AdminDashboardViewSet
     router.register(r'admin/dashboard', AdminDashboardViewSet, basename='admin-dashboard')
-    print("✓ AdminDashboardViewSet registered successfully")
+    print("[OK] AdminDashboardViewSet registered successfully")
 except Exception as e:
-    print(f"✗ Failed to register AdminDashboardViewSet: {e}")
+    print(f"[ERROR] Failed to register AdminDashboardViewSet: {e}")
 
 try:
     from .viewsets import AdminUserViewSet
     router.register(r'admin/users', AdminUserViewSet, basename='admin-users')
-    print("✓ AdminUserViewSet registered successfully")
+    print("[OK] AdminUserViewSet registered successfully")
 except Exception as e:
-    print(f"✗ Failed to register AdminUserViewSet: {e}")
+    print(f"[ERROR] Failed to register AdminUserViewSet: {e}")
 
 try:
     from .viewsets import AdminProcessingUnitViewSet
     router.register(r'admin/processing-units', AdminProcessingUnitViewSet, basename='admin-processing-units')
-    print("✓ AdminProcessingUnitViewSet registered successfully")
+    print("[OK] AdminProcessingUnitViewSet registered successfully")
 except Exception as e:
-    print(f"✗ Failed to register AdminProcessingUnitViewSet: {e}")
+    print(f"[ERROR] Failed to register AdminProcessingUnitViewSet: {e}")
 
 try:
     from .viewsets import AdminShopViewSet
     router.register(r'admin/shops', AdminShopViewSet, basename='admin-shops')
-    print("✓ AdminShopViewSet registered successfully")
+    print("[OK] AdminShopViewSet registered successfully")
 except Exception as e:
-    print(f"✗ Failed to register AdminShopViewSet: {e}")
+    print(f"[ERROR] Failed to register AdminShopViewSet: {e}")
 
 try:
     from .viewsets import AdminAnimalViewSet
     router.register(r'admin/animals', AdminAnimalViewSet, basename='admin-animals')
-    print("✓ AdminAnimalViewSet registered successfully")
+    print("[OK] AdminAnimalViewSet registered successfully")
 except Exception as e:
-    print(f"✗ Failed to register AdminAnimalViewSet: {e}")
+    print(f"[ERROR] Failed to register AdminAnimalViewSet: {e}")
 
 try:
     from .viewsets import AdminProductViewSet
     router.register(r'admin/products', AdminProductViewSet, basename='admin-products')
-    print("✓ AdminProductViewSet registered successfully")
+    print("[OK] AdminProductViewSet registered successfully")
 except Exception as e:
-    print(f"✗ Failed to register AdminProductViewSet: {e}")
+    print(f"[ERROR] Failed to register AdminProductViewSet: {e}")
 
 try:
     from .viewsets import AdminAnalyticsViewSet
     router.register(r'admin/analytics', AdminAnalyticsViewSet, basename='admin-analytics')
-    print("✓ AdminAnalyticsViewSet registered successfully")
+    print("[OK] AdminAnalyticsViewSet registered successfully")
 except Exception as e:
-    print(f"✗ Failed to register AdminAnalyticsViewSet: {e}")
+    print(f"[ERROR] Failed to register AdminAnalyticsViewSet: {e}")
 
 urlpatterns = [
     # Admin template routes were moved to `meat_trace.admin_urls` so the
@@ -185,46 +184,41 @@ urlpatterns = [
     path('api/v2/auth/token/refresh/', TokenRefreshView.as_view(), name='auth_token_refresh'),
     
     # Public endpoints for registration (no authentication required)
-    # path('api/v2/public/processing-units/', views.public_processing_units_list, name='public_processing_units'),
-    # path('api/v2/public/shops/', views.public_shops_list, name='public_shops'),
+    path('api/v2/public/processing-units/', views.public_processing_units_list, name='public_processing_units'),
+    path('api/v2/public/shops/', views.public_shops_list, name='public_shops'),
 
     # Custom join-request endpoints
-    # path('api/v2/join-requests/create/<int:entity_id>/<str:request_type>/', views.JoinRequestCreateView.as_view(), name='join_request_create'),
-    # path('api/v2/join-requests/review/<int:request_id>/', views.JoinRequestReviewView.as_view(), name='join_request_review'),
+    path('api/v2/join-requests/create/<int:entity_id>/<str:request_type>/', views.JoinRequestCreateView.as_view(), name='join_request_create'),
+    path('api/v2/join-requests/review/<int:request_id>/', views.JoinRequestReviewView.as_view(), name='join_request_review'),
 
-    # User profile endpoint (for compatibility with Flutter app)
-    # path('api/v2/profile/', views.user_profile_view, name='user_profile'),
+    # Dashboard endpoints (generic and role-specific) - MUST BE BEFORE ROUTER
+    path('api/v2/health/', views.health_check, name='health_check'),
+    path('api/v2/dashboard/', views.dashboard_view, name='dashboard'),
+    path('api/v2/activities/', views.activities_view, name='activities'),
+    path('api/v2/farmer/dashboard/', views.farmer_dashboard, name='farmer_dashboard'),
 
-     # Dashboard endpoints (generic and role-specific)
-    # path('api/v2/health/', views.health_check, name='health_check'),
-    # path('api/v2/dashboard/', views.dashboard_view, name='dashboard'),
-    # path('api/v2/activities/', views.activities_view, name='activities'),
-    # path('api/v2/farmer/dashboard/', views.farmer_dashboard, name='farmer_dashboard'),
-
-    # Processing Unit dashboard endpoints
-    # Product info HTML view endpoint
-    # path('api/v2/product-info/view/<int:product_id>/', views.product_info_view, name='product_info_view'),
+    # Product info endpoints
+    path('api/v2/product-info/view/<int:product_id>/', views.product_info_view, name='product_info_view'),
+    path('api/v2/product-info/list/', views.product_info_list_view, name='product_info_list'),
 
     # Processing Unit dashboard endpoints
-    # path('processor/add-product-category/', views.add_product_category, name='add_product_category'),
-    # Processing Unit dashboard endpoints
-    # HTML product info view (renders detailed product page)
-    # path('api/v2/product-info/view/<int:product_id>/', views.product_info_view, name='product_info'),
-    # path('api/v2/product-info/list/', views.product_info_list_view, name='product_info_list'),
+    path('processor/add-product-category/', views.add_product_category, name='add_product_category'),
 
     # Sale info HTML view
-    # path('api/v2/sale-info/view/<int:sale_id>/', views.sale_info_view, name='sale_info_view'),
+    path('api/v2/sale-info/view/<int:sale_id>/', views.sale_info_view, name='sale_info_view'),
 
     # Rejection and appeal endpoints
-    # path('api/v2/rejection-reasons/', views.rejection_reasons_view, name='rejection_reasons'),
+    path('api/v2/rejection-reasons/', views.rejection_reasons_view, name='rejection_reasons'),
+    path('api/v2/appeal-rejection/', views.appeal_rejection_view, name='appeal_rejection'),
+    
     # Production stats and processing pipeline endpoints
-    # path('api/v2/production-stats/', views.production_stats_view, name='production_stats'),
-    # path('api/v2/processing-pipeline/', views.processing_pipeline_view, name='processing_pipeline'),
-    # path('api/v2/appeal-rejection/', views.appeal_rejection_view, name='appeal_rejection'),
+    path('api/v2/production-stats/', views.production_stats_view, name='production_stats'),
+    path('api/v2/processing-pipeline/', views.processing_pipeline_view, name='processing_pipeline'),
+
+    # API router (DRF) - exposes /api/v2/animals/, /api/v2/activities/, /api/v2/profile/, etc.
+    # This MUST come AFTER specific path() declarations to avoid conflicts
+    path('api/v2/', include((router.urls, 'meat_trace'), namespace='api-v2')),
 
     # Legacy/compat endpoint for frontend settings screen to list processing unit users - removed with admin implementation
     # path('api/v2/processing-unit-users/<int:unit_id>/', views.AdminProcessingUnitViewSet.as_view({'get': 'users'}), name='processing-unit-users'),
-
-    # API router (DRF) - exposes /api/v2/animals/, /api/v2/activities/, /api/v2/profile/, etc.
-    path('api/v2/', include((router.urls, 'meat_trace'), namespace='api-v2')),
 ]
