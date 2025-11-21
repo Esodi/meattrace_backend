@@ -859,6 +859,27 @@ class NotificationService:
         )
 
     @staticmethod
+    def notify_product_rejected(processor_user, product, shop, quantity_rejected, rejection_reason):
+        """Send notification to processor when shop rejects a product"""
+        return NotificationService.create_notification(
+            processor_user,
+            'product_rejected',
+            f'Product {product.name} rejected by shop',
+            f'Shop {shop.name} rejected {quantity_rejected} units of {product.name} (Batch: {product.batch_number}). Reason: {rejection_reason}',
+            priority='high',
+            action_type='view',
+            data={
+                'product_id': product.id,
+                'product_name': product.name,
+                'batch_number': product.batch_number,
+                'shop_id': shop.id,
+                'shop_name': shop.name,
+                'quantity_rejected': float(quantity_rejected),
+                'rejection_reason': rejection_reason
+            }
+        )
+
+    @staticmethod
     def notify_appeal_submitted(farmer, item_type, item_id, appeal_notes):
         """Send notification for appeal submission"""
         return NotificationService.create_notification(

@@ -46,18 +46,23 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                         'id': profile.shop.id,
                         'name': profile.shop.name,
                     } if profile.shop else None,
-                    # Check for pending join requests for this user (processing unit/shop)
+                    # Check for pending or rejected join requests for this user (processing unit/shop)
                     'has_pending_join_request': False,
+                    'has_rejected_join_request': False,
                     'pending_join_request': None,
+                    'rejected_join_request': None,
                 }
-                # Determine if there are any pending join requests
+                # Determine if there are any pending or rejected join requests
                 try:
+                    # Check for pending requests first
                     pending_join_request = JoinRequest.objects.filter(
                         user=user,
                         status='pending'
                     ).select_related('processing_unit', 'shop').first()
+                    
                     has_pending_join_request = pending_join_request is not None
                     data['user']['has_pending_join_request'] = has_pending_join_request
+                    
                     if has_pending_join_request:
                         pending_join_request_data = {
                             'processing_unit_name': pending_join_request.processing_unit.name if pending_join_request.processing_unit else None,
@@ -67,10 +72,33 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                             'request_type': pending_join_request.request_type,
                         }
                         data['user']['pending_join_request'] = pending_join_request_data
-                    print(f"[AUTH_LOGIN] has_pending_join_request included in token response: {has_pending_join_request}")
-                except Exception:
+                    
+                    # Check for rejected requests if no pending request
+                    if not has_pending_join_request:
+                        rejected_join_request = JoinRequest.objects.filter(
+                            user=user,
+                            status='rejected'
+                        ).select_related('processing_unit', 'shop').order_by('-updated_at').first()
+                        
+                        has_rejected_join_request = rejected_join_request is not None
+                        data['user']['has_rejected_join_request'] = has_rejected_join_request
+                        
+                        if has_rejected_join_request:
+                            rejected_join_request_data = {
+                                'processing_unit_name': rejected_join_request.processing_unit.name if rejected_join_request.processing_unit else None,
+                                'shop_name': rejected_join_request.shop.name if rejected_join_request.shop else None,
+                                'requested_role': rejected_join_request.requested_role,
+                                'created_at': rejected_join_request.created_at.isoformat() if rejected_join_request.created_at else None,
+                                'updated_at': rejected_join_request.updated_at.isoformat() if rejected_join_request.updated_at else None,
+                                'request_type': rejected_join_request.request_type,
+                                'rejection_reason': rejected_join_request.response_message,
+                            }
+                            data['user']['rejected_join_request'] = rejected_join_request_data
+                            
+                    print(f"[AUTH_LOGIN] has_pending_join_request: {has_pending_join_request}, has_rejected_join_request: {data['user']['has_rejected_join_request']}")
+                except Exception as e:
                     # Do not break login if join request check fails; log and continue
-                    print('[AUTH_LOGIN] Warning: Failed to determine pending join request status')
+                    print(f'[AUTH_LOGIN] Warning: Failed to determine join request status: {e}')
             except UserProfile.DoesNotExist:
                 # If no profile exists, return basic user info
                 data['user'] = {

@@ -24,6 +24,7 @@ from .models import Animal, Product, Receipt, UserProfile, ProductCategory, Proc
 from .farmer_dashboard_serializer import FarmerDashboardSerializer
 from .serializers import AnimalSerializer, ProductSerializer, OrderSerializer, ShopSerializer, SlaughterPartSerializer, ActivitySerializer, ProcessingUnitSerializer, JoinRequestSerializer, ProductCategorySerializer, CarcassMeasurementSerializer, SaleSerializer, SaleItemSerializer, NotificationSerializer, UserProfileSerializer
 from .utils.rejection_service import RejectionService
+from .utils.notification_service import NotificationService
 
 
 class AnimalViewSet(viewsets.ModelViewSet):
@@ -3212,6 +3213,58 @@ class JoinRequestViewSet(viewsets.ModelViewSet):
                 {'error': str(e)},
                 status=status_module.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
+    def destroy(self, request, *args, **kwargs):
+        """Allow users to cancel their own pending or rejected join requests"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.info("=" * 80)
+        logger.info(f"[JOIN_REQUEST_DELETE] User: {request.user.username} (ID: {request.user.id})")
+        logger.info(f"[JOIN_REQUEST_DELETE] Request ID: {kwargs.get('pk')}")
+        
+        try:
+            join_request = self.get_object()
+            
+            # Only allow deletion of own requests
+            if join_request.user != request.user:
+                logger.warning(f"[JOIN_REQUEST_DELETE] User {request.user.username} tried to delete request of {join_request.user.username}")
+                return Response(
+                    {'error': 'You can only cancel your own join requests'},
+                    status=status_module.HTTP_403_FORBIDDEN
+                )
+            
+            # Only allow deletion of pending or rejected requests
+            if join_request.status not in ['pending', 'rejected']:
+                logger.warning(f"[JOIN_REQUEST_DELETE] Attempted to delete {join_request.status} request")
+                return Response(
+                    {'error': f'Cannot cancel {join_request.status} requests. Only pending or rejected requests can be cancelled.'},
+                    status=status_module.HTTP_400_BAD_REQUEST
+                )
+            
+            # Log the deletion details
+            entity_name = join_request.processing_unit.name if join_request.processing_unit else join_request.shop.name
+            logger.info(f"[JOIN_REQUEST_DELETE] Deleting {join_request.status} request to {entity_name}")
+            
+            # Delete the join request
+            join_request.delete()
+            logger.info(f"[JOIN_REQUEST_DELETE] Successfully deleted join request")
+            logger.info("=" * 80)
+            
+            return Response(
+                {'message': 'Join request cancelled successfully'},
+                status=status_module.HTTP_204_NO_CONTENT
+            )
+            
+        except Exception as e:
+            logger.error(f"[JOIN_REQUEST_DELETE] Error deleting join request: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            logger.info("=" * 80)
+            return Response(
+                {'error': str(e)},
+                status=status_module.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class ShopViewSet(viewsets.ModelViewSet):
@@ -3941,6 +3994,33 @@ class ProductViewSet(viewsets.ModelViewSet):
                             product.rejection_status = 'rejected'
                         
                         product.save()
+                        
+                        # Send notification to all active processors in the processing unit
+                        try:
+                            processor_users = ProcessingUnitUser.objects.filter(
+                                processing_unit=product.processing_unit,
+                                is_active=True
+                            ).select_related('user')
+                            
+                            for pu_user in processor_users:
+                                try:
+                                    NotificationService.notify_product_rejected(
+                                        processor_user=pu_user.user,
+                                        product=product,
+                                        shop=user_shop,
+                                        quantity_rejected=quantity_rejected,
+                                        rejection_reason=rejection_reason
+                                    )
+                                except Exception as notif_error:
+                                    # Log error but don't fail the rejection process
+                                    import logging
+                                    logger = logging.getLogger(__name__)
+                                    logger.error(f"Failed to send product rejection notification: {str(notif_error)}")
+                        except Exception as e:
+                            # Log error but don't fail the rejection process
+                            import logging
+                            logger = logging.getLogger(__name__)
+                            logger.error(f"Failed to get processor users for notification: {str(e)}")
                         
                         rejected_products.append({
                             'product_id': product.id,
