@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from .models import (
     Animal, Product, Order, Shop, SlaughterPart, CarcassMeasurement,
     ProductIngredient, UserProfile, ProcessingUnit, ProcessingUnitUser,
@@ -423,13 +424,57 @@ class TransferRequestSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
+class SaleItemWriteSerializer(serializers.ModelSerializer):
+    """Write-only serializer used to accept nested sale item payloads."""
+    class Meta:
+        model = SaleItem
+        fields = ['product', 'quantity', 'unit_price', 'subtotal']
+
+
+
 class SaleSerializer(serializers.ModelSerializer):
     shop_name = serializers.CharField(source='shop.name', read_only=True)
     sold_by_name = serializers.CharField(source='sold_by.username', read_only=True)
 
+    # Accept nested items for creation under this write-only field
+    # Frontend sends 'items' in the request payload
+    items = SaleItemWriteSerializer(many=True, write_only=True, required=False)
+
     class Meta:
         model = Sale
         fields = '__all__'
+
+    def to_representation(self, instance):
+        """Include nested sale items in serialized output."""
+        data = super().to_representation(instance)
+        # Attach items using SaleItemSerializer if available
+        try:
+            data['items'] = SaleItemSerializer(instance.items.all(), many=True).data
+        except Exception:
+            data['items'] = []
+        return data
+
+    def create(self, validated_data):
+        """Create Sale and nested SaleItem records transactionally.
+
+        Expects frontend to send items under the key 'items'.
+        """
+        # Extract items from validated data
+        items_data = validated_data.pop('items', [])
+
+        if not items_data:
+            # Allow creating sales without items but warn (keeps compatibility)
+            # If you want to enforce items, raise a ValidationError here.
+            pass
+
+        with transaction.atomic():
+            sale = Sale.objects.create(**validated_data)
+
+            for item in items_data:
+                # item is a dict containing product (id or instance), quantity, unit_price, subtotal
+                SaleItem.objects.create(sale=sale, **item)
+
+        return sale
 
 
 class SaleItemSerializer(serializers.ModelSerializer):

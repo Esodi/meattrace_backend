@@ -3783,13 +3783,19 @@ class ProductViewSet(viewsets.ModelViewSet):
                     # If pending_receipt parameter is provided, filter further
                     pending_receipt = self.request.query_params.get('pending_receipt')
                     if pending_receipt and pending_receipt.lower() == 'true':
-                        # Only show products transferred to shop but not fully received yet
+                        # Only show products transferred to shop but not fully processed yet
+                        # Exclude products where received + rejected >= total quantity
+                        from django.db.models import ExpressionWrapper, DecimalField
                         queryset = queryset.filter(
                             transferred_to__id__in=user_shop_ids,
                             rejection_status__isnull=True  # Not fully rejected
+                        ).annotate(
+                            total_processed=ExpressionWrapper(
+                                models.F('quantity_received') + models.F('quantity_rejected'),
+                                output_field=DecimalField()
+                            )
                         ).exclude(
-                            Q(quantity_received__gte=models.F('quantity')) |  # Not fully received
-                            Q(quantity_rejected__gte=models.F('quantity'))   # Not fully rejected
+                            total_processed__gte=models.F('quantity')
                         )
                     
                     return queryset
@@ -3805,13 +3811,19 @@ class ProductViewSet(viewsets.ModelViewSet):
                     # If pending_receipt parameter is provided, filter further
                     pending_receipt = self.request.query_params.get('pending_receipt')
                     if pending_receipt and pending_receipt.lower() == 'true':
-                        # Only show products transferred to shop but not fully received yet
+                        # Only show products transferred to shop but not fully processed yet
+                        # Exclude products where received + rejected >= total quantity
+                        from django.db.models import ExpressionWrapper, DecimalField
                         queryset = queryset.filter(
                             transferred_to=profile.shop,
                             rejection_status__isnull=True  # Not fully rejected
+                        ).annotate(
+                            total_processed=ExpressionWrapper(
+                                models.F('quantity_received') + models.F('quantity_rejected'),
+                                output_field=DecimalField()
+                            )
                         ).exclude(
-                            Q(quantity_received__gte=models.F('quantity')) |  # Not fully received
-                            Q(quantity_rejected__gte=models.F('quantity'))   # Not fully rejected
+                            total_processed__gte=models.F('quantity')
                         )
                     
                     return queryset
@@ -3983,17 +3995,74 @@ class ProductViewSet(viewsets.ModelViewSet):
                             )
                             continue
                         
-                        # Update product
-                        product.quantity_rejected += quantity_rejected
-                        product.rejection_reason = rejection_reason
-                        product.rejected_by = request.user
-                        product.rejected_at = timezone.now()
+                        # Determine if this is a full or partial rejection
+                        is_full_rejection = quantity_rejected >= remaining
                         
-                        # If entire product is rejected, mark status as rejected
-                        if product.quantity_rejected >= product.quantity:
+                        if is_full_rejection:
+                            # FULL REJECTION: Reset transfer fields to return product to processor
+                            product.quantity_rejected += quantity_rejected
+                            product.rejection_reason = rejection_reason
+                            product.rejected_by = request.user
+                            product.rejected_at = timezone.now()
                             product.rejection_status = 'rejected'
-                        
-                        product.save()
+                            
+                            # Return product to processor by clearing transfer fields
+                            product.transferred_to = None
+                            product.transferred_at = None
+                            product.save()
+                            
+                            rejection_info = {
+                                'product_id': product.id,
+                                'product_name': product.name,
+                                'quantity_rejected': float(quantity_rejected),
+                                'total_rejected': float(product.quantity_rejected),
+                                'rejection_reason': rejection_reason,
+                                'rejection_status': product.rejection_status,
+                                'rejection_type': 'full'
+                            }
+                        else:
+                            # PARTIAL REJECTION: Create new product for rejected portion
+                            # Update original product (reduce quantity by rejected amount)
+                            original_quantity = product.quantity
+                            product.quantity -= quantity_rejected
+                            product.save()
+                            
+                            # Create new product for rejected portion (returns to processor)
+                            rejected_product = Product.objects.create(
+                                name=product.name,
+                                batch_number=f"{product.batch_number}-REJ",
+                                product_type=product.product_type,
+                                quantity=quantity_rejected,
+                                weight=product.weight * (quantity_rejected / original_quantity) if product.weight else None,
+                                weight_unit=product.weight_unit,
+                                price=product.price,
+                                description=product.description,
+                                processing_unit=product.processing_unit,
+                                animal=product.animal,
+                                slaughter_part=product.slaughter_part,
+                                category=product.category,
+                                # Rejection fields
+                                rejection_status='rejected',
+                                rejection_reason=rejection_reason,
+                                rejected_by=request.user,
+                                rejected_at=timezone.now(),
+                                quantity_rejected=quantity_rejected,
+                                # NOT transferred - returns to processor
+                                transferred_to=None,
+                                transferred_at=None
+                            )
+                            
+                            rejection_info = {
+                                'product_id': product.id,
+                                'product_name': product.name,
+                                'quantity_rejected': float(quantity_rejected),
+                                'total_rejected': float(quantity_rejected),
+                                'rejection_reason': rejection_reason,
+                                'rejection_status': 'rejected',
+                                'rejection_type': 'partial',
+                                'rejected_product_id': rejected_product.id,
+                                'remaining_quantity': float(product.quantity)
+                            }
                         
                         # Send notification to all active processors in the processing unit
                         try:
@@ -4022,14 +4091,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                             logger = logging.getLogger(__name__)
                             logger.error(f"Failed to get processor users for notification: {str(e)}")
                         
-                        rejected_products.append({
-                            'product_id': product.id,
-                            'product_name': product.name,
-                            'quantity_rejected': float(quantity_rejected),
-                            'total_rejected': float(product.quantity_rejected),
-                            'rejection_reason': rejection_reason,
-                            'rejection_status': product.rejection_status
-                        })
+                        rejected_products.append(rejection_info)
                         
                     except Product.DoesNotExist:
                         errors.append(f"Product {product_id} not found")
