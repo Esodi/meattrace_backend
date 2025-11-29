@@ -65,11 +65,11 @@ class AnimalViewSet(viewsets.ModelViewSet):
         ).prefetch_related('slaughter_parts')
 
         # Farmers see their own animals
-        if hasattr(user, 'profile') and user.profile.role == 'farmer':
+        if hasattr(user, 'profile') and user.profile.role == 'Farmer':
             queryset = queryset.filter(farmer=user)
 
         # ProcessingUnit users see animals transferred to ANY processing unit they belong to
-        elif hasattr(user, 'profile') and user.profile.role == 'processing_unit':
+        elif hasattr(user, 'profile') and user.profile.role == 'Processor':
             # Get all processing units the user is a member of
             from .models import ProcessingUnitUser
             user_processing_units = ProcessingUnitUser.objects.filter(
@@ -580,11 +580,11 @@ class SlaughterPartViewSet(viewsets.ModelViewSet):
         queryset = SlaughterPart.objects.all().select_related('animal', 'transferred_to', 'received_by')
 
         # Farmers see parts from their own animals
-        if hasattr(user, 'profile') and user.profile.role == 'farmer':
+        if hasattr(user, 'profile') and user.profile.role == 'Farmer':
             queryset = queryset.filter(animal__farmer=user)
 
         # ProcessingUnit users see parts transferred to or received by them
-        elif hasattr(user, 'profile') and user.profile.role == 'processing_unit':
+        elif hasattr(user, 'profile') and user.profile.role == 'Processor':
             # Get all processing units the user is a member of
             from .models import ProcessingUnitUser
             user_processing_units = ProcessingUnitUser.objects.filter(
@@ -1142,6 +1142,26 @@ def public_shops_list(request):
     return Response({'shops': data})
 
 
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def public_processing_units_for_registration(request):
+    """
+    Public endpoint for browsing processing units during registration.
+    Returns all active processing units without authentication.
+    """
+    try:
+        units = ProcessingUnit.objects.filter(is_active=True).values(
+            'id', 'name', 'description', 'location'
+        )[:200]
+        data = list(units)
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"[PUBLIC_PROCESSING_UNITS_REG] Error: {e}")
+        data = []
+    return Response({'results': data})
+
+
 class JoinRequestCreateView(APIView):
     permission_classes = [AllowAny]
 
@@ -1341,7 +1361,8 @@ def health_check(request):
 @permission_classes([IsAuthenticated])
 def activities_view(request):
     try:
-        acts = Activity.objects.order_by('-created_at')[:50]
+        # Only show activities for the current user
+        acts = Activity.objects.filter(user=request.user).order_by('-created_at')[:50]
         data = ActivitySerializer(acts, many=True).data
     except Exception:
         data = []
@@ -2334,9 +2355,37 @@ class ProcessingUnitViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
 
     def list(self, request):
-        """List all processing units"""
+        """List processing units based on user permissions"""
         try:
-            queryset = ProcessingUnit.objects.all()
+            import logging
+            logger = logging.getLogger(__name__)
+            
+            user = request.user
+            
+            # Log query parameters for debugging
+            logger.info(f"[PROCESSING_UNIT_VIEWSET] Query params: {request.query_params}")
+            
+            # Check if requesting all processing units (for farmers transferring animals)
+            show_all = request.query_params.get('all', 'false').lower() == 'true'
+            logger.info(f"[PROCESSING_UNIT_VIEWSET] show_all: {show_all}")
+            
+            if show_all:
+                # Return all processing units (for transfer selection)
+                queryset = ProcessingUnit.objects.all()
+            else:
+                # Return only processing units the user is a member of (default behavior)
+                user_processing_units = ProcessingUnitUser.objects.filter(
+                    user=user,
+                    is_active=True,
+                    is_suspended=False
+                ).values_list('processing_unit_id', flat=True)
+                
+                if user_processing_units:
+                    queryset = ProcessingUnit.objects.filter(id__in=user_processing_units)
+                else:
+                    # Users not in any processing unit see none
+                    queryset = ProcessingUnit.objects.none()
+            
             serializer = ProcessingUnitSerializer(queryset, many=True)
             # Return paginated-style response for Flutter app compatibility
             return Response({
@@ -3830,14 +3879,12 @@ class ProductViewSet(viewsets.ModelViewSet):
                 
                 return Product.objects.none()
             
-            # Farmer can see products from their animals
-            elif profile.role == 'Farmer':
-                return Product.objects.filter(animal__farmer=user).order_by('-created_at')
-            
-            return Product.objects.all().order_by('-created_at')
+            # Default: no access to products for unknown roles
+            return Product.objects.none()
             
         except UserProfile.DoesNotExist:
-            return Product.objects.all().order_by('-created_at')
+            # Users without profiles should not see any products
+            return Product.objects.none()
 
     @action(detail=False, methods=['post'], url_path='receive_products')
     def receive_products(self, request):
@@ -3899,230 +3946,236 @@ class ProductViewSet(viewsets.ModelViewSet):
                 status=status_module.HTTP_404_NOT_FOUND
             )
         
-        received_products = []
-        rejected_products = []
-        errors = []
-        
         try:
-            with transaction.atomic():
-                # Process receives
-                for receive in receives:
-                    product_id = receive.get('product_id')
-                    quantity_received = Decimal(str(receive.get('quantity_received', 0)))
-                    
-                    if quantity_received <= 0:
-                        errors.append(f"Product {product_id}: quantity_received must be greater than 0")
+            received_products = []
+            rejected_products = []
+            errors = []
+
+
+            # Process receives
+            for receive in receives:
+                product_id = receive.get('product_id')
+                quantity_received = Decimal(str(receive.get('quantity_received', 0)))
+
+                if quantity_received <= 0:
+                    errors.append(f"Product {product_id}: quantity_received must be greater than 0")
+                    continue
+
+                try:
+                    product = Product.objects.get(
+                        id=product_id,
+                        transferred_to=user_shop
+                    )
+
+                    # Validate quantity
+                    total_accounted = product.quantity_received + product.quantity_rejected
+                    remaining = product.quantity - total_accounted
+
+                    if quantity_received > remaining:
+                        errors.append(
+                            f"Product {product_id}: Cannot receive {quantity_received}. "
+                            f"Only {remaining} remaining (Total: {product.quantity}, "
+                            f"Already received: {product.quantity_received}, "
+                            f"Already rejected: {product.quantity_rejected})"
+                        )
                         continue
-                    
-                    try:
-                        product = Product.objects.get(
-                            id=product_id,
-                            transferred_to=user_shop,
-                            rejection_status__isnull=True  # Not rejected
+
+                    # Update product received quantity
+                    product.quantity_received += quantity_received
+                    product.received_by_shop = user_shop
+                    product.received_at = timezone.now()
+                    product.save()
+
+                    received_products.append({
+                        'product_id': product.id,
+                        'product_name': product.name,
+                        'quantity_received': float(quantity_received),
+                        'total_received': float(product.quantity_received)
+                    })
+
+                except Product.DoesNotExist:
+                    errors.append(f"Product {product_id} not found")
+                    continue
+
+            # Process rejections
+            for rejection in rejections:
+                product_id = rejection.get('product_id')
+                quantity_rejected = Decimal(str(rejection.get('quantity_rejected', 0)))
+                rejection_reason = rejection.get('rejection_reason', 'Not specified')
+
+                if quantity_rejected <= 0:
+                    errors.append(f"Product {product_id}: quantity_rejected must be greater than 0")
+                    continue
+
+                try:
+                    product = Product.objects.get(
+                        id=product_id,
+                        transferred_to=user_shop
+                    )
+
+                    # Validate quantity
+                    total_accounted = product.quantity_received + product.quantity_rejected
+                    remaining = product.quantity - total_accounted
+
+                    if quantity_rejected > remaining:
+                        errors.append(
+                            f"Product {product_id}: Cannot reject {quantity_rejected}. "
+                            f"Only {remaining} remaining (Total: {product.quantity}, "
+                            f"Already received: {product.quantity_received}, "
+                            f"Already rejected: {product.quantity_rejected})"
                         )
-                        
-                        # Validate quantity
-                        total_accounted = product.quantity_received + product.quantity_rejected
-                        remaining = product.quantity - total_accounted
-                        
-                        if quantity_received > remaining:
-                            errors.append(
-                                f"Product {product_id}: Cannot receive {quantity_received}. "
-                                f"Only {remaining} remaining (Total: {product.quantity}, "
-                                f"Already received: {product.quantity_received}, "
-                                f"Already rejected: {product.quantity_rejected})"
-                            )
-                            continue
-                        
-                        # Update product
-                        product.quantity_received += quantity_received
-                        
-                        # If fully received, mark as received
-                        if product.quantity_received + product.quantity_rejected >= product.quantity:
-                            product.received_by_shop = user_shop
-                            product.received_at = timezone.now()
-                        
+                        continue
+
+                    # Determine if this is a full or partial rejection
+                    is_full_rejection = quantity_rejected >= remaining
+
+                    if is_full_rejection:
+                        # FULL REJECTION: Reset transfer fields to return product to processor
+                        product.quantity_rejected += quantity_rejected
+                        product.rejection_reason = rejection_reason
+                        product.rejected_by = request.user
+                        product.rejected_at = timezone.now()
+                        product.rejection_status = 'rejected'
+
+                        # Return product to processor by clearing transfer fields
+                        product.transferred_to = None
+                        product.transferred_at = None
                         product.save()
-                        
-                        # Update inventory
-                        inventory, created = Inventory.objects.get_or_create(
-                            shop=user_shop,
-                            product=product,
-                            defaults={'quantity': Decimal('0')}
-                        )
-                        inventory.quantity += quantity_received
-                        inventory.last_updated = timezone.now()
-                        inventory.save()
-                        
-                        received_products.append({
+
+                        rejection_info = {
                             'product_id': product.id,
                             'product_name': product.name,
-                            'quantity_received': float(quantity_received),
-                            'total_received': float(product.quantity_received),
-                            'total_quantity': float(product.quantity)
-                        })
-                        
-                    except Product.DoesNotExist:
-                        errors.append(f"Product {product_id} not found or not available for receipt")
-                        continue
-                
-                # Process rejections
-                for rejection in rejections:
-                    product_id = rejection.get('product_id')
-                    quantity_rejected = Decimal(str(rejection.get('quantity_rejected', 0)))
-                    rejection_reason = rejection.get('rejection_reason', 'Not specified')
-                    
-                    if quantity_rejected <= 0:
-                        errors.append(f"Product {product_id}: quantity_rejected must be greater than 0")
-                        continue
-                    
-                    try:
-                        product = Product.objects.get(
-                            id=product_id,
-                            transferred_to=user_shop
-                        )
-                        
-                        # Validate quantity
-                        total_accounted = product.quantity_received + product.quantity_rejected
-                        remaining = product.quantity - total_accounted
-                        
-                        if quantity_rejected > remaining:
-                            errors.append(
-                                f"Product {product_id}: Cannot reject {quantity_rejected}. "
-                                f"Only {remaining} remaining (Total: {product.quantity}, "
-                                f"Already received: {product.quantity_received}, "
-                                f"Already rejected: {product.quantity_rejected})"
-                            )
-                            continue
-                        
-                        # Determine if this is a full or partial rejection
-                        is_full_rejection = quantity_rejected >= remaining
-                        
-                        if is_full_rejection:
-                            # FULL REJECTION: Reset transfer fields to return product to processor
-                            product.quantity_rejected += quantity_rejected
-                            product.rejection_reason = rejection_reason
-                            product.rejected_by = request.user
-                            product.rejected_at = timezone.now()
-                            product.rejection_status = 'rejected'
-                            
-                            # Return product to processor by clearing transfer fields
-                            product.transferred_to = None
-                            product.transferred_at = None
-                            product.save()
-                            
-                            rejection_info = {
-                                'product_id': product.id,
-                                'product_name': product.name,
-                                'quantity_rejected': float(quantity_rejected),
-                                'total_rejected': float(product.quantity_rejected),
-                                'rejection_reason': rejection_reason,
-                                'rejection_status': product.rejection_status,
-                                'rejection_type': 'full'
-                            }
-                        else:
-                            # PARTIAL REJECTION: Create new product for rejected portion
-                            # Update original product (reduce quantity by rejected amount)
-                            original_quantity = product.quantity
-                            product.quantity -= quantity_rejected
-                            product.save()
-                            
-                            # Create new product for rejected portion (returns to processor)
-                            rejected_product = Product.objects.create(
-                                name=product.name,
-                                batch_number=f"{product.batch_number}-REJ",
-                                product_type=product.product_type,
-                                quantity=quantity_rejected,
-                                weight=product.weight * (quantity_rejected / original_quantity) if product.weight else None,
-                                weight_unit=product.weight_unit,
-                                price=product.price,
-                                description=product.description,
-                                processing_unit=product.processing_unit,
-                                animal=product.animal,
-                                slaughter_part=product.slaughter_part,
-                                category=product.category,
-                                # Rejection fields
-                                rejection_status='rejected',
-                                rejection_reason=rejection_reason,
-                                rejected_by=request.user,
-                                rejected_at=timezone.now(),
-                                quantity_rejected=quantity_rejected,
-                                # NOT transferred - returns to processor
-                                transferred_to=None,
-                                transferred_at=None
-                            )
-                            
-                            rejection_info = {
-                                'product_id': product.id,
-                                'product_name': product.name,
-                                'quantity_rejected': float(quantity_rejected),
-                                'total_rejected': float(quantity_rejected),
-                                'rejection_reason': rejection_reason,
-                                'rejection_status': 'rejected',
-                                'rejection_type': 'partial',
-                                'rejected_product_id': rejected_product.id,
-                                'remaining_quantity': float(product.quantity)
-                            }
-                        
-                        # Send notification to all active processors in the processing unit
-                        try:
-                            processor_users = ProcessingUnitUser.objects.filter(
-                                processing_unit=product.processing_unit,
-                                is_active=True
-                            ).select_related('user')
-                            
-                            for pu_user in processor_users:
-                                try:
-                                    NotificationService.notify_product_rejected(
-                                        processor_user=pu_user.user,
-                                        product=product,
-                                        shop=user_shop,
-                                        quantity_rejected=quantity_rejected,
-                                        rejection_reason=rejection_reason
-                                    )
-                                except Exception as notif_error:
-                                    # Log error but don't fail the rejection process
-                                    import logging
-                                    logger = logging.getLogger(__name__)
-                                    logger.error(f"Failed to send product rejection notification: {str(notif_error)}")
-                        except Exception as e:
-                            # Log error but don't fail the rejection process
-                            import logging
-                            logger = logging.getLogger(__name__)
-                            logger.error(f"Failed to get processor users for notification: {str(e)}")
-                        
-                        rejected_products.append(rejection_info)
-                        
-                    except Product.DoesNotExist:
-                        errors.append(f"Product {product_id} not found")
-                        continue
-                
-                # Create activity log
-                if received_products or rejected_products:
-                    Activity.objects.create(
-                        user=request.user,
-                        activity_type='receive',
-                        title=f'Received/Rejected products at {user_shop.name}',
-                        description=f'Received {len(received_products)} products, Rejected {len(rejected_products)} products',
-                        entity_type='product_receipt',
-                        metadata={
-                            'shop': user_shop.name,
-                            'received_count': len(received_products),
-                            'rejected_count': len(rejected_products)
+                            'quantity_rejected': float(quantity_rejected),
+                            'total_rejected': float(product.quantity_rejected),
+                            'rejection_reason': rejection_reason,
+                            'rejection_status': product.rejection_status,
+                            'rejection_type': 'full'
                         }
-                    )
-                
-                response_data = {
-                    'message': 'Product receipt processed successfully',
-                    'received_products': received_products,
-                    'rejected_products': rejected_products
-                }
-                
-                if errors:
-                    response_data['errors'] = errors
-                
-                return Response(response_data)
-        
+                    else:
+                        # PARTIAL REJECTION: Create new product for rejected portion
+                        # Update original product (reduce quantity by rejected amount)
+                        original_quantity = product.quantity
+                        product.quantity -= quantity_rejected
+                        
+                        # Automatically receive the remaining quantity to mark it as fully processed
+                        # This prevents the product from appearing in the pending list
+                        product.quantity_received = product.quantity
+                        product.received_by_shop = user_shop
+                        product.received_at = timezone.now()
+                        product.save()
+
+                        # Create new product for rejected portion (returns to processor)
+                        rejected_product = Product.objects.create(
+                            name=product.name,
+                            batch_number=f"{product.batch_number}-REJ",
+                            product_type=product.product_type,
+                            quantity=quantity_rejected,
+                            weight=product.weight * (quantity_rejected / original_quantity) if product.weight else None,
+                            weight_unit=product.weight_unit,
+                            price=product.price,
+                            description=product.description,
+                            processing_unit=product.processing_unit,
+                            animal=product.animal,
+                            slaughter_part=product.slaughter_part,
+                            category=product.category,
+                            # Rejection fields
+                            rejection_status='rejected',
+                            rejection_reason=rejection_reason,
+                            rejected_by=request.user,
+                            rejected_at=timezone.now(),
+                            quantity_rejected=quantity_rejected,
+                            # NOT transferred - returns to processor
+                            transferred_to=None,
+                            transferred_at=None
+                        )
+
+                        rejection_info = {
+                            'product_id': product.id,
+                            'product_name': product.name,
+                            'quantity_rejected': float(quantity_rejected),
+                            'total_rejected': float(quantity_rejected),
+                            'rejection_reason': rejection_reason,
+                            'rejection_status': 'rejected',
+                            'rejection_type': 'partial',
+                            'rejected_product_id': rejected_product.id,
+                            'remaining_quantity': float(product.quantity),
+                            'remaining_quantity_auto_received': True
+                        }
+
+                    # Send notification to all active processors in the processing unit
+                    try:
+                        # Get users from ProcessingUnitUser (new system)
+                        processor_users = ProcessingUnitUser.objects.filter(
+                            processing_unit=product.processing_unit,
+                            is_active=True
+                        ).select_related('user')
+
+                        # Also get users from UserProfile (legacy system)
+                        profile_users = UserProfile.objects.filter(
+                            processing_unit=product.processing_unit,
+                            role='Processor'
+                        ).select_related('user')
+
+                        # Combine both sets of users (remove duplicates using set)
+                        all_users = set()
+                        for pu_user in processor_users:
+                            all_users.add(pu_user.user)
+                        for profile in profile_users:
+                            all_users.add(profile.user)
+
+                        # Send notifications to all users
+                        for user in all_users:
+                            try:
+                                NotificationService.notify_product_rejected(
+                                    processor_user=user,
+                                    product=product,
+                                    shop=user_shop,
+                                    quantity_rejected=quantity_rejected,
+                                    rejection_reason=rejection_reason
+                                )
+                            except Exception as notif_error:
+                                # Log error but don't fail the rejection process
+                                import logging
+                                logger = logging.getLogger(__name__)
+                                logger.error(f"Failed to send product rejection notification to {user.username}: {str(notif_error)}")
+                    except Exception as e:
+                        # Log error but don't fail the rejection process
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.error(f"Failed to get processor users for notification: {str(e)}")
+
+                    rejected_products.append(rejection_info)
+
+                except Product.DoesNotExist:
+                    errors.append(f"Product {product_id} not found")
+                    continue
+
+            # Create activity log
+            if received_products or rejected_products:
+                Activity.objects.create(
+                    user=request.user,
+                    activity_type='receive',
+                    title=f'Received/Rejected products at {user_shop.name}',
+                    description=f'Received {len(received_products)} products, Rejected {len(rejected_products)} products',
+                    entity_type='product_receipt',
+                    metadata={
+                        'shop': user_shop.name,
+                        'received_count': len(received_products),
+                        'rejected_count': len(rejected_products)
+                    }
+                )
+
+            response_data = {
+                'message': 'Product receipt processed successfully',
+                'received_products': received_products,
+                'rejected_products': rejected_products
+            }
+
+            if errors:
+                response_data['errors'] = errors
+
+            return Response(response_data)
+
         except Exception as e:
             return Response(
                 {'error': f'Failed to process receipt: {str(e)}'},

@@ -275,7 +275,7 @@ class Animal(models.Model):
     animal_name = models.CharField(max_length=100, blank=True, null=True, help_text="Optional custom animal name or tag")
     breed = models.CharField(max_length=100, blank=True, null=True, help_text="Animal breed")
     abbatoir_name = models.CharField(max_length=100, blank=True, null=True, help_text="Abbatoir name")
-    health_status = models.CharField(max_length=50, blank=True, null=True, help_text="Animal health status (e.g., Healthy, Sick, Under Treatment)")
+    health_status = models.CharField(max_length=50, blank=True, default='healthy', help_text="Animal health status (e.g., healthy, sick, injured, quarantine)")
     processed = models.BooleanField(default=False, help_text="Indicates if the animal has been processed into products")
     photo = models.ImageField(upload_to='animal_photos/', blank=True, null=True, help_text="Animal photo")
 

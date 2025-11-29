@@ -263,6 +263,13 @@ class AnimalSerializer(serializers.ModelSerializer):
     # FIX: Include nested carcass_measurement and slaughter_parts for split carcass detection
     carcass_measurement = CarcassMeasurementSerializer(read_only=True)
     slaughter_parts = SlaughterPartSerializer(many=True, read_only=True)
+    
+    # Add lifecycle status properties as read-only fields
+    lifecycle_status = serializers.ReadOnlyField()
+    is_healthy = serializers.ReadOnlyField()
+    is_slaughtered_status = serializers.ReadOnlyField()
+    is_transferred_status = serializers.ReadOnlyField()
+    is_semi_transferred_status = serializers.ReadOnlyField()
 
     class Meta:
         model = Animal

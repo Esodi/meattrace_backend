@@ -177,25 +177,12 @@ urlpatterns = [
     path('api/v2/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/v2/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
 
-    # Registration and custom auth endpoints
-    path('api/v2/register/', RegisterView.as_view(), name='register'),
-    path('api/v2/auth/register/', RegisterView.as_view(), name='auth_register'),
-    path('api/v2/auth/login/', CustomAuthLoginView.as_view(), name='auth_login'),
-    path('api/v2/auth/token/refresh/', TokenRefreshView.as_view(), name='auth_token_refresh'),
-    
-    # Public endpoints for registration (no authentication required)
-    path('api/v2/public/processing-units/', views.public_processing_units_list, name='public_processing_units'),
-    path('api/v2/public/shops/', views.public_shops_list, name='public_shops'),
-
-    # Custom join-request endpoints
-    path('api/v2/join-requests/create/<int:entity_id>/<str:request_type>/', views.JoinRequestCreateView.as_view(), name='join_request_create'),
-    path('api/v2/join-requests/review/<int:request_id>/', views.JoinRequestReviewView.as_view(), name='join_request_review'),
-
-    # Dashboard endpoints (generic and role-specific) - MUST BE BEFORE ROUTER
     path('api/v2/health/', views.health_check, name='health_check'),
     path('api/v2/dashboard/', views.dashboard_view, name='dashboard'),
     path('api/v2/activities/', views.activities_view, name='activities'),
     path('api/v2/farmer/dashboard/', views.farmer_dashboard, name='farmer_dashboard'),
+    path('api/v2/production-stats/', views.production_stats_view, name='production_stats'),
+    path('api/v2/processing-pipeline/', views.processing_pipeline_view, name='processing_pipeline'),
 
     # Product info endpoints
     path('api/v2/product-info/view/<int:product_id>/', views.product_info_view, name='product_info_view'),
@@ -204,21 +191,10 @@ urlpatterns = [
     # Processing Unit dashboard endpoints
     path('processor/add-product-category/', views.add_product_category, name='add_product_category'),
 
-    # Sale info HTML view
-    path('api/v2/sale-info/view/<int:sale_id>/', views.sale_info_view, name='sale_info_view'),
-
-    # Rejection and appeal endpoints
-    path('api/v2/rejection-reasons/', views.rejection_reasons_view, name='rejection_reasons'),
-    path('api/v2/appeal-rejection/', views.appeal_rejection_view, name='appeal_rejection'),
-    
-    # Production stats and processing pipeline endpoints
-    path('api/v2/production-stats/', views.production_stats_view, name='production_stats'),
-    path('api/v2/processing-pipeline/', views.processing_pipeline_view, name='processing_pipeline'),
-
-    # API router (DRF) - exposes /api/v2/animals/, /api/v2/activities/, /api/v2/profile/, etc.
-    # This MUST come AFTER specific path() declarations to avoid conflicts
-    path('api/v2/', include((router.urls, 'meat_trace'), namespace='api-v2')),
-
-    # Legacy/compat endpoint for frontend settings screen to list processing unit users - removed with admin implementation
     # path('api/v2/processing-unit-users/<int:unit_id>/', views.AdminProcessingUnitViewSet.as_view({'get': 'users'}), name='processing-unit-users'),
+]
+
+# Include router URLs for all registered viewsets
+urlpatterns += [
+    path('api/v2/', include(router.urls)),
 ]
