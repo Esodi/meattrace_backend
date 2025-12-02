@@ -193,7 +193,7 @@ urlpatterns = [
     # Public endpoints (no authentication required for registration flow)
     path('api/v2/public/processing-units/', views.public_processing_units_list, name='public_processing_units'),
     path('api/v2/public/processing-units/registration/', views.public_processing_units_for_registration, name='public_processing_units_registration'),
-    path('api/v2/public/shops/', views.public_shops_list, name='public_shops')
+    path('api/v2/public/shops/', views.public_shops_list, name='public_shops'),
 
     path('api/v2/health/', views.health_check, name='health_check'),
     path('api/v2/dashboard/', views.dashboard_view, name='dashboard'),
