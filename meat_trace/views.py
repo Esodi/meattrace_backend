@@ -724,6 +724,29 @@ class NotificationViewSet(viewsets.ModelViewSet):
                 status=status_module.HTTP_404_NOT_FOUND
             )
 
+    @action(detail=False, methods=['get'], url_path='unread-count')
+    def unread_count(self, request):
+        """Get count of unread notifications for the current user"""
+        count = Notification.objects.filter(
+            user=request.user,
+            is_read=False,
+            is_dismissed=False
+        ).count()
+        return Response({'count': count})
+
+    @action(detail=False, methods=['post'], url_path='mark-all-read')
+    def mark_all_read(self, request):
+        """Mark all notifications as read for the current user"""
+        updated_count = Notification.objects.filter(
+            user=request.user,
+            is_read=False
+        ).update(is_read=True, read_at=timezone.now())
+        
+        return Response({
+            'message': f'Marked {updated_count} notifications as read',
+            'updated_count': updated_count
+        })
+
     @action(detail=False, methods=['post'], url_path='mark-read')
     def mark_read(self, request):
         """Mark notifications as read"""
@@ -4596,6 +4619,81 @@ class ProductCategoryViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """All authenticated users can see all product categories"""
         return ProductCategory.objects.all().order_by('name')
+
+
+class InventoryViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing shop inventory"""
+    permission_classes = [IsAuthenticated]
+    
+    def get_serializer_class(self):
+        from .viewsets import InventorySerializer
+        return InventorySerializer
+    
+    def get_queryset(self):
+        """Filter inventory based on user's shop membership"""
+        user = self.request.user
+        try:
+            profile = user.profile
+            if profile.shop:
+                return Inventory.objects.filter(shop=profile.shop)
+            # Check if user is a ShopUser
+            shop_memberships = user.shop_memberships.filter(is_active=True)
+            if shop_memberships.exists():
+                shop_ids = shop_memberships.values_list('shop_id', flat=True)
+                return Inventory.objects.filter(shop_id__in=shop_ids)
+        except Exception:
+            pass
+        return Inventory.objects.none()
+    
+    @action(detail=False, methods=['get'])
+    def low_stock(self, request):
+        """Get inventory items that are below minimum stock level"""
+        queryset = self.get_queryset()
+        low_stock_items = [item for item in queryset if item.is_low_stock]
+        serializer = self.get_serializer(low_stock_items, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=['post'])
+    def adjust_stock(self, request, pk=None):
+        """Adjust stock quantity for an inventory item"""
+        inventory = self.get_object()
+        adjustment = request.data.get('adjustment', 0)
+        try:
+            adjustment = Decimal(str(adjustment))
+            inventory.quantity += adjustment
+            if inventory.quantity < 0:
+                inventory.quantity = 0
+            inventory.last_updated = timezone.now()
+            inventory.save()
+            serializer = self.get_serializer(inventory)
+            return Response(serializer.data)
+        except Exception as e:
+            return Response({'error': str(e)}, status=400)
+
+
+class ReceiptViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing product receipts"""
+    permission_classes = [IsAuthenticated]
+    
+    def get_serializer_class(self):
+        from .serializers import ReceiptSerializer
+        return ReceiptSerializer
+    
+    def get_queryset(self):
+        """Filter receipts based on user's shop membership"""
+        user = self.request.user
+        try:
+            profile = user.profile
+            if profile.shop:
+                return Receipt.objects.filter(shop=profile.shop).order_by('-received_at')
+            # Check if user is a ShopUser
+            shop_memberships = user.shop_memberships.filter(is_active=True)
+            if shop_memberships.exists():
+                shop_ids = shop_memberships.values_list('shop_id', flat=True)
+                return Receipt.objects.filter(shop_id__in=shop_ids).order_by('-received_at')
+        except Exception:
+            pass
+        return Receipt.objects.none()
 
 
 class SaleViewSet(viewsets.ModelViewSet):

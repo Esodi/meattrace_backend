@@ -486,6 +486,7 @@ class SaleSerializer(serializers.ModelSerializer):
 
 class SaleItemSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source='product.name', read_only=True)
+    batch_number = serializers.CharField(source='product.batch_number', read_only=True)
 
     class Meta:
         model = SaleItem
@@ -771,3 +772,17 @@ class AdminRecentActivitySerializer(serializers.Serializer):
     activities = serializers.ListField()
     total_count = serializers.IntegerField()
     pagination = serializers.DictField()
+
+
+class ReceiptSerializer(serializers.ModelSerializer):
+    """Serializer for product receipts"""
+    product_name = serializers.CharField(source='product.name', read_only=True)
+    product_type = serializers.CharField(source='product.product_type', read_only=True)
+    shop_name = serializers.CharField(source='shop.name', read_only=True)
+
+    class Meta:
+        from .models import Receipt
+        model = Receipt
+        fields = ['id', 'shop', 'shop_name', 'product', 'product_name', 'product_type', 
+                  'received_quantity', 'received_at']
+        read_only_fields = ['received_at']

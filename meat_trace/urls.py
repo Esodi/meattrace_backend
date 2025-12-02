@@ -78,6 +78,20 @@ except Exception as e:
     logger.warning(f"[URL_REGISTRATION] Failed to register SaleViewSet: {e}")
 
 try:
+    from .views import InventoryViewSet
+    router.register(r'inventory', InventoryViewSet, basename='inventory')
+except Exception:
+    # Optional registration
+    pass
+
+try:
+    from .views import ReceiptViewSet
+    router.register(r'receipts', ReceiptViewSet, basename='receipts')
+except Exception:
+    # Optional registration
+    pass
+
+try:
     from .views import NotificationViewSet
     router.register(r'notifications', NotificationViewSet, basename='notifications')
 except Exception as e:
@@ -165,9 +179,12 @@ urlpatterns = [
     path('api/v2/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/v2/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     
-    # Auth endpoints (login and registration)
-    path('api/v2/auth/login/', CustomAuthLoginView.as_view(), name='auth_login'),
+    # User Registration endpoint
     path('api/v2/register/', RegisterView.as_view(), name='register'),
+    
+    # Auth endpoints (login)
+    path('api/v2/auth/login/', CustomAuthLoginView.as_view(), name='auth_login'),
+    path('api/v2/login/', CustomAuthLoginView.as_view(), name='login'),
     
     # User profile endpoint (get current authenticated user info)
     path('api/v2/auth/me/', views.user_profile_view, name='auth_me'),
@@ -176,7 +193,7 @@ urlpatterns = [
     # Public endpoints (no authentication required for registration flow)
     path('api/v2/public/processing-units/', views.public_processing_units_list, name='public_processing_units'),
     path('api/v2/public/processing-units/registration/', views.public_processing_units_for_registration, name='public_processing_units_registration'),
-    path('api/v2/public/shops/', views.public_shops_list, name='public_shops'),
+    path('api/v2/public/shops/', views.public_shops_list, name='public_shops')
 
     path('api/v2/health/', views.health_check, name='health_check'),
     path('api/v2/dashboard/', views.dashboard_view, name='dashboard'),

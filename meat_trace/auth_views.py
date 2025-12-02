@@ -257,9 +257,9 @@ class RegisterView(APIView):
             'processingunit': 'Processor',
             'processing_unit': 'Processor',
             'processor': 'Processor',
-            'shop': 'Shop',
-            'shopowner': 'Shop',
-            'Shop': 'Shop',  # Added explicit capital S mapping
+            'shop': 'ShopOwner',
+            'shopowner': 'ShopOwner',
+            'Shop': 'ShopOwner',  # Added explicit capital S mapping
         }
         normalized_role = role_mapping.get(role.lower(), role)
         print(f"[REGISTRATION] Normalized role: '{normalized_role}' (from '{role}' -> '{role.lower()}')")
