@@ -231,7 +231,8 @@ class AnimalViewSet(viewsets.ModelViewSet):
             with transaction.atomic():
                 # Transfer whole animals
                 if animal_ids:
-                    animals = Animal.objects.filter(
+                    # Use select_for_update to prevent race conditions
+                    animals = Animal.objects.select_for_update().filter(
                         id__in=animal_ids,
                         farmer=request.user,
                         transferred_to__isnull=True  # Not already transferred
@@ -249,7 +250,8 @@ class AnimalViewSet(viewsets.ModelViewSet):
                     
                     for part_transfer in part_transfers:
                         part_ids = part_transfer.get('part_ids', [])
-                        parts = SlaughterPart.objects.filter(
+                        # Use select_for_update to prevent race conditions
+                        parts = SlaughterPart.objects.select_for_update().filter(
                             id__in=part_ids,
                             animal__farmer=request.user,
                             transferred_to__isnull=True  # Not already transferred
@@ -1163,19 +1165,109 @@ def public_processing_units_for_registration(request):
 
 
 class JoinRequestCreateView(APIView):
-    permission_classes = [AllowAny]
+    """
+    API endpoint for creating join requests.
+    Requires authentication - users must be logged in to request to join.
+    """
+    permission_classes = [IsAuthenticated]
 
-    def post(self, request, entity_id, request_type):
-        # Minimal creation flow; full validation should be added later.
-        serializer = JoinRequestSerializer(data={
-            'entity_id': entity_id,
-            'request_type': request_type,
-            'requester': getattr(request.user, 'id', None)
-        })
-        if serializer.is_valid():
-            serializer.save()
+    def post(self, request):
+        """
+        Create a new join request.
+        
+        Expected payload:
+        {
+            "request_type": "processing_unit" or "shop",
+            "processing_unit_id": 1,  # if request_type is processing_unit
+            "shop_id": 1,  # if request_type is shop
+            "requested_role": "worker",
+            "message": "Optional message",
+            "qualifications": "Optional qualifications"
+        }
+        """
+        request_type = request.data.get('request_type')
+        processing_unit_id = request.data.get('processing_unit_id')
+        shop_id = request.data.get('shop_id')
+        requested_role = request.data.get('requested_role', 'worker')
+        message = request.data.get('message', '')
+        qualifications = request.data.get('qualifications', '')
+        
+        # Validate request_type
+        if request_type not in ['processing_unit', 'shop']:
+            return Response(
+                {'error': 'request_type must be either "processing_unit" or "shop"'},
+                status=status_module.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate target entity
+        processing_unit = None
+        shop = None
+        
+        if request_type == 'processing_unit':
+            if not processing_unit_id:
+                return Response(
+                    {'error': 'processing_unit_id is required for processing_unit requests'},
+                    status=status_module.HTTP_400_BAD_REQUEST
+                )
+            try:
+                processing_unit = ProcessingUnit.objects.get(id=processing_unit_id)
+            except ProcessingUnit.DoesNotExist:
+                return Response(
+                    {'error': 'Processing unit not found'},
+                    status=status_module.HTTP_404_NOT_FOUND
+                )
+        else:  # shop
+            if not shop_id:
+                return Response(
+                    {'error': 'shop_id is required for shop requests'},
+                    status=status_module.HTTP_400_BAD_REQUEST
+                )
+            try:
+                shop = Shop.objects.get(id=shop_id)
+            except Shop.DoesNotExist:
+                return Response(
+                    {'error': 'Shop not found'},
+                    status=status_module.HTTP_404_NOT_FOUND
+                )
+        
+        # Check for existing pending request
+        existing_request = JoinRequest.objects.filter(
+            user=request.user,
+            processing_unit=processing_unit,
+            shop=shop,
+            status='pending'
+        ).first()
+        
+        if existing_request:
+            return Response(
+                {'error': 'You already have a pending join request for this entity'},
+                status=status_module.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create the join request
+        try:
+            join_request = JoinRequest.objects.create(
+                user=request.user,
+                request_type=request_type,
+                processing_unit=processing_unit,
+                shop=shop,
+                requested_role=requested_role,
+                message=message,
+                qualifications=qualifications,
+                expires_at=timezone.now() + timezone.timedelta(days=30)  # 30-day expiry
+            )
+            
+            serializer = JoinRequestSerializer(join_request)
             return Response(serializer.data, status=status_module.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status_module.HTTP_400_BAD_REQUEST)
+            
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"[JOIN_REQUEST_CREATE] Error: {e}")
+            return Response(
+                {'error': 'Failed to create join request'},
+                status=status_module.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class JoinRequestReviewView(APIView):
@@ -2001,8 +2093,8 @@ def add_product_category(request):
     return render(request, 'product_info/add_category.html', {})
 
 
-@login_required
 def sale_info_view(request, sale_id):
+    """Public view for sale info - accessible via QR code scanning"""
     try:
         sale = Sale.objects.get(id=sale_id)
     except Exception:
@@ -3017,19 +3109,42 @@ class JoinRequestViewSet(viewsets.ModelViewSet):
             if profile.role == 'Admin':
                 return JoinRequest.objects.all().order_by('-created_at')
             
-            # Processor can see requests for their processing unit
+            # Processor can see requests for all processing units they manage
             elif profile.role == 'Processor':
+                # Get all processing units where user is owner/manager
+                user_pu_ids = ProcessingUnitUser.objects.filter(
+                    user=user,
+                    is_active=True,
+                    is_suspended=False,
+                    role__in=['owner', 'manager']
+                ).values_list('processing_unit_id', flat=True)
+                
+                # Also include the profile's processing_unit if set
                 if profile.processing_unit:
+                    user_pu_ids = list(user_pu_ids) + [profile.processing_unit.id]
+                
+                if user_pu_ids:
                     return JoinRequest.objects.filter(
-                        processing_unit=profile.processing_unit
+                        processing_unit_id__in=user_pu_ids
                     ).order_by('-created_at')
                 return JoinRequest.objects.filter(user=user).order_by('-created_at')
             
-            # Shop owners can see requests for their shop
+            # Shop owners can see requests for all shops they manage
             elif profile.role == 'ShopOwner':
+                # Get all shops where user is owner/manager
+                user_shop_ids = ShopUser.objects.filter(
+                    user=user,
+                    is_active=True,
+                    role__in=['owner', 'manager']
+                ).values_list('shop_id', flat=True)
+                
+                # Also include the profile's shop if set
                 if profile.shop:
+                    user_shop_ids = list(user_shop_ids) + [profile.shop.id]
+                
+                if user_shop_ids:
                     return JoinRequest.objects.filter(
-                        shop=profile.shop
+                        shop_id__in=user_shop_ids
                     ).order_by('-created_at')
                 return JoinRequest.objects.filter(user=user).order_by('-created_at')
             
@@ -3069,6 +3184,17 @@ class JoinRequestViewSet(viewsets.ModelViewSet):
                 logger.warning(f"[JOIN_REQUEST_UPDATE] Join request {join_request.id} is already {join_request.status}, not pending")
                 return Response(
                     {'error': f'Join request is already {join_request.status}'},
+                    status=status_module.HTTP_400_BAD_REQUEST
+                )
+            
+            # Check if request has expired
+            if join_request.expires_at and join_request.expires_at < timezone.now():
+                # Auto-update status to expired
+                join_request.status = 'expired'
+                join_request.save()
+                logger.warning(f"[JOIN_REQUEST_UPDATE] Join request {join_request.id} has expired")
+                return Response(
+                    {'error': 'Join request has expired and cannot be approved or rejected'},
                     status=status_module.HTTP_400_BAD_REQUEST
                 )
             
@@ -3143,6 +3269,17 @@ class JoinRequestViewSet(viewsets.ModelViewSet):
             # If approved, create membership
             if new_status == 'approved':
                 if join_request.processing_unit:
+                    # Deactivate previous processing unit memberships for this user
+                    # (User should only be active in one processing unit at a time based on profile)
+                    previous_memberships = ProcessingUnitUser.objects.filter(
+                        user=join_request.user,
+                        is_active=True
+                    ).exclude(processing_unit=join_request.processing_unit)
+                    
+                    deactivated_count = previous_memberships.update(is_active=False)
+                    if deactivated_count > 0:
+                        logger.info(f"[JOIN_REQUEST_UPDATE] Deactivated {deactivated_count} previous ProcessingUnitUser memberships")
+                    
                     # Create ProcessingUnitUser membership
                     membership, created = ProcessingUnitUser.objects.get_or_create(
                         user=join_request.user,
@@ -3164,10 +3301,10 @@ class JoinRequestViewSet(viewsets.ModelViewSet):
                         # Update user profile
                         try:
                             profile = join_request.user.profile
-                            if not profile.processing_unit:
-                                profile.processing_unit = join_request.processing_unit
-                                profile.save()
-                                logger.info(f"[JOIN_REQUEST_UPDATE] Updated user profile with processing unit")
+                            # Always update profile's processing_unit to the new one
+                            profile.processing_unit = join_request.processing_unit
+                            profile.save()
+                            logger.info(f"[JOIN_REQUEST_UPDATE] Updated user profile with processing unit")
                         except UserProfile.DoesNotExist:
                             logger.warning(f"[JOIN_REQUEST_UPDATE] User profile not found")
                     else:
@@ -3178,6 +3315,17 @@ class JoinRequestViewSet(viewsets.ModelViewSet):
                         membership.save()
                 
                 elif join_request.shop:
+                    # Deactivate previous shop memberships for this user
+                    # (User should only be active in one shop at a time based on profile)
+                    previous_memberships = ShopUser.objects.filter(
+                        user=join_request.user,
+                        is_active=True
+                    ).exclude(shop=join_request.shop)
+                    
+                    deactivated_count = previous_memberships.update(is_active=False)
+                    if deactivated_count > 0:
+                        logger.info(f"[JOIN_REQUEST_UPDATE] Deactivated {deactivated_count} previous ShopUser memberships")
+                    
                     # Create ShopUser membership
                     membership, created = ShopUser.objects.get_or_create(
                         user=join_request.user,
@@ -3198,10 +3346,10 @@ class JoinRequestViewSet(viewsets.ModelViewSet):
                         # Update user profile
                         try:
                             profile = join_request.user.profile
-                            if not profile.shop:
-                                profile.shop = join_request.shop
-                                profile.save()
-                                logger.info(f"[JOIN_REQUEST_UPDATE] Updated user profile with shop")
+                            # Always update profile's shop to the new one
+                            profile.shop = join_request.shop
+                            profile.save()
+                            logger.info(f"[JOIN_REQUEST_UPDATE] Updated user profile with shop")
                         except UserProfile.DoesNotExist:
                             logger.warning(f"[JOIN_REQUEST_UPDATE] User profile not found")
                     else:
@@ -3697,7 +3845,7 @@ class ProductViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     
     def perform_create(self, serializer):
-        """Override to handle weight tracking when creating products"""
+        """Override to handle weight tracking when creating products with race condition protection"""
         from decimal import Decimal
         
         # Get the product weight and related animal/part from request data
@@ -3726,73 +3874,85 @@ class ProductViewSet(viewsets.ModelViewSet):
             product_weight_kg = product_weight
             print(f"✅ [PRODUCT_CREATE] Weight already in kg: {product_weight_kg} kg")
         
-        # Save the product first
-        product = serializer.save()
-        print(f"✅ [PRODUCT_CREATE] Product saved with ID: {product.id}")
-        
-        # Update weight tracking
-        if slaughter_part_id:
-            # Product made from slaughter part - deduct from part's remaining weight
-            try:
-                slaughter_part = SlaughterPart.objects.get(id=slaughter_part_id)
-                print(f"🥩 [PRODUCT_CREATE] Found slaughter part {slaughter_part.id}")
-                print(f"   - Part type: {slaughter_part.part_type}")
-                print(f"   - Total weight: {slaughter_part.weight} {slaughter_part.weight_unit}")
-                print(f"   - Remaining weight BEFORE: {slaughter_part.remaining_weight}")
-                print(f"   - used_in_product flag BEFORE: {slaughter_part.used_in_product}")
-                
-                if slaughter_part.remaining_weight is None:
-                    slaughter_part.remaining_weight = slaughter_part.weight
-                    print(f"   - Initialized remaining_weight to {slaughter_part.remaining_weight}")
-                
-                old_remaining = slaughter_part.remaining_weight
-                slaughter_part.remaining_weight = max(Decimal('0'), slaughter_part.remaining_weight - product_weight_kg)
-                
-                print(f"   - Deducting {product_weight_kg} kg from {old_remaining} kg")
-                print(f"   - Remaining weight AFTER: {slaughter_part.remaining_weight}")
-                
-                # Mark as used if weight is depleted
-                if slaughter_part.remaining_weight <= 0:
-                    slaughter_part.used_in_product = True
-                    print(f"   - ⚠️ Weight depleted! Setting used_in_product = True")
-                else:
-                    print(f"   - ✅ Still has {slaughter_part.remaining_weight} kg remaining")
-                
-                slaughter_part.save()
-                print(f"✅ [PRODUCT_CREATE] Updated slaughter part {slaughter_part.id}: remaining_weight = {slaughter_part.remaining_weight}, used_in_product = {slaughter_part.used_in_product}")
-            except SlaughterPart.DoesNotExist:
-                print(f"❌ [PRODUCT_CREATE] Slaughter part {slaughter_part_id} not found")
-        elif animal_id:
-            # Product made from whole animal - deduct from animal's remaining weight
-            try:
-                animal = Animal.objects.get(id=animal_id)
-                print(f"🐄 [PRODUCT_CREATE] Found animal {animal.id} ({animal.animal_id})")
-                print(f"   - Species: {animal.species}")
-                print(f"   - Live weight: {animal.live_weight} kg")
-                print(f"   - Remaining weight BEFORE: {animal.remaining_weight}")
-                print(f"   - processed flag BEFORE: {animal.processed}")
-                
-                if animal.remaining_weight is None:
-                    animal.remaining_weight = animal.live_weight or Decimal('0')
-                    print(f"   - Initialized remaining_weight to {animal.remaining_weight}")
-                
-                old_remaining = animal.remaining_weight
-                animal.remaining_weight = max(Decimal('0'), animal.remaining_weight - product_weight_kg)
-                
-                print(f"   - Deducting {product_weight_kg} kg from {old_remaining} kg")
-                print(f"   - Remaining weight AFTER: {animal.remaining_weight}")
-                
-                # Mark as processed if weight is depleted
-                if animal.remaining_weight <= 0:
-                    animal.processed = True
-                    print(f"   - ⚠️ Weight depleted! Setting processed = True")
-                else:
-                    print(f"   - ✅ Still has {animal.remaining_weight} kg remaining")
-                
-                animal.save()
-                print(f"✅ [PRODUCT_CREATE] Updated animal {animal.id}: remaining_weight = {animal.remaining_weight}, processed = {animal.processed}")
-            except Animal.DoesNotExist:
-                print(f"❌ [PRODUCT_CREATE] Animal {animal_id} not found")
+        # Use transaction to ensure atomicity and select_for_update to prevent race conditions
+        with transaction.atomic():
+            # Save the product first
+            product = serializer.save()
+            print(f"✅ [PRODUCT_CREATE] Product saved with ID: {product.id}")
+            
+            # Update weight tracking
+            if slaughter_part_id:
+                # Product made from slaughter part - deduct from part's remaining weight
+                try:
+                    # Use select_for_update to lock the row and prevent race conditions
+                    slaughter_part = SlaughterPart.objects.select_for_update().get(id=slaughter_part_id)
+                    print(f"🥩 [PRODUCT_CREATE] Found slaughter part {slaughter_part.id}")
+                    print(f"   - Part type: {slaughter_part.part_type}")
+                    print(f"   - Total weight: {slaughter_part.weight} {slaughter_part.weight_unit}")
+                    print(f"   - Remaining weight BEFORE: {slaughter_part.remaining_weight}")
+                    print(f"   - used_in_product flag BEFORE: {slaughter_part.used_in_product}")
+                    
+                    if slaughter_part.remaining_weight is None:
+                        slaughter_part.remaining_weight = slaughter_part.weight
+                        print(f"   - Initialized remaining_weight to {slaughter_part.remaining_weight}")
+                    
+                    # Validate sufficient weight remains
+                    if slaughter_part.remaining_weight < product_weight_kg:
+                        raise ValidationError(f"Insufficient weight remaining. Available: {slaughter_part.remaining_weight} kg, Requested: {product_weight_kg} kg")
+                    
+                    old_remaining = slaughter_part.remaining_weight
+                    slaughter_part.remaining_weight = max(Decimal('0'), slaughter_part.remaining_weight - product_weight_kg)
+                    
+                    print(f"   - Deducting {product_weight_kg} kg from {old_remaining} kg")
+                    print(f"   - Remaining weight AFTER: {slaughter_part.remaining_weight}")
+                    
+                    # Mark as used if weight is depleted
+                    if slaughter_part.remaining_weight <= 0:
+                        slaughter_part.used_in_product = True
+                        print(f"   - ⚠️ Weight depleted! Setting used_in_product = True")
+                    else:
+                        print(f"   - ✅ Still has {slaughter_part.remaining_weight} kg remaining")
+                    
+                    slaughter_part.save()
+                    print(f"✅ [PRODUCT_CREATE] Updated slaughter part {slaughter_part.id}: remaining_weight = {slaughter_part.remaining_weight}, used_in_product = {slaughter_part.used_in_product}")
+                except SlaughterPart.DoesNotExist:
+                    print(f"❌ [PRODUCT_CREATE] Slaughter part {slaughter_part_id} not found")
+            elif animal_id:
+                # Product made from whole animal - deduct from animal's remaining weight
+                try:
+                    # Use select_for_update to lock the row and prevent race conditions
+                    animal = Animal.objects.select_for_update().get(id=animal_id)
+                    print(f"🐄 [PRODUCT_CREATE] Found animal {animal.id} ({animal.animal_id})")
+                    print(f"   - Species: {animal.species}")
+                    print(f"   - Live weight: {animal.live_weight} kg")
+                    print(f"   - Remaining weight BEFORE: {animal.remaining_weight}")
+                    print(f"   - processed flag BEFORE: {animal.processed}")
+                    
+                    if animal.remaining_weight is None:
+                        animal.remaining_weight = animal.live_weight or Decimal('0')
+                        print(f"   - Initialized remaining_weight to {animal.remaining_weight}")
+                    
+                    # Validate sufficient weight remains
+                    if animal.remaining_weight < product_weight_kg:
+                        raise ValidationError(f"Insufficient weight remaining. Available: {animal.remaining_weight} kg, Requested: {product_weight_kg} kg")
+                    
+                    old_remaining = animal.remaining_weight
+                    animal.remaining_weight = max(Decimal('0'), animal.remaining_weight - product_weight_kg)
+                    
+                    print(f"   - Deducting {product_weight_kg} kg from {old_remaining} kg")
+                    print(f"   - Remaining weight AFTER: {animal.remaining_weight}")
+                    
+                    # Mark as processed if weight is depleted
+                    if animal.remaining_weight <= 0:
+                        animal.processed = True
+                        print(f"   - ⚠️ Weight depleted! Setting processed = True")
+                    else:
+                        print(f"   - ✅ Still has {animal.remaining_weight} kg remaining")
+                    
+                    animal.save()
+                    print(f"✅ [PRODUCT_CREATE] Updated animal {animal.id}: remaining_weight = {animal.remaining_weight}, processed = {animal.processed}")
+                except Animal.DoesNotExist:
+                    print(f"❌ [PRODUCT_CREATE] Animal {animal_id} not found")
         
         print(f"{'='*80}\n")
     
@@ -3985,12 +4145,27 @@ class ProductViewSet(viewsets.ModelViewSet):
                     product.received_by_shop = user_shop
                     product.received_at = timezone.now()
                     product.save()
+                    
+                    # Create or update Inventory record for the shop
+                    inventory, created = Inventory.objects.get_or_create(
+                        shop=user_shop,
+                        product=product,
+                        defaults={
+                            'quantity': quantity_received,
+                            'last_updated': timezone.now()
+                        }
+                    )
+                    if not created:
+                        inventory.quantity += quantity_received
+                        inventory.last_updated = timezone.now()
+                        inventory.save()
 
                     received_products.append({
                         'product_id': product.id,
                         'product_name': product.name,
                         'quantity_received': float(quantity_received),
-                        'total_received': float(product.quantity_received)
+                        'total_received': float(product.quantity_received),
+                        'inventory_quantity': float(inventory.quantity)
                     })
 
                 except Product.DoesNotExist:
@@ -4063,6 +4238,21 @@ class ProductViewSet(viewsets.ModelViewSet):
                         product.received_by_shop = user_shop
                         product.received_at = timezone.now()
                         product.save()
+                        
+                        # Update inventory for the received portion (remaining quantity)
+                        inventory, created = Inventory.objects.get_or_create(
+                            shop=user_shop,
+                            product=product,
+                            defaults={
+                                'quantity': product.quantity,
+                                'last_updated': timezone.now()
+                            }
+                        )
+                        if not created:
+                            # If inventory exists, update to reflect only the received portion
+                            inventory.quantity = product.quantity_received
+                            inventory.last_updated = timezone.now()
+                            inventory.save()
 
                         # Create new product for rejected portion (returns to processor)
                         rejected_product = Product.objects.create(

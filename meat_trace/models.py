@@ -21,6 +21,7 @@ class ProcessingUnit(models.Model):
     contact_email = models.EmailField(blank=True, null=True)
     contact_phone = models.CharField(max_length=20, blank=True, null=True)
     license_number = models.CharField(max_length=100, blank=True, null=True)
+    is_active = models.BooleanField(default=True, help_text='Whether the processing unit is active and accepting registrations')
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -356,14 +357,15 @@ class Animal(models.Model):
         5. SEMI-TRANSFERRED - Partially transferred (some parts moved, others remain)
         
         Priority order:
-        1. Check rejection status first (highest priority)
+        1. Check rejection status first (highest priority) - but only if appeal not approved
         2. Check transfer status (whole animal or all parts)
         3. Check for partial transfers
         4. Check if slaughtered (but not transferred)
         5. Default to healthy
         """
         # Priority 1: Check if animal is rejected (highest priority)
-        if self.rejection_status == 'rejected':
+        # But if appeal was approved, rejection is overturned
+        if self.rejection_status == 'rejected' and self.appeal_status != 'approved':
             return 'REJECTED'
         
         # Priority 2: Check if whole animal is transferred
@@ -591,6 +593,11 @@ class CarcassMeasurement(models.Model):
 
             if total_weight > 0 and total_weight < 0.5:
                 raise ValidationError("Total carcass weight seems too small. Please verify measurements.")
+
+    def save(self, *args, **kwargs):
+        """Override save to ensure validation is always run"""
+        self.full_clean()
+        super().save(*args, **kwargs)
 
     def get_measurement(self, key):
         """Get a specific measurement by key"""

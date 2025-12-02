@@ -11,107 +11,95 @@ from .auth_views import CustomTokenObtainPairView, RegisterView, CustomAuthLogin
 # ═════════════════════════════════════════════════════════════════════════════=
 
 router = DefaultRouter()
+import logging
+logger = logging.getLogger(__name__)
+
 # Register viewsets (AnimalViewSet is implemented in views.py)
 try:
     router.register(r'animals', views.AnimalViewSet, basename='animals')
-except Exception:
-    # If AnimalViewSet not present at import time, router registration will be skipped
-    pass
+except Exception as e:
+    logger.warning(f"[URL_REGISTRATION] Failed to register AnimalViewSet: {e}")
 
 try:
     router.register(r'activities', views.ActivityViewSet, basename='activities')
-except Exception:
-    # If ActivityViewSet not present at import time, router registration will be skipped
-    pass
+except Exception as e:
+    logger.warning(f"[URL_REGISTRATION] Failed to register ActivityViewSet: {e}")
 
 try:
     router.register(r'profile', views.UserProfileViewSet, basename='profile')
-except Exception:
-    # If UserProfileViewSet not present at import time, router registration will be skipped
-    pass
+except Exception as e:
+    logger.warning(f"[URL_REGISTRATION] Failed to register UserProfileViewSet: {e}")
 
 try:
     from .views import ProcessingUnitViewSet
     router.register(r'processing-units', ProcessingUnitViewSet, basename='processing-units')
-except Exception:
-    # Optional registration
-    pass
+except Exception as e:
+    logger.warning(f"[URL_REGISTRATION] Failed to register ProcessingUnitViewSet: {e}")
 
 try:
     from .views import JoinRequestViewSet
     router.register(r'join-requests', JoinRequestViewSet, basename='join-requests')
-except Exception:
-    # Optional registration
-    pass
+except Exception as e:
+    logger.warning(f"[URL_REGISTRATION] Failed to register JoinRequestViewSet: {e}")
 try:
     from .views import ShopViewSet
     router.register(r'shops', ShopViewSet, basename='shops')
-except Exception:
-    # Optional registration
-    pass
+except Exception as e:
+    logger.warning(f"[URL_REGISTRATION] Failed to register ShopViewSet: {e}")
 
 try:
     from .views import OrderViewSet
     router.register(r'orders', OrderViewSet, basename='orders')
-except Exception:
-    # Optional registration
-    pass
+except Exception as e:
+    logger.warning(f"[URL_REGISTRATION] Failed to register OrderViewSet: {e}")
 
 try:
     from .views import ProductViewSet
     router.register(r'products', ProductViewSet, basename='products')
-except Exception:
-    # Optional registration
-    pass
+except Exception as e:
+    logger.warning(f"[URL_REGISTRATION] Failed to register ProductViewSet: {e}")
 
 try:
     from .views import ProductCategoryViewSet
     router.register(r'product-categories', ProductCategoryViewSet, basename='product-categories')
-except Exception:
-    # Optional registration
-    pass
+except Exception as e:
+    logger.warning(f"[URL_REGISTRATION] Failed to register ProductCategoryViewSet: {e}")
 
 try:
     from .views import CarcassMeasurementViewSet
     router.register(r'carcass-measurements', CarcassMeasurementViewSet, basename='carcass-measurements')
-except Exception:
-    # Optional registration
-    pass
+except Exception as e:
+    logger.warning(f"[URL_REGISTRATION] Failed to register CarcassMeasurementViewSet: {e}")
 
 try:
     from .views import SaleViewSet
     router.register(r'sales', SaleViewSet, basename='sales')
-except Exception:
-    # Optional registration
-    pass
+except Exception as e:
+    logger.warning(f"[URL_REGISTRATION] Failed to register SaleViewSet: {e}")
 
 try:
     from .views import NotificationViewSet
     router.register(r'notifications', NotificationViewSet, basename='notifications')
-except Exception:
-    # Optional registration
-    pass
+except Exception as e:
+    logger.warning(f"[URL_REGISTRATION] Failed to register NotificationViewSet: {e}")
 
 try:
     from .views import SlaughterPartViewSet
     router.register(r'slaughter-parts', SlaughterPartViewSet, basename='slaughter-parts')
-except Exception:
-    # Optional registration
-    pass
+except Exception as e:
+    logger.warning(f"[URL_REGISTRATION] Failed to register SlaughterPartViewSet: {e}")
 
 try:
     from .viewsets import SystemConfigurationViewSet
     router.register(r'config/system', SystemConfigurationViewSet, basename='system-config')
-except Exception:
-    # Optional registration
-    pass
+except Exception as e:
+    logger.warning(f"[URL_REGISTRATION] Failed to register SystemConfigurationViewSet: {e}")
 
 try:
     from .viewsets import FeatureFlagViewSet
     router.register(r'config/feature-flags', FeatureFlagViewSet, basename='feature-flags')
-except Exception:
-    # Optional registration
-    pass
+except Exception as e:
+    logger.warning(f"[URL_REGISTRATION] Failed to register FeatureFlagViewSet: {e}")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ADMIN DASHBOARD URL PATTERNS
@@ -176,6 +164,19 @@ urlpatterns = [
     # JWT Authentication endpoints
     path('api/v2/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/v2/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    
+    # Auth endpoints (login and registration)
+    path('api/v2/auth/login/', CustomAuthLoginView.as_view(), name='auth_login'),
+    path('api/v2/register/', RegisterView.as_view(), name='register'),
+    
+    # User profile endpoint (get current authenticated user info)
+    path('api/v2/auth/me/', views.user_profile_view, name='auth_me'),
+    path('api/v2/profile/me/', views.user_profile_view, name='profile_me'),
+    
+    # Public endpoints (no authentication required for registration flow)
+    path('api/v2/public/processing-units/', views.public_processing_units_list, name='public_processing_units'),
+    path('api/v2/public/processing-units/registration/', views.public_processing_units_for_registration, name='public_processing_units_registration'),
+    path('api/v2/public/shops/', views.public_shops_list, name='public_shops'),
 
     path('api/v2/health/', views.health_check, name='health_check'),
     path('api/v2/dashboard/', views.dashboard_view, name='dashboard'),
@@ -187,6 +188,9 @@ urlpatterns = [
     # Product info endpoints
     path('api/v2/product-info/view/<int:product_id>/', views.product_info_view, name='product_info_view'),
     path('api/v2/product-info/list/', views.product_info_list_view, name='product_info_list'),
+    
+    # Sale info endpoint (for QR codes)
+    path('api/v2/sale-info/view/<int:sale_id>/', views.sale_info_view, name='sale_info_view'),
 
     # Processing Unit dashboard endpoints
     path('processor/add-product-category/', views.add_product_category, name='add_product_category'),
