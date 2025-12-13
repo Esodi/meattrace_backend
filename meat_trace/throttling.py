@@ -1,6 +1,13 @@
-# Admin throttling has been removed from this project
-# This file is kept to prevent import errors
+"""
+Custom throttling classes for MeatTrace API.
+"""
+from rest_framework.throttling import UserRateThrottle
 
-# from rest_framework.throttling import UserRateThrottle
 
-# AdminRateThrottle class removed
+class AdminRateThrottle(UserRateThrottle):
+    """
+    Rate throttle specifically for admin endpoints.
+    Limits admin users to 100 requests per minute.
+    """
+    scope = 'admin'
+    rate = '100/minute'

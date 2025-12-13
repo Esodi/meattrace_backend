@@ -13,6 +13,8 @@ from django.conf import settings
 from django.db.models import Count, Q, Sum, Avg
 from django.contrib.auth import get_user_model
 from datetime import timedelta
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework import filters
 import logging
 
 logger = logging.getLogger(__name__)
@@ -759,6 +761,128 @@ class AdminDashboardViewSet(viewsets.ViewSet):
         serializer = AdminRecentActivitySerializer(response_data)
         return Response(serializer.data)
 
+    @action(detail=False, methods=['get'])
+    def supply_chain_stats(self, request):
+        """Get supply chain statistics for the monitor dashboard"""
+        from .models import Animal, Product, ProcessingUnit, Shop, TransferRequest, UserProfile
+        
+        today = timezone.now().date()
+        
+        # Today's transfers: animals and products transferred today
+        animals_transferred_today = Animal.objects.filter(
+            transferred_at__date=today
+        ).count()
+        
+        products_transferred_today = Product.objects.filter(
+            transferred_at__date=today
+        ).count()
+        
+        todays_transfers = animals_transferred_today + products_transferred_today
+        
+        # Active locations: farms + processing units + shops that are active
+        active_farms = UserProfile.objects.filter(role='Farmer', user__is_active=True).count()
+        active_processing_units = ProcessingUnit.objects.filter(is_active=True).count()
+        active_shops = Shop.objects.filter(is_active=True).count()
+        active_locations = active_farms + active_processing_units + active_shops
+        
+        # Pending transfer requests (transit alerts)
+        pending_transfers = TransferRequest.objects.filter(status='pending').count()
+        
+        return Response({
+            'todays_transfers': todays_transfers,
+            'animals_transferred_today': animals_transferred_today,
+            'products_transferred_today': products_transferred_today,
+            'active_locations': active_locations,
+            'active_farms': active_farms,
+            'active_processing_units': active_processing_units,
+            'active_shops': active_shops,
+            'pending_transfers': pending_transfers,
+            'date': today.isoformat()
+        })
+    
+    @action(detail=False, methods=['get'])
+    def map_locations(self, request):
+        """
+        Get all active locations with coordinates for the Supply Chain Map.
+        Returns processing units, shops, and farmers with their geographic coordinates.
+        """
+        from .models import ProcessingUnit, Shop, UserProfile
+        
+        locations = []
+        
+        # Get active processing units with coordinates
+        processing_units = ProcessingUnit.objects.filter(
+            is_active=True,
+            latitude__isnull=False,
+            longitude__isnull=False
+        )
+        for pu in processing_units:
+            locations.append({
+                'id': f'pu_{pu.id}',
+                'name': pu.name,
+                'type': 'Processing Unit',
+                'lat': float(pu.latitude),
+                'lng': float(pu.longitude),
+                'location': pu.location or '',
+                'contact_email': pu.contact_email or '',
+                'contact_phone': pu.contact_phone or '',
+            })
+        
+        # Get active shops with coordinates
+        shops = Shop.objects.filter(
+            is_active=True,
+            latitude__isnull=False,
+            longitude__isnull=False
+        )
+        for shop in shops:
+            locations.append({
+                'id': f'shop_{shop.id}',
+                'name': shop.name,
+                'type': 'Shop',
+                'lat': float(shop.latitude),
+                'lng': float(shop.longitude),
+                'location': shop.location or '',
+                'contact_email': shop.contact_email or '',
+                'contact_phone': shop.contact_phone or '',
+            })
+        
+        # Get farmers with coordinates
+        farmers = UserProfile.objects.filter(
+            role='Farmer',
+            user__is_active=True,
+            latitude__isnull=False,
+            longitude__isnull=False
+        ).select_related('user')
+        for farmer in farmers:
+            locations.append({
+                'id': f'farmer_{farmer.id}',
+                'name': f"{farmer.user.first_name} {farmer.user.last_name}".strip() or farmer.user.username,
+                'type': 'Farmer',
+                'lat': float(farmer.latitude),
+                'lng': float(farmer.longitude),
+                'location': farmer.address or '',
+                'contact_email': farmer.user.email or '',
+                'contact_phone': farmer.phone or '',
+            })
+        
+        # Summary statistics
+        total_pu = ProcessingUnit.objects.filter(is_active=True).count()
+        total_shops = Shop.objects.filter(is_active=True).count()
+        total_farmers = UserProfile.objects.filter(role='Farmer', user__is_active=True).count()
+        
+        geocoded_pu = processing_units.count()
+        geocoded_shops = shops.count()
+        geocoded_farmers = farmers.count()
+        
+        return Response({
+            'locations': locations,
+            'total_count': len(locations),
+            'summary': {
+                'processing_units': {'total': total_pu, 'geocoded': geocoded_pu},
+                'shops': {'total': total_shops, 'geocoded': geocoded_shops},
+                'farmers': {'total': total_farmers, 'geocoded': geocoded_farmers},
+            }
+        })
 
 class AdminUserViewSet(viewsets.ModelViewSet):
     """
@@ -984,7 +1108,8 @@ class AdminProductViewSet(viewsets.ReadOnlyModelViewSet):
 
 class AdminAnalyticsViewSet(viewsets.ViewSet):
     """
-    ViewSet for admin analytics and reporting
+    ViewSet for admin analytics and reporting.
+    Analytics are cached for 5 minutes to improve performance.
     """
     permission_classes = [IsAuthenticated]
 
@@ -1038,9 +1163,27 @@ class AdminAnalyticsViewSet(viewsets.ViewSet):
             created_at__date__lte=end_date
         ).count()
 
-        # Processing metrics (simplified)
-        processing_efficiency = 85.5  # Placeholder
-        transfer_success_rate = 92.3  # Placeholder
+        # Processing metrics - calculate from actual data
+        # Processing efficiency: % of animals that have been processed or slaughtered
+        total_animals = Animal.objects.filter(created_at__date__gte=start_date).count()
+        # Animal model uses 'processed' and 'slaughtered' boolean fields, not 'status'
+        processed_animals = Animal.objects.filter(
+            created_at__date__gte=start_date,
+            processed=True
+        ).count()
+        processing_efficiency = round((processed_animals / total_animals * 100), 2) if total_animals > 0 else 0
+
+        # Transfer success rate: calculate from TransferRequest model
+        try:
+            from .models import TransferRequest
+            total_transfers = TransferRequest.objects.filter(created_at__date__gte=start_date).count()
+            successful_transfers = TransferRequest.objects.filter(
+                created_at__date__gte=start_date,
+                status='approved'
+            ).count()
+            transfer_success_rate = round((successful_transfers / total_transfers * 100), 2) if total_transfers > 0 else 0
+        except Exception:
+            transfer_success_rate = 0
 
         # Financial metrics
         total_sales_value = Sale.objects.filter(
@@ -1051,9 +1194,10 @@ class AdminAnalyticsViewSet(viewsets.ViewSet):
             created_at__date__gte=start_date
         ).aggregate(avg=Avg('total_amount'))['avg'] or 0
 
-        # System metrics (simplified)
-        system_uptime = 99.5  # Placeholder
-        error_rate = 0.5  # Placeholder
+        # System metrics - based on actual data availability
+        # System uptime: placeholder (would need actual monitoring)
+        system_uptime = 0  # No monitoring data available
+        error_rate = 0  # No error tracking data available
 
         analytics_data = {
             'period': period,
@@ -1163,3 +1307,101 @@ class InventorySerializer(serializers.ModelSerializer):
         from .models import Inventory
         model = Inventory
         fields = '__all__'
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SYSTEM CONFIGURATION VIEWSETS
+# ══════════════════════════════════════════════════════════════════════════════
+
+from .models import SystemConfiguration, FeatureFlag
+from .serializers import FeatureFlagSerializer
+
+class SystemConfigurationViewSet(viewsets.ModelViewSet):
+    """ViewSet for system configuration management."""
+    queryset = SystemConfiguration.objects.all()
+    permission_classes = [IsAdminUser]
+    
+    class SystemConfigSerializer(serializers.ModelSerializer):
+        class Meta:
+            model = SystemConfiguration
+            fields = '__all__'
+    
+    serializer_class = SystemConfigSerializer
+
+
+class FeatureFlagViewSet(viewsets.ModelViewSet):
+    """ViewSet for feature flag management."""
+    queryset = FeatureFlag.objects.all()
+    permission_classes = [IsAdminUser]
+    serializer_class = FeatureFlagSerializer
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filterset_fields = ['is_enabled', 'environment']
+    search_fields = ['name', 'description']
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GOVERNMENT ADMIN VIEWSETS
+# ══════════════════════════════════════════════════════════════════════════════
+
+from .models import ComplianceAudit, Certification, RegistrationApplication, ApprovalWorkflow
+from .serializers import (
+    ComplianceAuditSerializer, CertificationSerializer,
+    RegistrationApplicationSerializer, ApprovalWorkflowSerializer
+)
+from .throttling import AdminRateThrottle
+
+class AdminComplianceAuditViewSet(viewsets.ModelViewSet):
+    queryset = ComplianceAudit.objects.all().order_by('-created_at')
+    serializer_class = ComplianceAuditSerializer
+    permission_classes = [IsAdminUser]
+    throttle_classes = [AdminRateThrottle]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    # Only include actual model fields - status and audit_type exist on the model
+    filterset_fields = ['status', 'audit_type']
+    search_fields = ['processing_unit__name', 'shop__name', 'farmer__username', 'auditor__username']
+
+class AdminCertificationViewSet(viewsets.ModelViewSet):
+    queryset = Certification.objects.all().order_by('-created_at')
+    serializer_class = CertificationSerializer
+    permission_classes = [IsAdminUser]
+    throttle_classes = [AdminRateThrottle]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filterset_fields = ['status', 'cert_type']
+    search_fields = ['name', 'certificate_number', 'issuing_authority']
+
+class RegistrationApplicationViewSet(viewsets.ModelViewSet):
+    queryset = RegistrationApplication.objects.all().order_by('-created_at')
+    serializer_class = RegistrationApplicationSerializer
+    permission_classes = [IsAdminUser]
+    throttle_classes = [AdminRateThrottle]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filterset_fields = ['status', 'entity_type']
+    search_fields = ['entity_name', 'business_license_number', 'tin_number']
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        application = self.get_object()
+        application.status = 'approved'
+        application.decision_date = timezone.now()
+        application.reviewed_by = request.user
+        application.save()
+        
+        # Logic to actually creating the entity (ProcessingUnit/Shop) typically goes here
+        # For now we just mark approved.
+        
+        return Response({'status': 'approved'})
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        application = self.get_object()
+        application.status = 'rejected'
+        application.decision_date = timezone.now()
+        application.reviewed_by = request.user
+        application.review_notes = request.data.get('reason', '')
+        application.save()
+        return Response({'status': 'rejected'})
+
+class ApprovalWorkflowViewSet(viewsets.ModelViewSet):
+    queryset = ApprovalWorkflow.objects.all()
+    serializer_class = ApprovalWorkflowSerializer
+    permission_classes = [IsAdminUser]
+    throttle_classes = [AdminRateThrottle]

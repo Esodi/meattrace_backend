@@ -203,3 +203,47 @@ def audit_shop_user_changes(sender, instance, created, **kwargs):
 
     except Exception as e:
         logger.error(f"Failed to create audit log for ShopUser change: {str(e)}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CACHE INVALIDATION FOR ANALYTICS
+# ══════════════════════════════════════════════════════════════════════════════
+
+from django.core.cache import cache
+from django.db.models.signals import post_delete
+
+
+def invalidate_analytics_cache():
+    """Clear all analytics-related cache entries."""
+    try:
+        # For simple cache backends, we clear specific keys if possible
+        # For Redis with pattern support, this would use delete_pattern
+        cache.clear()
+        logger.info("[CACHE] Analytics cache invalidated")
+    except Exception as e:
+        logger.warning(f"[CACHE] Failed to invalidate cache: {e}")
+
+
+# Models that affect analytics data
+ANALYTICS_TRIGGERS = [
+    'Animal', 'Product', 'Order', 'Sale',
+    'ComplianceAudit', 'Certification', 'RegistrationApplication'
+]
+
+
+@receiver(post_save)
+def invalidate_cache_on_save(sender, **kwargs):
+    """Invalidate analytics cache when relevant models are saved."""
+    model_name = sender.__name__
+    if model_name in ANALYTICS_TRIGGERS:
+        invalidate_analytics_cache()
+        logger.debug(f"[CACHE] Invalidated due to {model_name} save")
+
+
+@receiver(post_delete)
+def invalidate_cache_on_delete(sender, **kwargs):
+    """Invalidate analytics cache when relevant models are deleted."""
+    model_name = sender.__name__
+    if model_name in ANALYTICS_TRIGGERS:
+        invalidate_analytics_cache()
+        logger.debug(f"[CACHE] Invalidated due to {model_name} delete")

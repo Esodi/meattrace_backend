@@ -18,6 +18,9 @@ class ProcessingUnit(models.Model):
     name = models.CharField(max_length=200, unique=True)
     description = models.TextField(blank=True, null=True)
     location = models.CharField(max_length=200, blank=True, null=True)
+    # Geographic coordinates for map display
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True, help_text="Latitude coordinate for map display")
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True, help_text="Longitude coordinate for map display")
     contact_email = models.EmailField(blank=True, null=True)
     contact_phone = models.CharField(max_length=20, blank=True, null=True)
     license_number = models.CharField(max_length=100, blank=True, null=True)
@@ -27,6 +30,18 @@ class ProcessingUnit(models.Model):
 
     def __str__(self):
         return self.name
+    
+    def save(self, *args, **kwargs):
+        # Auto-geocode location if coordinates are not set
+        if self.location and (self.latitude is None or self.longitude is None):
+            try:
+                from .utils.geocoding_service import GeocodingService
+                GeocodingService.geocode_and_save(self, 'location')
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"[PROCESSING_UNIT] Geocoding failed for {self.name}: {e}")
+        super().save(*args, **kwargs)
 
 
 class ProcessingUnitUser(models.Model):
@@ -74,6 +89,9 @@ class Shop(models.Model):
     name = models.CharField(max_length=200, unique=True)
     description = models.TextField(blank=True, null=True)
     location = models.CharField(max_length=200, blank=True, null=True)
+    # Geographic coordinates for map display
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True, help_text="Latitude coordinate for map display")
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True, help_text="Longitude coordinate for map display")
     contact_email = models.EmailField(blank=True, null=True)
     contact_phone = models.CharField(max_length=20, blank=True, null=True)
     business_license = models.CharField(max_length=100, blank=True, null=True)
@@ -84,6 +102,18 @@ class Shop(models.Model):
 
     def __str__(self):
         return self.name
+    
+    def save(self, *args, **kwargs):
+        # Auto-geocode location if coordinates are not set
+        if self.location and (self.latitude is None or self.longitude is None):
+            try:
+                from .utils.geocoding_service import GeocodingService
+                GeocodingService.geocode_and_save(self, 'location')
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"[SHOP] Geocoding failed for {self.name}: {e}")
+        super().save(*args, **kwargs)
 
 
 class ShopUser(models.Model):
@@ -142,6 +172,10 @@ class UserProfile(models.Model):
     phone = models.CharField(max_length=20, blank=True)
     address = models.TextField(blank=True)
     bio = models.TextField(blank=True)
+    
+    # Geographic coordinates for map display (for Farmers)
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True, help_text="Latitude coordinate for map display")
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True, help_text="Longitude coordinate for map display")
 
     # Preferences
     preferred_species = models.JSONField(default=list, blank=True)  # For farmers
@@ -157,6 +191,18 @@ class UserProfile(models.Model):
 
     def __str__(self):
         return f"{self.user.username} - {self.role}"
+    
+    def save(self, *args, **kwargs):
+        # Auto-geocode address if coordinates are not set (for Farmers)
+        if self.address and self.role == 'Farmer' and (self.latitude is None or self.longitude is None):
+            try:
+                from .utils.geocoding_service import GeocodingService
+                GeocodingService.geocode_and_save(self, 'address')
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"[USER_PROFILE] Geocoding failed for {self.user.username}: {e}")
+        super().save(*args, **kwargs)
 
 @receiver(post_save, sender=User)
 def create_user_profile(sender, instance, created, **kwargs):
@@ -793,50 +839,174 @@ class OrderItem(models.Model):
     def __str__(self):
         return f"{self.product.name} x {self.quantity}"
 
-    def save(self, *args, **kwargs):
-        self.subtotal = self.quantity * self.unit_price
-        super().save(*args, **kwargs)
-        self.order.update_total_amount()
 
-@receiver(post_save, sender=Product)
-def generate_product_qr_code(sender, instance, created, **kwargs):
-    """Generate QR code for new products that links to the product info page"""
-    if created and not instance.qr_code:
-        try:
-            # Generate the URL for the product info HTML page
-            url = f"{getattr(settings, 'SITE_URL', 'http://localhost:8000')}/api/v2/product-info/view/{instance.id}/"
+# ══════════════════════════════════════════════════════════════════════════════
+# COMPLIANCE & CERTIFICATION MODELS
+# ══════════════════════════════════════════════════════════════════════════════
 
-            # Create QR code
-            qr = qrcode.QRCode(
-                version=1,
-                error_correction=qrcode.constants.ERROR_CORRECT_L,
-                box_size=10,
-                border=4,
-            )
-            qr.add_data(url)
-            qr.make(fit=True)
+class ComplianceAudit(models.Model):
+    """Tracks regulatory inspections and audits for supply chain entities"""
+    STATUS_CHOICES = [
+        ('scheduled', 'Scheduled'),
+        ('in_progress', 'In Progress'),
+        ('completed', 'Completed'),
+        ('cancelled', 'Cancelled'),
+    ]
+    
+    OUTCOME_CHOICES = [
+        ('pass', 'Passed'),
+        ('pass_with_conditions', 'Passed with Conditions'),
+        ('fail', 'Failed'),
+        ('critical_fail', 'Critical Failure'),
+    ]
+    
+    ENTITY_TYPE_CHOICES = [
+        ('processing_unit', 'Processing Unit'),
+        ('shop', 'Shop'),
+        ('farmer', 'Farmer'),  # User profile
+    ]
 
-            # Create the image
-            img = qr.make_image(fill_color="black", back_color="white")
+    # The official conducting the audit
+    auditor = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='conducted_audits')
+    
+    # Generic linking to entity (simplified strategy: nullable FKs for simplicity over GenericFK)
+    processing_unit = models.ForeignKey(ProcessingUnit, on_delete=models.CASCADE, null=True, blank=True, related_name='compliance_audits')
+    shop = models.ForeignKey(Shop, on_delete=models.CASCADE, null=True, blank=True, related_name='compliance_audits')
+    farmer = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True, related_name='compliance_audits_received')
 
-            # Ensure the qr_codes directory exists
-            qr_dir = os.path.join(settings.MEDIA_ROOT, 'qr_codes')
-            os.makedirs(qr_dir, exist_ok=True)
+    audit_date = models.DateTimeField(default=timezone.now)
+    scheduled_date = models.DateTimeField(null=True, blank=True)
+    
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='scheduled')
+    outcome = models.CharField(max_length=20, choices=OUTCOME_CHOICES, null=True, blank=True)
+    score = models.IntegerField(validators=[MinValueValidator(0), MaxValueValidator(100)], null=True, blank=True, help_text="Compliance score 0-100")
+    
+    findings = models.TextField(blank=True, help_text="Detailed findings of the audit")
+    recommendations = models.TextField(blank=True, help_text="Recommendations for improvement")
+    
+    violation_count = models.IntegerField(default=0)
+    critical_violation_count = models.IntegerField(default=0)
+    
+    report_document = models.FileField(upload_to='audit_reports/', null=True, blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
-            # Save the image
-            filename = f"qr_{instance.id}.png"
-            filepath = os.path.join(qr_dir, filename)
-            img.save(filepath)
+    def __str__(self):
+        entity = self.processing_unit or self.shop or self.farmer or "Unknown Entity"
+        return f"Audit {self.id} - {entity} - {self.get_status_display()}"
 
-            # Update the instance with the relative path
-            instance.qr_code = f"qr_codes/{filename}"
-            instance.save(update_fields=['qr_code'])
 
-        except Exception as e:
-            # Log the error but don't fail the product creation
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.error(f"Failed to generate QR code for product {instance.id}: {str(e)}")
+class Certification(models.Model):
+    """Tracks licenses and certifications (HACCP, ISO, Halal, Business License)"""
+    CERT_TYPE_CHOICES = [
+        ('haccp', 'HACCP'),
+        ('iso22000', 'ISO 22000'),
+        ('halal', 'Halal'),
+        ('business_license', 'Business License'),
+        ('health_permit', 'Health Permit'),
+        ('other', 'Other'),
+    ]
+
+    STATUS_CHOICES = [
+        ('active', 'Active'),
+        ('expired', 'Expired'),
+        ('suspended', 'Suspended'),
+        ('pending', 'Pending Renewal'),
+    ]
+
+    # Entity ownership
+    processing_unit = models.ForeignKey(ProcessingUnit, on_delete=models.CASCADE, null=True, blank=True, related_name='certifications')
+    shop = models.ForeignKey(Shop, on_delete=models.CASCADE, null=True, blank=True, related_name='certifications')
+    farmer = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True, related_name='certifications')
+
+    name = models.CharField(max_length=100, help_text="Name of certification e.g. 'ISO 22000 Operations'")
+    cert_type = models.CharField(max_length=50, choices=CERT_TYPE_CHOICES)
+    certificate_number = models.CharField(max_length=100, unique=True)
+    issuing_authority = models.CharField(max_length=200)
+    
+    issue_date = models.DateField()
+    expiry_date = models.DateField()
+    
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
+    document = models.FileField(upload_to='certificates/', null=True, blank=True)
+    
+    # Renewal tracking
+    renewal_in_progress = models.BooleanField(default=False)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.name} ({self.certificate_number})"
+
+    @property
+    def is_valid(self):
+        return self.status == 'active' and self.expiry_date >= timezone.now().date()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# APPROVAL WORKFLOW MODELS
+# ══════════════════════════════════════════════════════════════════════════════
+
+class RegistrationApplication(models.Model):
+    """Tracks applications for new entities (Processing Units, Shops) requiring government approval"""
+    ENTITY_TYPE_CHOICES = [
+        ('processing_unit', 'Processing Unit'),
+        ('shop', 'Shop'),
+        ('cooperative', 'Cooperative'),
+    ]
+
+    STATUS_CHOICES = [
+        ('draft', 'Draft'),
+        ('submitted', 'Submitted'),
+        ('under_review', 'Under Review'),
+        ('documents_requested', 'Documents Requested'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+    ]
+
+    # Applicant info
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='registration_applications')
+    
+    # Entity details
+    entity_name = models.CharField(max_length=200)
+    entity_type = models.CharField(max_length=50, choices=ENTITY_TYPE_CHOICES)
+    location = models.CharField(max_length=255)
+    
+    # Application details
+    business_license_number = models.CharField(max_length=100, blank=True, null=True)
+    tin_number = models.CharField(max_length=50, blank=True, null=True)
+    
+    documents = models.JSONField(default=dict, help_text="Links to uploaded documents")
+    
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='draft')
+    
+    submission_date = models.DateTimeField(null=True, blank=True)
+    review_started_at = models.DateTimeField(null=True, blank=True)
+    decision_date = models.DateTimeField(null=True, blank=True)
+    
+    reviewed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='reviewed_applications')
+    review_notes = models.TextField(blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"App {self.id} - {self.entity_name} ({self.status})"
+
+
+class ApprovalWorkflow(models.Model):
+    """Configuration for multi-step approval processes"""
+    name = models.CharField(max_length=100) # e.g., "Standard Shop Registration"
+    entity_type = models.CharField(max_length=50) # e.g., "shop"
+    is_active = models.BooleanField(default=True)
+    
+    steps = models.JSONField(default=list, help_text="List of steps e.g. ['Document Check', 'Site Inspection', 'Final Approval']")
+    
+    def __str__(self):
+        return self.name
+
 
 
 @receiver(post_save, sender=Order)

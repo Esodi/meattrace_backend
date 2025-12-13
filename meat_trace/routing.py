@@ -8,6 +8,7 @@ from meat_trace.consumers import (
     SystemAlertConsumer,
     ProcessingUpdateConsumer,
     AuthProgressConsumer,
+    AdminNotificationConsumer,
 )
 
 websocket_urlpatterns = [
@@ -22,4 +23,7 @@ websocket_urlpatterns = [
     
     # Processing unit updates (authenticated, role-based)
     re_path(r'ws/processing/$', ProcessingUpdateConsumer.as_asgi()),
+    
+    # Admin dashboard updates (admin-only)
+    re_path(r'ws/admin/$', AdminNotificationConsumer.as_asgi()),
 ]

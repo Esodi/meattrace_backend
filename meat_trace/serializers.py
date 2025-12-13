@@ -1,12 +1,14 @@
+
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from .models import (
-    Animal, Product, Order, Shop, SlaughterPart, CarcassMeasurement,
-    ProductIngredient, UserProfile, ProcessingUnit, ProcessingUnitUser,
-    ShopUser, JoinRequest, Notification, Activity, SystemAlert,
-    PerformanceMetric, ComplianceAudit, Certification, SystemHealth,
-    SecurityLog, TransferRequest, BackupSchedule, Sale, SaleItem,
+    User, UserProfile, UserAuditLog, Animal, SlaughterPart, 
+    ProductIngredient, CarcassMeasurement, Product, Inventory, 
+    ProcessingUnit, ProcessingUnitUser, Shop, ShopUser, Order, OrderItem,
+    ComplianceAudit, Certification, RegistrationApplication, ApprovalWorkflow,
+    JoinRequest, Notification, Activity, SystemAlert, PerformanceMetric, 
+    SystemHealth, SecurityLog, TransferRequest, BackupSchedule, Sale, SaleItem,
     RejectionReason, ComplianceStatus, AuditTrail, ConfigurationHistory,
     FeatureFlag, Backup, DataExport, DataImport, GDPRRequest, DataValidation,
     ProductCategory, NotificationTemplate, NotificationChannel,
@@ -41,16 +43,59 @@ class SystemAlertSerializer(serializers.ModelSerializer):
 
 
 class ComplianceAuditSerializer(serializers.ModelSerializer):
-    """Serializer for compliance audits."""
+    """Serializer for compliance audits with computed fields."""
+    entity_name = serializers.SerializerMethodField()
+    auditor_name = serializers.SerializerMethodField()
+    
     class Meta:
         model = ComplianceAudit
         fields = '__all__'
+    
+    def get_entity_name(self, obj):
+        """Get the name of the audited entity."""
+        if obj.processing_unit:
+            return obj.processing_unit.name
+        elif obj.shop:
+            return obj.shop.name
+        elif obj.farmer:
+            return obj.farmer.username
+        return 'Unknown Entity'
+    
+    def get_auditor_name(self, obj):
+        """Get the auditor's username."""
+        return obj.auditor.username if obj.auditor else 'Unassigned'
 
 
 class CertificationSerializer(serializers.ModelSerializer):
-    """Serializer for certifications."""
+    """Serializer for certifications with computed fields."""
+    entity_name = serializers.SerializerMethodField()
+    
     class Meta:
         model = Certification
+        fields = '__all__'
+    
+    def get_entity_name(self, obj):
+        """Get the name of the certified entity."""
+        if obj.processing_unit:
+            return obj.processing_unit.name
+        elif obj.shop:
+            return obj.shop.name
+        elif obj.farmer:
+            return obj.farmer.username
+        return 'Unknown Entity'
+
+
+class RegistrationApplicationSerializer(serializers.ModelSerializer):
+    """Serializer for registration applications."""
+    class Meta:
+        model = RegistrationApplication
+        fields = '__all__'
+
+
+class ApprovalWorkflowSerializer(serializers.ModelSerializer):
+    """Serializer for approval workflows."""
+    class Meta:
+        model = ApprovalWorkflow
         fields = '__all__'
 
 
@@ -625,6 +670,8 @@ class AdminUserListSerializer(serializers.ModelSerializer):
     profile_role = serializers.CharField(source='profile.role', read_only=True)
     profile_processing_unit = serializers.CharField(source='profile.processing_unit.name', read_only=True)
     profile_shop = serializers.CharField(source='profile.shop.name', read_only=True)
+    profile_phone = serializers.CharField(source='profile.phone', read_only=True)
+    profile_address = serializers.CharField(source='profile.address', read_only=True)
     is_active = serializers.BooleanField(read_only=True)
     date_joined = serializers.DateTimeField(read_only=True)
     last_login = serializers.DateTimeField(read_only=True)
@@ -634,6 +681,7 @@ class AdminUserListSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'username', 'email', 'first_name', 'last_name',
             'profile_role', 'profile_processing_unit', 'profile_shop',
+            'profile_phone', 'profile_address',
             'is_active', 'date_joined', 'last_login'
         ]
 
@@ -657,12 +705,16 @@ class AdminUserCreateUpdateSerializer(serializers.ModelSerializer):
     role = serializers.ChoiceField(choices=[], write_only=True, required=False)  # Choices set in __init__
     processing_unit_id = serializers.IntegerField(write_only=True, required=False)
     shop_id = serializers.IntegerField(write_only=True, required=False)
+    # Profile fields for phone and address (location)
+    phone = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    address = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
     class Meta:
         model = User
         fields = [
             'id', 'username', 'email', 'first_name', 'last_name',
-            'password', 'is_active', 'role', 'processing_unit_id', 'shop_id'
+            'password', 'is_active', 'role', 'processing_unit_id', 'shop_id',
+            'phone', 'address'
         ]
 
     def __init__(self, *args, **kwargs):
@@ -670,20 +722,33 @@ class AdminUserCreateUpdateSerializer(serializers.ModelSerializer):
         self.fields['role'].choices = UserProfile.ROLE_CHOICES
 
     def create(self, validated_data):
-        role = validated_data.pop('role', None)
+        role = validated_data.pop('role', 'Farmer')  # Default to Farmer
         processing_unit_id = validated_data.pop('processing_unit_id', None)
         shop_id = validated_data.pop('shop_id', None)
         password = validated_data.pop('password', None)
-
-        user = User.objects.create_user(**validated_data)
-        if password:
-            user.set_password(password)
+        phone = validated_data.pop('phone', '')
+        address = validated_data.pop('address', '')
+        
+        # Create user with password
+        user = User.objects.create_user(
+            username=validated_data.get('username'),
+            email=validated_data.get('email', ''),
+            password=password if password else 'changeme123',  # Default password if not provided
+            first_name=validated_data.get('first_name', ''),
+            last_name=validated_data.get('last_name', ''),
+        )
+        
+        # Set additional user fields
+        if validated_data.get('is_active') is not None:
+            user.is_active = validated_data.get('is_active')
             user.save()
 
-        # Create or update profile
-        profile_data = {}
-        if role:
-            profile_data['role'] = role
+        # Create or update profile with role, phone, and address
+        profile_data = {
+            'role': role,
+            'phone': phone,
+            'address': address,
+        }
         if processing_unit_id:
             try:
                 profile_data['processing_unit'] = ProcessingUnit.objects.get(id=processing_unit_id)
@@ -695,8 +760,8 @@ class AdminUserCreateUpdateSerializer(serializers.ModelSerializer):
             except Shop.DoesNotExist:
                 pass
 
-        if profile_data:
-            UserProfile.objects.update_or_create(user=user, defaults=profile_data)
+        # This will trigger geocoding via the model's save() method
+        UserProfile.objects.update_or_create(user=user, defaults=profile_data)
 
         return user
 
@@ -705,6 +770,8 @@ class AdminUserCreateUpdateSerializer(serializers.ModelSerializer):
         processing_unit_id = validated_data.pop('processing_unit_id', None)
         shop_id = validated_data.pop('shop_id', None)
         password = validated_data.pop('password', None)
+        phone = validated_data.pop('phone', None)
+        address = validated_data.pop('address', None)
 
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
@@ -716,6 +783,13 @@ class AdminUserCreateUpdateSerializer(serializers.ModelSerializer):
         profile_data = {}
         if role:
             profile_data['role'] = role
+        if phone is not None:
+            profile_data['phone'] = phone
+        if address is not None:
+            profile_data['address'] = address
+            # Clear existing coordinates so geocoding runs again
+            profile_data['latitude'] = None
+            profile_data['longitude'] = None
         if processing_unit_id:
             try:
                 profile_data['processing_unit'] = ProcessingUnit.objects.get(id=processing_unit_id)
@@ -728,7 +802,11 @@ class AdminUserCreateUpdateSerializer(serializers.ModelSerializer):
                 pass
 
         if profile_data:
-            UserProfile.objects.update_or_create(user=instance, defaults=profile_data)
+            # Get or create profile, then save to trigger geocoding
+            profile, created = UserProfile.objects.get_or_create(user=instance)
+            for key, value in profile_data.items():
+                setattr(profile, key, value)
+            profile.save()  # This triggers geocoding
 
         return instance
 

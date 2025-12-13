@@ -168,6 +168,34 @@ try:
 except Exception as e:
     print(f"[ERROR] Failed to register AdminAnalyticsViewSet: {e}")
 
+try:
+    from .viewsets import AdminComplianceAuditViewSet
+    router.register(r'admin/compliance', AdminComplianceAuditViewSet, basename='admin-compliance')
+    print("[OK] AdminComplianceAuditViewSet registered successfully")
+except Exception as e:
+    print(f"[ERROR] Failed to register AdminComplianceAuditViewSet: {e}")
+
+try:
+    from .viewsets import AdminCertificationViewSet
+    router.register(r'admin/certifications', AdminCertificationViewSet, basename='admin-certifications')
+    print("[OK] AdminCertificationViewSet registered successfully")
+except Exception as e:
+    print(f"[ERROR] Failed to register AdminCertificationViewSet: {e}")
+
+try:
+    from .viewsets import RegistrationApplicationViewSet
+    router.register(r'admin/registrations', RegistrationApplicationViewSet, basename='admin-registrations')
+    print("[OK] RegistrationApplicationViewSet registered successfully")
+except Exception as e:
+    print(f"[ERROR] Failed to register RegistrationApplicationViewSet: {e}")
+
+try:
+    from .viewsets import ApprovalWorkflowViewSet
+    router.register(r'admin/workflows', ApprovalWorkflowViewSet, basename='admin-workflows')
+    print("[OK] ApprovalWorkflowViewSet registered successfully")
+except Exception as e:
+    print(f"[ERROR] Failed to register ApprovalWorkflowViewSet: {e}")
+
 urlpatterns = [
     # Admin template routes were moved to `meat_trace.admin_urls` so the
     # admin UI can be included only in environments that need it.

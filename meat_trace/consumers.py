@@ -294,3 +294,73 @@ class AuthProgressConsumer(AsyncWebsocketConsumer):
             'code': error_data.get('code', 'unknown'),
             'timestamp': error_data.get('timestamp', '')
         }))
+
+
+class AdminNotificationConsumer(AsyncWebsocketConsumer):
+    """
+    WebSocket consumer for admin dashboard real-time updates.
+    Sends notifications about pending approvals, audits, and system events.
+    """
+
+    async def connect(self):
+        """Handle WebSocket connection - Admin users only"""
+        self.user = self.scope['user']
+
+        if not self.user.is_authenticated or not self.user.is_staff:
+            await self.close()
+            return
+
+        # Join admin notifications group
+        await self.channel_layer.group_add(
+            'admin_notifications',
+            self.channel_name
+        )
+
+        await self.accept()
+
+        # Send initial admin stats
+        stats = await self.get_admin_stats()
+        await self.send(text_data=json.dumps({
+            'type': 'initial_stats',
+            'stats': stats
+        }))
+
+    async def disconnect(self, close_code):
+        """Handle WebSocket disconnection"""
+        await self.channel_layer.group_discard(
+            'admin_notifications',
+            self.channel_name
+        )
+
+    async def admin_notification(self, event):
+        """
+        Handle admin notification events.
+        Called when approval requests, audits, or other admin-relevant events occur.
+        """
+        notification_data = event['notification']
+        await self.send(text_data=json.dumps({
+            'type': 'admin_notification',
+            'notification': notification_data
+        }))
+
+    async def pending_count_update(self, event):
+        """
+        Handle pending approval count updates.
+        """
+        await self.send(text_data=json.dumps({
+            'type': 'pending_count_update',
+            'count': event['count']
+        }))
+
+    @database_sync_to_async
+    def get_admin_stats(self):
+        """Get current admin dashboard statistics"""
+        from .models import RegistrationApplication, ComplianceAudit
+        
+        pending_approvals = RegistrationApplication.objects.filter(status='pending').count()
+        scheduled_audits = ComplianceAudit.objects.filter(status='scheduled').count()
+        
+        return {
+            'pending_approvals': pending_approvals,
+            'scheduled_audits': scheduled_audits,
+        }

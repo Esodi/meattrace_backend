@@ -62,7 +62,7 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'meat_trace.middleware.APILoggingMiddleware',  # Custom API logging
-    # 'meat_trace.middleware.AdminAuthenticationMiddleware',  # Removed - admin implementation removed
+    'meat_trace.audit_middleware.AdminAuditMiddleware',  # Admin action logging
 ]
 
 ROOT_URLCONF = 'meattrace_backend.urls'
@@ -330,17 +330,19 @@ CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
 
 # Celery Beat schedule for periodic tasks
+# Celery Beat schedule for periodic tasks
 from celery.schedules import crontab
 CELERY_BEAT_SCHEDULE = {
     'cleanup-expired-tokens': {
         'task': 'meat_trace.tasks.cleanup_expired_tokens',
         'schedule': crontab(hour=2, minute=0),  # Daily at 2 AM
     },
-    # 'generate-admin-reports': {  # Removed - admin implementation removed
-    #     'task': 'meat_trace.tasks.generate_admin_reports',
-    #     'schedule': crontab(hour=6, minute=0),  # Daily at 6 AM
-    # },
+    'generate-admin-reports': {  # Removed - admin implementation removed
+        'task': 'meat_trace.tasks.generate_admin_reports',
+        'schedule': crontab(hour=6, minute=0),  # Daily at 6 AM
+    },
 }
+
 
 # Cache configuration - Use local memory cache for development if Redis not available
 try:
@@ -370,12 +372,12 @@ SESSION_CACHE_ALIAS = 'default'
 REST_FRAMEWORK['DEFAULT_THROTTLE_CLASSES'] = [
     'rest_framework.throttling.AnonRateThrottle',
     'rest_framework.throttling.UserRateThrottle',
-    # 'meat_trace.throttling.AdminRateThrottle',  # Removed - admin implementation removed
+    'meat_trace.throttling.AdminRateThrottle',
 ]
 REST_FRAMEWORK['DEFAULT_THROTTLE_RATES'] = {
     'anon': '100/hour',
     'user': '1000/hour',
-    # 'admin': '100/minute',  # Removed - admin implementation removed
+    'admin': '100/minute',
 }
 
 # drf-spectacular settings for API documentation

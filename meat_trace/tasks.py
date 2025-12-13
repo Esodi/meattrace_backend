@@ -3,7 +3,15 @@ Celery tasks for the meat traceability application.
 Handles background processing for notifications, reports, and system maintenance.
 """
 
-from celery import shared_task
+try:
+    from celery import shared_task
+except ImportError:
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.warning("Celery not installed, using dummy shared_task decorator")
+    def shared_task(func):
+        return func
+
 from django.utils import timezone
 from django.core.management import call_command
 import logging
