@@ -583,7 +583,7 @@ class CarcassMeasurement(models.Model):
                 raise ValidationError("For split carcass, both left_carcass_weight and right_carcass_weight are required.")
 
             # Validate that total weight makes sense (not too small for any animal)
-            total_weight = 0.0
+            total_weight = Decimal('0')
             if self.head_weight: total_weight += self.head_weight
             if self.torso_weight: total_weight += self.torso_weight
             if self.left_carcass_weight: total_weight += self.left_carcass_weight
@@ -591,7 +591,7 @@ class CarcassMeasurement(models.Model):
             if self.feet_weight: total_weight += self.feet_weight
             if self.organs_weight: total_weight += self.organs_weight
 
-            if total_weight > 0 and total_weight < 0.5:
+            if total_weight > 0 and total_weight < Decimal('0.5'):
                 raise ValidationError("Total carcass weight seems too small. Please verify measurements.")
 
     def save(self, *args, **kwargs):

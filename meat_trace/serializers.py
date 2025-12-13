@@ -255,6 +255,92 @@ class CarcassMeasurementSerializer(serializers.ModelSerializer):
         model = CarcassMeasurement
         fields = '__all__'
 
+    def to_internal_value(self, data):
+        """
+        Extract weight values from nested measurements JSON and populate individual fields.
+        Frontend sends: {"measurements": {"whole_carcass_weight": {"value": 32.6, "unit": "kg"}}}
+        We need to extract these values into individual model fields.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Make a mutable copy of data
+        mutable_data = data.copy() if hasattr(data, 'copy') else dict(data)
+        
+        measurements = mutable_data.get('measurements', {})
+        
+        if measurements:
+            logger.info(f"[CARCASS_SERIALIZER] Extracting weights from measurements: {measurements}")
+            
+            # Weight fields that can be extracted from measurements JSON
+            weight_fields = ['head_weight', 'torso_weight', 'left_carcass_weight',
+                            'right_carcass_weight', 'feet_weight', 'whole_carcass_weight', 'organs_weight']
+            
+            for field_name in weight_fields:
+                if field_name in measurements and mutable_data.get(field_name) is None:
+                    measurement_value = measurements[field_name]
+                    # Handle both formats: {"value": 32.6, "unit": "kg"} or just 32.6
+                    if isinstance(measurement_value, dict):
+                        value = measurement_value.get('value')
+                    else:
+                        value = measurement_value
+                    
+                    if value is not None:
+                        mutable_data[field_name] = value
+                        logger.info(f"[CARCASS_SERIALIZER] Extracted {field_name} = {value}")
+        
+        return super().to_internal_value(mutable_data)
+
+    def validate(self, attrs):
+        """
+        Validate carcass measurement data based on carcass type.
+        This ensures proper validation errors (400) instead of server errors (500).
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        carcass_type = attrs.get('carcass_type', 'whole')
+        logger.info(f"[CARCASS_SERIALIZER] Validating carcass_type: {carcass_type}")
+        logger.info(f"[CARCASS_SERIALIZER] Attrs after extraction: {attrs}")
+        
+        # Validate required fields based on carcass_type
+        if carcass_type == 'whole':
+            whole_carcass_weight = attrs.get('whole_carcass_weight')
+            if whole_carcass_weight is None:
+                raise serializers.ValidationError({
+                    'whole_carcass_weight': 'For whole carcass, whole_carcass_weight is required.'
+                })
+        elif carcass_type == 'split':
+            left_carcass_weight = attrs.get('left_carcass_weight')
+            right_carcass_weight = attrs.get('right_carcass_weight')
+            
+            errors = {}
+            if left_carcass_weight is None:
+                errors['left_carcass_weight'] = 'For split carcass, left_carcass_weight is required.'
+            if right_carcass_weight is None:
+                errors['right_carcass_weight'] = 'For split carcass, right_carcass_weight is required.'
+            
+            if errors:
+                raise serializers.ValidationError(errors)
+        
+        # Validate all weights are positive
+        weight_fields = ['head_weight', 'torso_weight', 'left_carcass_weight',
+                        'right_carcass_weight', 'feet_weight', 'whole_carcass_weight', 'organs_weight']
+        for field_name in weight_fields:
+            weight = attrs.get(field_name)
+            if weight is not None:
+                if weight <= 0:
+                    raise serializers.ValidationError({
+                        field_name: f'{field_name.replace("_", " ").title()} must be positive.'
+                    })
+                # Check for unrealistic weights
+                if weight > 2000:
+                    raise serializers.ValidationError({
+                        field_name: f'{field_name.replace("_", " ").title()} seems unusually large. Please verify the measurement.'
+                    })
+        
+        return attrs
+
 
 class AnimalSerializer(serializers.ModelSerializer):
     farmer_name = serializers.CharField(source='farmer.username', read_only=True)
