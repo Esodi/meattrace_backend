@@ -950,3 +950,323 @@ class ReceiptSerializer(serializers.ModelSerializer):
         fields = ['id', 'shop', 'shop_name', 'product', 'product_name', 'product_type', 
                   'received_quantity', 'received_at']
         read_only_fields = ['received_at']
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADMIN CRUD SERIALIZERS - For creating/updating entities at any traceability point
+# ══════════════════════════════════════════════════════════════════════════════
+
+class AdminAnimalCreateUpdateSerializer(serializers.ModelSerializer):
+    """Serializer for admin to create/update animals at any traceability point"""
+    farmer_id = serializers.IntegerField(write_only=True)
+    processing_unit_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
+    
+    # Read-only fields for response
+    farmer_name = serializers.CharField(source='farmer.username', read_only=True)
+    processing_unit_name = serializers.CharField(source='transferred_to.name', read_only=True)
+    lifecycle_status = serializers.ReadOnlyField()
+
+    class Meta:
+        model = Animal
+        fields = [
+            'id', 'animal_id', 'animal_name', 'species', 'breed', 'age', 'gender',
+            'live_weight', 'remaining_weight', 'notes', 'health_status',
+            'slaughtered', 'slaughtered_at', 'processed',
+            'farmer_id', 'farmer_name', 'processing_unit_id', 'processing_unit_name',
+            'lifecycle_status', 'created_at'
+        ]
+        read_only_fields = ['animal_id', 'created_at', 'lifecycle_status']
+
+    def validate_farmer_id(self, value):
+        try:
+            user = User.objects.get(id=value)
+            # Verify user is a farmer
+            if hasattr(user, 'profile') and user.profile.role != 'Farmer':
+                raise serializers.ValidationError("Selected user is not a farmer.")
+            return value
+        except User.DoesNotExist:
+            raise serializers.ValidationError("Farmer not found.")
+
+    def validate_processing_unit_id(self, value):
+        if value is None:
+            return value
+        try:
+            ProcessingUnit.objects.get(id=value)
+            return value
+        except ProcessingUnit.DoesNotExist:
+            raise serializers.ValidationError("Processing unit not found.")
+
+    def create(self, validated_data):
+        from django.utils import timezone
+        farmer_id = validated_data.pop('farmer_id')
+        processing_unit_id = validated_data.pop('processing_unit_id', None)
+        
+        farmer = User.objects.get(id=farmer_id)
+        validated_data['farmer'] = farmer
+        
+        if processing_unit_id:
+            processing_unit = ProcessingUnit.objects.get(id=processing_unit_id)
+            validated_data['transferred_to'] = processing_unit
+            validated_data['transferred_at'] = timezone.now()
+        
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        from django.utils import timezone
+        farmer_id = validated_data.pop('farmer_id', None)
+        processing_unit_id = validated_data.pop('processing_unit_id', None)
+        
+        if farmer_id:
+            instance.farmer = User.objects.get(id=farmer_id)
+        
+        if processing_unit_id is not None:
+            if processing_unit_id:
+                instance.transferred_to = ProcessingUnit.objects.get(id=processing_unit_id)
+                if not instance.transferred_at:
+                    instance.transferred_at = timezone.now()
+            else:
+                instance.transferred_to = None
+                instance.transferred_at = None
+        
+        return super().update(instance, validated_data)
+
+
+class AdminProductCreateUpdateSerializer(serializers.ModelSerializer):
+    """Serializer for admin to create/update products at any traceability point"""
+    processing_unit_id = serializers.IntegerField(write_only=True)
+    animal_id = serializers.IntegerField(write_only=True)
+    slaughter_part_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
+    category_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
+    shop_id = serializers.IntegerField(write_only=True, required=False, allow_null=True,
+                                        help_text="Assign product directly to a shop")
+    
+    # Read-only fields for response
+    animal_id_display = serializers.CharField(source='animal.animal_id', read_only=True)
+    processing_unit_name = serializers.CharField(source='processing_unit.name', read_only=True)
+    transferred_to_name = serializers.CharField(source='transferred_to.name', read_only=True)
+    received_by_shop_name = serializers.CharField(source='received_by_shop.name', read_only=True)
+    category_name = serializers.CharField(source='category.name', read_only=True)
+    slaughter_part_type = serializers.CharField(source='slaughter_part.part_type', read_only=True)
+
+    class Meta:
+        model = Product
+        fields = [
+            'id', 'name', 'batch_number', 'product_type', 'description',
+            'quantity', 'weight', 'weight_unit', 'price', 'manufacturer',
+            'processing_unit_id', 'processing_unit_name',
+            'animal_id', 'animal_id_display',
+            'slaughter_part_id', 'slaughter_part_type',
+            'category_id', 'category_name',
+            'shop_id', 'transferred_to_name', 'received_by_shop_name',
+            'transferred_at', 'received_at', 'quantity_received',
+            'created_at'
+        ]
+        read_only_fields = ['created_at']
+
+    def validate_processing_unit_id(self, value):
+        try:
+            ProcessingUnit.objects.get(id=value)
+            return value
+        except ProcessingUnit.DoesNotExist:
+            raise serializers.ValidationError("Processing unit not found.")
+
+    def validate_animal_id(self, value):
+        try:
+            Animal.objects.get(id=value)
+            return value
+        except Animal.DoesNotExist:
+            raise serializers.ValidationError("Animal not found.")
+
+    def validate_slaughter_part_id(self, value):
+        if value is None:
+            return value
+        try:
+            SlaughterPart.objects.get(id=value)
+            return value
+        except SlaughterPart.DoesNotExist:
+            raise serializers.ValidationError("Slaughter part not found.")
+
+    def validate_category_id(self, value):
+        if value is None:
+            return value
+        try:
+            ProductCategory.objects.get(id=value)
+            return value
+        except ProductCategory.DoesNotExist:
+            raise serializers.ValidationError("Product category not found.")
+
+    def validate_shop_id(self, value):
+        if value is None:
+            return value
+        try:
+            Shop.objects.get(id=value)
+            return value
+        except Shop.DoesNotExist:
+            raise serializers.ValidationError("Shop not found.")
+
+    def create(self, validated_data):
+        from django.utils import timezone
+        processing_unit_id = validated_data.pop('processing_unit_id')
+        animal_id = validated_data.pop('animal_id')
+        slaughter_part_id = validated_data.pop('slaughter_part_id', None)
+        category_id = validated_data.pop('category_id', None)
+        shop_id = validated_data.pop('shop_id', None)
+        
+        validated_data['processing_unit'] = ProcessingUnit.objects.get(id=processing_unit_id)
+        validated_data['animal'] = Animal.objects.get(id=animal_id)
+        
+        if slaughter_part_id:
+            validated_data['slaughter_part'] = SlaughterPart.objects.get(id=slaughter_part_id)
+        
+        if category_id:
+            validated_data['category'] = ProductCategory.objects.get(id=category_id)
+        
+        # If shop_id is provided, assign product to shop
+        if shop_id:
+            shop = Shop.objects.get(id=shop_id)
+            validated_data['transferred_to'] = shop
+            validated_data['received_by_shop'] = shop
+            validated_data['transferred_at'] = timezone.now()
+            validated_data['received_at'] = timezone.now()
+            if 'quantity_received' not in validated_data or not validated_data['quantity_received']:
+                validated_data['quantity_received'] = validated_data.get('quantity', 0)
+        
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        from django.utils import timezone
+        processing_unit_id = validated_data.pop('processing_unit_id', None)
+        animal_id = validated_data.pop('animal_id', None)
+        slaughter_part_id = validated_data.pop('slaughter_part_id', None)
+        category_id = validated_data.pop('category_id', None)
+        shop_id = validated_data.pop('shop_id', None)
+        
+        if processing_unit_id:
+            instance.processing_unit = ProcessingUnit.objects.get(id=processing_unit_id)
+        
+        if animal_id:
+            instance.animal = Animal.objects.get(id=animal_id)
+        
+        if slaughter_part_id is not None:
+            if slaughter_part_id:
+                instance.slaughter_part = SlaughterPart.objects.get(id=slaughter_part_id)
+            else:
+                instance.slaughter_part = None
+        
+        if category_id is not None:
+            if category_id:
+                instance.category = ProductCategory.objects.get(id=category_id)
+            else:
+                instance.category = None
+        
+        # Handle shop assignment
+        if shop_id is not None:
+            if shop_id:
+                shop = Shop.objects.get(id=shop_id)
+                instance.transferred_to = shop
+                instance.received_by_shop = shop
+                if not instance.transferred_at:
+                    instance.transferred_at = timezone.now()
+                if not instance.received_at:
+                    instance.received_at = timezone.now()
+            else:
+                instance.transferred_to = None
+                instance.received_by_shop = None
+                instance.transferred_at = None
+                instance.received_at = None
+        
+        return super().update(instance, validated_data)
+
+
+class AdminSlaughterPartCreateUpdateSerializer(serializers.ModelSerializer):
+    """Serializer for admin to create/update slaughter parts"""
+    animal_id = serializers.IntegerField(write_only=True)
+    processing_unit_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
+    
+    # Read-only fields for response
+    animal_id_display = serializers.CharField(source='animal.animal_id', read_only=True)
+    animal_species = serializers.CharField(source='animal.species', read_only=True)
+    processing_unit_name = serializers.CharField(source='transferred_to.name', read_only=True)
+
+    class Meta:
+        model = SlaughterPart
+        fields = [
+            'id', 'part_id', 'part_type', 'weight', 'remaining_weight', 'weight_unit',
+            'description', 'used_in_product', 'is_selected_for_transfer',
+            'animal_id', 'animal_id_display', 'animal_species',
+            'processing_unit_id', 'processing_unit_name',
+            'transferred_at', 'received_at', 'created_at'
+        ]
+        read_only_fields = ['part_id', 'created_at']
+
+    def validate_animal_id(self, value):
+        try:
+            animal = Animal.objects.get(id=value)
+            # Verify animal is slaughtered
+            if not animal.slaughtered:
+                raise serializers.ValidationError("Animal must be slaughtered before adding parts.")
+            return value
+        except Animal.DoesNotExist:
+            raise serializers.ValidationError("Animal not found.")
+
+    def validate_processing_unit_id(self, value):
+        if value is None:
+            return value
+        try:
+            ProcessingUnit.objects.get(id=value)
+            return value
+        except ProcessingUnit.DoesNotExist:
+            raise serializers.ValidationError("Processing unit not found.")
+
+    def create(self, validated_data):
+        from django.utils import timezone
+        animal_id = validated_data.pop('animal_id')
+        processing_unit_id = validated_data.pop('processing_unit_id', None)
+        
+        validated_data['animal'] = Animal.objects.get(id=animal_id)
+        
+        if processing_unit_id:
+            validated_data['transferred_to'] = ProcessingUnit.objects.get(id=processing_unit_id)
+            validated_data['transferred_at'] = timezone.now()
+        
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        from django.utils import timezone
+        animal_id = validated_data.pop('animal_id', None)
+        processing_unit_id = validated_data.pop('processing_unit_id', None)
+        
+        if animal_id:
+            instance.animal = Animal.objects.get(id=animal_id)
+        
+        if processing_unit_id is not None:
+            if processing_unit_id:
+                instance.transferred_to = ProcessingUnit.objects.get(id=processing_unit_id)
+                if not instance.transferred_at:
+                    instance.transferred_at = timezone.now()
+            else:
+                instance.transferred_to = None
+                instance.transferred_at = None
+        
+        return super().update(instance, validated_data)
+
+
+class AdminFarmerListSerializer(serializers.ModelSerializer):
+    """Serializer for listing farmers for selection dropdowns"""
+    full_name = serializers.SerializerMethodField()
+    location = serializers.CharField(source='profile.address', read_only=True)
+    phone = serializers.CharField(source='profile.phone', read_only=True)
+    animal_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'email', 'first_name', 'last_name', 
+                  'full_name', 'location', 'phone', 'animal_count']
+
+    def get_full_name(self, obj):
+        full_name = f"{obj.first_name} {obj.last_name}".strip()
+        return full_name if full_name else obj.username
+
+    def get_animal_count(self, obj):
+        return obj.animals.count()
+

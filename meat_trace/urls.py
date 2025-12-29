@@ -162,6 +162,20 @@ except Exception as e:
     print(f"[ERROR] Failed to register AdminProductViewSet: {e}")
 
 try:
+    from .viewsets import AdminSlaughterPartViewSet
+    router.register(r'admin/slaughter-parts', AdminSlaughterPartViewSet, basename='admin-slaughter-parts')
+    print("[OK] AdminSlaughterPartViewSet registered successfully")
+except Exception as e:
+    print(f"[ERROR] Failed to register AdminSlaughterPartViewSet: {e}")
+
+try:
+    from .viewsets import AdminFarmerViewSet
+    router.register(r'admin/farmers', AdminFarmerViewSet, basename='admin-farmers')
+    print("[OK] AdminFarmerViewSet registered successfully")
+except Exception as e:
+    print(f"[ERROR] Failed to register AdminFarmerViewSet: {e}")
+
+try:
     from .viewsets import AdminAnalyticsViewSet
     router.register(r'admin/analytics', AdminAnalyticsViewSet, basename='admin-analytics')
     print("[OK] AdminAnalyticsViewSet registered successfully")

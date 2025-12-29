@@ -1044,9 +1044,10 @@ class AdminShopViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
 
-class AdminAnimalViewSet(viewsets.ReadOnlyModelViewSet):
+class AdminAnimalViewSet(viewsets.ModelViewSet):
     """
-    ViewSet for admin animal traceability overview
+    ViewSet for admin animal management with full CRUD.
+    Allows admins to add animals at any point in the traceability chain.
     """
     permission_classes = [IsAuthenticated]
     queryset = None  # Will be set in get_queryset
@@ -1057,7 +1058,9 @@ class AdminAnimalViewSet(viewsets.ReadOnlyModelViewSet):
     ordering = ['-created_at']
 
     def get_serializer_class(self):
-        from .serializers import AdminAnimalOverviewSerializer
+        from .serializers import AdminAnimalOverviewSerializer, AdminAnimalCreateUpdateSerializer
+        if self.action in ['create', 'update', 'partial_update']:
+            return AdminAnimalCreateUpdateSerializer
         return AdminAnimalOverviewSerializer
 
     def get_queryset(self):
@@ -1083,9 +1086,10 @@ class AdminAnimalViewSet(viewsets.ReadOnlyModelViewSet):
         return queryset
 
 
-class AdminProductViewSet(viewsets.ReadOnlyModelViewSet):
+class AdminProductViewSet(viewsets.ModelViewSet):
     """
-    ViewSet for admin product traceability overview
+    ViewSet for admin product management with full CRUD.
+    Allows admins to add products at processing units or directly to shops.
     """
     permission_classes = [IsAuthenticated]
     queryset = None  # Will be set in get_queryset
@@ -1096,7 +1100,9 @@ class AdminProductViewSet(viewsets.ReadOnlyModelViewSet):
     ordering = ['-created_at']
 
     def get_serializer_class(self):
-        from .serializers import AdminProductOverviewSerializer
+        from .serializers import AdminProductOverviewSerializer, AdminProductCreateUpdateSerializer
+        if self.action in ['create', 'update', 'partial_update']:
+            return AdminProductCreateUpdateSerializer
         return AdminProductOverviewSerializer
 
     def get_queryset(self):
@@ -1104,6 +1110,62 @@ class AdminProductViewSet(viewsets.ReadOnlyModelViewSet):
         return Product.objects.select_related(
             'animal', 'processing_unit', 'transferred_to', 'received_by_shop', 'category'
         ).all()
+
+
+class AdminSlaughterPartViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for admin slaughter part management with full CRUD.
+    Allows admins to add slaughter parts from slaughtered animals.
+    """
+    permission_classes = [IsAuthenticated]
+    queryset = None  # Will be set in get_queryset
+    serializer_class = None  # Will be set in get_serializer_class
+    filterset_fields = ['part_type', 'transferred_to', 'used_in_product']
+    search_fields = ['part_id', 'animal__animal_id', 'animal__animal_name']
+    ordering_fields = ['created_at', 'weight']
+    ordering = ['-created_at']
+
+    def get_serializer_class(self):
+        from .serializers import SlaughterPartSerializer, AdminSlaughterPartCreateUpdateSerializer
+        if self.action in ['create', 'update', 'partial_update']:
+            return AdminSlaughterPartCreateUpdateSerializer
+        return SlaughterPartSerializer
+
+    def get_queryset(self):
+        from .models import SlaughterPart
+        queryset = SlaughterPart.objects.select_related('animal', 'transferred_to').all()
+        
+        # Filter by animal_id if provided
+        animal_id = self.request.query_params.get('animal_id')
+        if animal_id:
+            queryset = queryset.filter(animal_id=animal_id)
+        
+        return queryset
+
+
+class AdminFarmerViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    ViewSet for listing farmers for admin selection dropdowns.
+    Read-only - farmers are managed through the user management interface.
+    """
+    permission_classes = [IsAuthenticated]
+    queryset = None  # Will be set in get_queryset
+    serializer_class = None  # Will be set in get_serializer_class
+    search_fields = ['username', 'email', 'first_name', 'last_name']
+    ordering_fields = ['username', 'first_name', 'date_joined']
+    ordering = ['username']
+
+    def get_serializer_class(self):
+        from .serializers import AdminFarmerListSerializer
+        return AdminFarmerListSerializer
+
+    def get_queryset(self):
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        return User.objects.filter(
+            profile__role='Farmer',
+            is_active=True
+        ).select_related('profile').prefetch_related('animals')
 
 
 class AdminAnalyticsViewSet(viewsets.ViewSet):
