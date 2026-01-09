@@ -763,6 +763,32 @@ class AdminUserCreateUpdateSerializer(serializers.ModelSerializer):
         # This will trigger geocoding via the model's save() method
         UserProfile.objects.update_or_create(user=user, defaults=profile_data)
 
+        # If role is Processor and processing_unit_id is provided, create ProcessingUnitUser
+        if role == 'Processor' and processing_unit_id:
+            try:
+                processing_unit = ProcessingUnit.objects.get(id=processing_unit_id)
+                from .models import ProcessingUnitUser
+                ProcessingUnitUser.objects.get_or_create(
+                    user=user,
+                    processing_unit=processing_unit,
+                    defaults={'is_active': True, 'is_suspended': False}
+                )
+            except ProcessingUnit.DoesNotExist:
+                pass
+
+        # If role is ShopOwner and shop_id is provided, create ShopUser
+        if role == 'ShopOwner' and shop_id:
+            try:
+                shop = Shop.objects.get(id=shop_id)
+                from .models import ShopUser
+                ShopUser.objects.get_or_create(
+                    user=user,
+                    shop=shop,
+                    defaults={'is_active': True}
+                )
+            except Shop.DoesNotExist:
+                pass
+
         return user
 
     def update(self, instance, validated_data):
@@ -807,6 +833,32 @@ class AdminUserCreateUpdateSerializer(serializers.ModelSerializer):
             for key, value in profile_data.items():
                 setattr(profile, key, value)
             profile.save()  # This triggers geocoding
+
+        # If role is Processor and processing_unit_id is provided, ensure ProcessingUnitUser exists
+        if role == 'Processor' and processing_unit_id:
+            try:
+                processing_unit = ProcessingUnit.objects.get(id=processing_unit_id)
+                from .models import ProcessingUnitUser
+                ProcessingUnitUser.objects.get_or_create(
+                    user=instance,
+                    processing_unit=processing_unit,
+                    defaults={'is_active': True, 'is_suspended': False}
+                )
+            except ProcessingUnit.DoesNotExist:
+                pass
+
+        # If role is ShopOwner and shop_id is provided, ensure ShopUser exists
+        if role == 'ShopOwner' and shop_id:
+            try:
+                shop = Shop.objects.get(id=shop_id)
+                from .models import ShopUser
+                ShopUser.objects.get_or_create(
+                    user=instance,
+                    shop=shop,
+                    defaults={'is_active': True}
+                )
+            except Shop.DoesNotExist:
+                pass
 
         return instance
 
