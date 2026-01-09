@@ -1052,6 +1052,7 @@ class AdminAnimalViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     queryset = None  # Will be set in get_queryset
     serializer_class = None  # Will be set in get_serializer_class
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['species', 'slaughtered', 'transferred_to']
     search_fields = ['animal_id', 'animal_name', 'farmer__username']
     ordering_fields = ['created_at', 'slaughtered_at', 'transferred_at']
@@ -1094,6 +1095,7 @@ class AdminProductViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     queryset = None  # Will be set in get_queryset
     serializer_class = None  # Will be set in get_serializer_class
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['product_type', 'transferred_to', 'received_by_shop', 'category']
     search_fields = ['name', 'batch_number', 'animal__animal_id']
     ordering_fields = ['created_at', 'transferred_at']
@@ -1120,6 +1122,7 @@ class AdminSlaughterPartViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     queryset = None  # Will be set in get_queryset
     serializer_class = None  # Will be set in get_serializer_class
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['part_type', 'transferred_to', 'used_in_product']
     search_fields = ['part_id', 'animal__animal_id', 'animal__animal_name']
     ordering_fields = ['created_at', 'weight']
