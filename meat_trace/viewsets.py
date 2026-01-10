@@ -16,6 +16,10 @@ from datetime import timedelta
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters
 import logging
+import io
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment
+from django.http import HttpResponse
 
 logger = logging.getLogger(__name__)
 
@@ -1360,6 +1364,212 @@ class AdminAnalyticsViewSet(viewsets.ViewSet):
             'end_date': end_date.isoformat(),
             'weekly_stats': weekly_stats
         })
+
+    @action(detail=False, methods=['get'])
+    def custom_report(self, request):
+        """Get custom analytics report with granular filters"""
+        from .models import Animal, Product, Order, Sale, User, ProcessingUnit, Shop
+        
+        # Filters
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        animal_id = request.query_params.get('animal_id')
+        product_id = request.query_params.get('product_id')
+        shop_id = request.query_params.get('shop_id')
+        farmer_id = request.query_params.get('farmer_id')
+        processing_unit_id = request.query_params.get('processing_unit_id')
+
+        # Base filters
+        q_animals = Q()
+        q_products = Q()
+        q_orders = Q()
+        q_sales = Q()
+
+        if start_date:
+            q_animals &= Q(created_at__date__gte=start_date)
+            q_products &= Q(created_at__date__gte=start_date)
+            q_orders &= Q(created_at__date__gte=start_date)
+            q_sales &= Q(created_at__date__gte=start_date)
+        if end_date:
+            q_animals &= Q(created_at__date__lte=end_date)
+            q_products &= Q(created_at__date__lte=end_date)
+            q_orders &= Q(created_at__date__lte=end_date)
+            q_sales &= Q(created_at__date__lte=end_date)
+        
+        if animal_id:
+            q_animals &= Q(id=animal_id)
+            q_products &= Q(animal_id=animal_id)
+            # Orders and Sales might not link directly to animal, skipping for simplicity or would need joins
+        
+        if product_id:
+            q_products &= Q(id=product_id)
+            q_orders &= Q(products__id=product_id)
+            q_sales &= Q(products__id=product_id)
+
+        if shop_id:
+            q_orders &= Q(shop_id=shop_id)
+            q_sales &= Q(shop_id=shop_id)
+            # Products link to shop via received_by_shop
+            q_products &= Q(received_by_shop_id=shop_id)
+
+        if farmer_id:
+            q_animals &= Q(farmer_id=farmer_id)
+        
+        if processing_unit_id:
+            q_products &= Q(processing_unit_id=processing_unit_id)
+
+        # Execute queries
+        animals = Animal.objects.filter(q_animals).select_related('farmer', 'transferred_to')
+        products = Product.objects.filter(q_products).select_related('animal', 'processing_unit', 'received_by_shop')
+        orders = Order.objects.filter(q_orders).select_related('shop', 'customer')
+        sales = Sale.objects.filter(q_sales).select_related('shop', 'seller')
+
+        data = {
+            'summary': {
+                'total_animals': animals.count(),
+                'total_products': products.count(),
+                'total_orders': orders.count(),
+                'total_sales': sales.count(),
+                'total_revenue': sales.aggregate(total=Sum('total_amount'))['total'] or 0,
+            },
+            'filters': {
+                'start_date': start_date,
+                'end_date': end_date,
+                'animal_id': animal_id,
+                'product_id': product_id,
+                'shop_id': shop_id,
+                'farmer_id': farmer_id,
+                'processing_unit_id': processing_unit_id,
+            }
+        }
+
+        # Serializing list data for the table
+        data['animals'] = [{
+            'id': a.id,
+            'animal_id': a.animal_id,
+            'species': a.species,
+            'farmer': a.farmer.username if a.farmer else 'Unknown',
+            'created_at': a.created_at.isoformat(),
+            'slaughtered': a.slaughtered
+        } for a in animals[:100]] # Limit to 100 for API response
+
+        data['products'] = [{
+            'id': p.id,
+            'name': p.name,
+            'batch_number': p.batch_number,
+            'processing_unit': p.processing_unit.name if p.processing_unit else 'N/A',
+            'created_at': p.created_at.isoformat()
+        } for p in products[:100]]
+
+        return Response(data)
+
+    @action(detail=False, methods=['get'])
+    def export_excel(self, request):
+        """Export filtered report to Excel"""
+        from .models import Animal, Product, Order, Sale
+        
+        # Reuse same filter logic (ideally would refactor this into a method)
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        shop_id = request.query_params.get('shop_id')
+        processing_unit_id = request.query_params.get('processing_unit_id')
+        
+        q_animals = Q()
+        q_products = Q()
+        q_orders = Q()
+        q_sales = Q()
+
+        if start_date:
+            q_animals &= Q(created_at__date__gte=start_date)
+            q_products &= Q(created_at__date__gte=start_date)
+            q_orders &= Q(created_at__date__gte=start_date)
+            q_sales &= Q(created_at__date__gte=start_date)
+        if end_date:
+            q_animals &= Q(created_at__date__lte=end_date)
+            q_products &= Q(created_at__date__lte=end_date)
+            q_orders &= Q(created_at__date__lte=end_date)
+            q_sales &= Q(created_at__date__lte=end_date)
+        
+        if shop_id:
+            q_orders &= Q(shop_id=shop_id)
+            q_sales &= Q(shop_id=shop_id)
+        if processing_unit_id:
+            q_products &= Q(processing_unit_id=processing_unit_id)
+
+        # Create Workbook
+        wb = openpyxl.Workbook()
+        
+        # Summary Sheet
+        ws_summary = wb.active
+        ws_summary.title = "Executive Summary"
+        
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+        
+        summary_data = [
+            ["MeatTrace Industry Report", ""],
+            ["Generated At", timezone.now().strftime("%Y-%m-%d %H:%M:%S")],
+            ["Period", f"{start_date or 'Beginning'} to {end_date or 'Now'}"],
+            ["", ""],
+            ["Metric", "Value"],
+            ["Total Animals Registered", Animal.objects.filter(q_animals).count()],
+            ["Total Products Created", Product.objects.filter(q_products).count()],
+            ["Total Orders Placed", Order.objects.filter(q_orders).count()],
+            ["Total Sales Recorded", Sale.objects.filter(q_sales).count()],
+            ["Total Revenue", Sale.objects.filter(q_sales).aggregate(total=Sum('total_amount'))['total'] or 0],
+        ]
+        
+        for row in summary_data:
+            ws_summary.append(row)
+            
+        # Style Summary
+        for cell in ws_summary["A5:B5"][0]:
+            cell.font = header_font
+            cell.fill = header_fill
+        
+        # Animals Sheet
+        ws_animals = wb.create_sheet("Animals")
+        headers = ["ID", "Animal ID", "Species", "Farmer", "Registered At", "Slaughtered"]
+        ws_animals.append(headers)
+        for cell in ws_animals[1]:
+            cell.font = header_font
+            cell.fill = header_fill
+            
+        for a in Animal.objects.filter(q_animals).select_related('farmer')[:1000]:
+            ws_animals.append([
+                a.id, a.animal_id, a.species, 
+                a.farmer.username if a.farmer else 'Unknown',
+                a.created_at.strftime("%Y-%m-%d %H:%M"),
+                "Yes" if a.slaughtered else "No"
+            ])
+            
+        # Products Sheet
+        ws_products = wb.create_sheet("Products")
+        headers = ["ID", "Name", "Batch", "Processing Unit", "Created At"]
+        ws_products.append(headers)
+        for cell in ws_products[1]:
+            cell.font = header_font
+            cell.fill = header_fill
+            
+        for p in Product.objects.filter(q_products).select_related('processing_unit')[:1000]:
+            ws_products.append([
+                p.id, p.name, p.batch_number,
+                p.processing_unit.name if p.processing_unit else 'N/A',
+                p.created_at.strftime("%Y-%m-%d %H:%M")
+            ])
+
+        # Prepare response
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+        
+        filename = f"meattrace_report_{timezone.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        response = HttpResponse(
+            output.read(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = f'attachment; filename={filename}'
+        return response
 
 
 # Import missing serializer for inventory
