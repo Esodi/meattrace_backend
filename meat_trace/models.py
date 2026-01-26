@@ -150,14 +150,14 @@ class ShopUser(models.Model):
 
 class UserProfile(models.Model):
     ROLE_CHOICES = [
-        ('Farmer', 'Farmer'),
+        ('Abbatoir', 'Abbatoir'),
         ('Processor', 'Processor'),
         ('ShopOwner', 'Shop Owner'),
         ('Admin', 'Administrator'),
     ]
 
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
-    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='Farmer')
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='Abbatoir')
     # Link to processing unit for users who are part of processing units
     processing_unit = models.ForeignKey(ProcessingUnit, on_delete=models.SET_NULL, null=True, blank=True, related_name='user_profiles')
     # Link to shop for users who are part of shops
@@ -173,12 +173,12 @@ class UserProfile(models.Model):
     address = models.TextField(blank=True)
     bio = models.TextField(blank=True)
     
-    # Geographic coordinates for map display (for Farmers)
+    # Geographic coordinates for map display (for Abbatoirs)
     latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True, help_text="Latitude coordinate for map display")
     longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True, help_text="Longitude coordinate for map display")
 
     # Preferences
-    preferred_species = models.JSONField(default=list, blank=True)  # For farmers
+    preferred_species = models.JSONField(default=list, blank=True)  # For abbatoirs
     notification_preferences = models.JSONField(default=dict, blank=True)
 
     # Verification status
@@ -193,8 +193,8 @@ class UserProfile(models.Model):
         return f"{self.user.username} - {self.role}"
     
     def save(self, *args, **kwargs):
-        # Auto-geocode address if coordinates are not set (for Farmers)
-        if self.address and self.role == 'Farmer' and (self.latitude is None or self.longitude is None):
+        # Auto-geocode address if coordinates are not set (for Abbatoirs)
+        if self.address and self.role == 'Abbatoir' and (self.latitude is None or self.longitude is None):
             try:
                 from .utils.geocoding_service import GeocodingService
                 GeocodingService.geocode_and_save(self, 'address')
@@ -210,7 +210,7 @@ def create_user_profile(sender, instance, created, **kwargs):
     if created:
         # If the user is a staff/superuser (created via createsuperuser or admin tools),
         # create the profile with the Admin role so they are shown correctly in admin dashboards.
-        role = 'Admin' if (getattr(instance, 'is_staff', False) or getattr(instance, 'is_superuser', False)) else 'Farmer'
+        role = 'Admin' if (getattr(instance, 'is_staff', False) or getattr(instance, 'is_superuser', False)) else 'Abbatoir'
         UserProfile.objects.create(user=instance, role=role)
         # Note: existing registration code can still override this if needed.
 
@@ -278,7 +278,7 @@ class Animal(models.Model):
         ('goat', 'Goat'),
     ]
 
-    farmer = models.ForeignKey(User, on_delete=models.CASCADE, related_name='animals')
+    abbatoir = models.ForeignKey(User, on_delete=models.CASCADE, related_name='animals')
     species = models.CharField(max_length=20, choices=SPECIES_CHOICES, default='cow')
     age = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0)], help_text="Age in months")
 
@@ -396,7 +396,7 @@ class Animal(models.Model):
     def lifecycle_status(self):
         """
         Determine the animal's lifecycle status based on five distinct categories:
-        1. REJECTED - Animal was rejected by processing unit and returned to farmer
+        1. REJECTED - Animal was rejected by processing unit and returned to abbatoir
         2. HEALTHY - Alive, in good condition, no transfers or processing
         3. SLAUGHTERED - Processed and no longer alive (but NOT transferred)
         4. TRANSFERRED - Entire body/all parts completely transferred
@@ -435,7 +435,7 @@ class Animal(models.Model):
         if self.slaughtered:
             return 'SLAUGHTERED'
         
-        # Default: Animal is healthy and on the farm
+        # Default: Animal is healthy and on the abbatoir
         return 'HEALTHY'
     
     @property
@@ -460,7 +460,7 @@ class Animal(models.Model):
 
     def __str__(self):
         display_name = self.animal_name or self.animal_id
-        return f"{display_name} ({self.species}) - {self.farmer.username}"
+        return f"{display_name} ({self.species}) - {self.abbatoir.username}"
 class SlaughterPart(models.Model):
     part_id = models.CharField(max_length=50, unique=True, editable=False, default='', help_text="Auto-generated unique part identifier")
     PART_CHOICES = [
@@ -863,7 +863,7 @@ class ComplianceAudit(models.Model):
     ENTITY_TYPE_CHOICES = [
         ('processing_unit', 'Processing Unit'),
         ('shop', 'Shop'),
-        ('farmer', 'Farmer'),  # User profile
+        ('abbatoir', 'Abbatoir'),  # User profile
     ]
 
     # The official conducting the audit
@@ -872,7 +872,7 @@ class ComplianceAudit(models.Model):
     # Generic linking to entity (simplified strategy: nullable FKs for simplicity over GenericFK)
     processing_unit = models.ForeignKey(ProcessingUnit, on_delete=models.CASCADE, null=True, blank=True, related_name='compliance_audits')
     shop = models.ForeignKey(Shop, on_delete=models.CASCADE, null=True, blank=True, related_name='compliance_audits')
-    farmer = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True, related_name='compliance_audits_received')
+    abbatoir = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True, related_name='compliance_audits_received')
 
     audit_date = models.DateTimeField(default=timezone.now)
     scheduled_date = models.DateTimeField(null=True, blank=True)
@@ -893,7 +893,7 @@ class ComplianceAudit(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        entity = self.processing_unit or self.shop or self.farmer or "Unknown Entity"
+        entity = self.processing_unit or self.shop or self.abbatoir or "Unknown Entity"
         return f"Audit {self.id} - {entity} - {self.get_status_display()}"
 
 
@@ -918,7 +918,7 @@ class Certification(models.Model):
     # Entity ownership
     processing_unit = models.ForeignKey(ProcessingUnit, on_delete=models.CASCADE, null=True, blank=True, related_name='certifications')
     shop = models.ForeignKey(Shop, on_delete=models.CASCADE, null=True, blank=True, related_name='certifications')
-    farmer = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True, related_name='certifications')
+    abbatoir = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True, related_name='certifications')
 
     name = models.CharField(max_length=100, help_text="Name of certification e.g. 'ISO 22000 Operations'")
     cert_type = models.CharField(max_length=50, choices=CERT_TYPE_CHOICES)
@@ -1046,7 +1046,7 @@ def generate_order_qr_code(sender, instance, created, **kwargs):
                     'subtotal': float(item.subtotal),
                     'animal_id': item.product.animal.animal_id if item.product.animal else None,
                     'animal_species': item.product.animal.species if item.product.animal else None,
-                    'farmer_name': item.product.animal.farmer.username if item.product.animal else None,
+                    'abbatoir_name': item.product.animal.abbatoir.username if item.product.animal else None,
                 }
                 qr_data['products'].append(product_data)
 
@@ -1405,7 +1405,7 @@ class NotificationSchedule(models.Model):
 
     # Recipients
     recipient_users = models.ManyToManyField(User, blank=True, related_name='scheduled_notifications')
-    recipient_groups = models.JSONField(default=list, blank=True, help_text="Groups to send to (e.g., ['farmers', 'processors'])")
+    recipient_groups = models.JSONField(default=list, blank=True, help_text="Groups to send to (e.g., ['abbatoirs', 'processors'])")
 
     # Content
     notification_type = models.CharField(max_length=30, choices=[
@@ -1598,7 +1598,7 @@ class Notification(models.Model):
 
 
 class Activity(models.Model):
-    """Model for tracking farmer activities for the activity feed"""
+    """Model for tracking abbatoir activities for the activity feed"""
     ACTIVITY_TYPE_CHOICES = [
         ('registration', 'Animal Registration'),
         ('transfer', 'Animal Transfer'),
@@ -2055,7 +2055,7 @@ class ProductInfo(models.Model):
     animal_id = models.CharField(max_length=50, null=True, blank=True)
     animal_name = models.CharField(max_length=100, null=True, blank=True)
     animal_species = models.CharField(max_length=20, null=True, blank=True)
-    farmer_username = models.CharField(max_length=150, null=True, blank=True)
+    abbatoir_username = models.CharField(max_length=150, null=True, blank=True)
     animal_live_weight = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
     animal_slaughtered = models.BooleanField(default=False)
     animal_slaughtered_at = models.DateTimeField(null=True, blank=True)
@@ -2114,7 +2114,7 @@ class ProductInfo(models.Model):
             self.animal_id = animal.animal_id
             self.animal_name = animal.animal_name
             self.animal_species = animal.species
-            self.farmer_username = animal.farmer.username
+            self.abbatoir_username = animal.abbatoir.username
             self.animal_live_weight = getattr(animal, 'live_weight', None)
             self.animal_slaughtered = animal.slaughtered
             self.animal_slaughtered_at = animal.slaughtered_at
@@ -2130,16 +2130,16 @@ class ProductInfo(models.Model):
             animal = product.animal
             timeline.append({
                 'stage': 'Animal Registration',
-                'category': 'farmer',
+                'category': 'abbatoir',
                 'timestamp': animal.created_at.isoformat(),
-                'location': f'Farm - {self.farmer_username}',
+                'location': f'Abbatoir - {self.abbatoir_username}',
                 'action': f'Animal {self.animal_id} registered',
                 'icon': 'fa-clipboard-list',
                 'details': {
                     'Animal ID': self.animal_id or 'Unknown',
                     'Animal Name': self.animal_name or 'Not named',
                     'Species': self.animal_species or 'Unknown',
-                    'Farmer': self.farmer_username or 'Unknown',
+                    'Abbatoir': self.abbatoir_username or 'Unknown',
                     'Age': f'{animal.age} months' if animal.age else 'Not recorded',
                     'Weight': f'{animal.weight} kg' if animal.weight else 'Not recorded'
                 }
@@ -2155,7 +2155,7 @@ class ProductInfo(models.Model):
                     'action': f'Animal transferred to processing unit',
                     'icon': 'fa-truck',
                     'details': {
-                        'From': f'Farm - {self.farmer_username}',
+                        'From': f'Abbatoir - {self.abbatoir_username}',
                         'To': self.animal_transferred_to_name,
                         'Animal ID': self.animal_id
                     }
@@ -2902,7 +2902,7 @@ class FeatureFlag(models.Model):
         "type": "percentage|user_list|user_segments|all_users",
         "percentage": 50,  # for percentage type
         "user_ids": [1,2,3],  # for user_list type
-        "user_segments": ["admins", "farmers"],  # for user_segments type
+        "user_segments": ["admins", "abbatoirs"],  # for user_segments type
         "excluded_users": [4,5]  # users to exclude
     }
     """)

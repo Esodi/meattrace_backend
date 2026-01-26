@@ -13,30 +13,30 @@ class SignupFlowTests(TestCase):
     def setUp(self):
         self.client = APIClient()
 
-    def test_farmer_signup_basic_flow(self):
-        """Test basic farmer signup flow"""
-        farmer_data = {
-            'username': 'testfarmer',
-            'email': 'farmer@test.com',
+    def test_abbatoir_signup_basic_flow(self):
+        """Test basic abbatoir signup flow"""
+        abbatoir_data = {
+            'username': 'testabbatoir',
+            'email': 'abbatoir@test.com',
             'password': 'testpass123',
-            'role': 'Farmer'
+            'role': 'Abbatoir'
         }
 
         # Test registration
-        response = self.client.post('/api/v2/register/', farmer_data, format='json')
+        response = self.client.post('/api/v2/register/', abbatoir_data, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
         # Verify user was created
-        user = User.objects.get(username='testfarmer')
-        self.assertEqual(user.email, 'farmer@test.com')
+        user = User.objects.get(username='testabbatoir')
+        self.assertEqual(user.email, 'abbatoir@test.com')
 
         # Verify user profile was created
         profile = UserProfile.objects.get(user=user)
-        self.assertEqual(profile.role, 'Farmer')
+        self.assertEqual(profile.role, 'Abbatoir')
 
         # Test login
         login_data = {
-            'username': 'testfarmer',
+            'username': 'testabbatoir',
             'password': 'testpass123'
         }
         response = self.client.post('/api/v2/token/', login_data, format='json')
@@ -48,7 +48,7 @@ class SignupFlowTests(TestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {response.data["access"]}')
         response = self.client.get('/api/v2/profile/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data['profile']['role'], 'Farmer')
+        self.assertEqual(response.data['profile']['role'], 'Abbatoir')
 
     def test_processing_unit_creation_flow(self):
         """Test processing unit creation and owner assignment"""
@@ -552,8 +552,8 @@ class SignupFlowTests(TestCase):
     def test_permission_checks(self):
         """Test that users can only access appropriate endpoints"""
         # Create users of different roles
-        farmer = User.objects.create_user(username='test_farmer', email='farmer@test.com', password='pass')
-        UserProfile.objects.create(user=farmer, role='Farmer')
+        abbatoir = User.objects.create_user(username='test_abbatoir', email='abbatoir@test.com', password='pass')
+        UserProfile.objects.create(user=abbatoir, role='Abbatoir')
 
         processor = User.objects.create_user(username='test_processor', email='processor@test.com', password='pass')
         UserProfile.objects.create(user=processor, role='ProcessingUnit')
@@ -561,8 +561,8 @@ class SignupFlowTests(TestCase):
         shop_owner = User.objects.create_user(username='test_shop_owner', email='shop@test.com', password='pass')
         UserProfile.objects.create(user=shop_owner, role='Shop')
 
-        # Test that farmer cannot create processing unit
-        login_data = {'username': 'test_farmer', 'password': 'pass'}
+        # Test that abbatoir cannot create processing unit
+        login_data = {'username': 'test_abbatoir', 'password': 'pass'}
         response = self.client.post('/api/v2/auth/login/', login_data, format='json')
         access_token = response.data['tokens']['access']
 
@@ -570,5 +570,5 @@ class SignupFlowTests(TestCase):
 
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access_token}')
         response = self.client.post('/api/v2/processing-units/create/', unit_data, format='json')
-        # This should fail because farmer profile doesn't have processing_unit set
+        # This should fail because abbatoir profile doesn't have processing_unit set
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

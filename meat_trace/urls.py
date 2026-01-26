@@ -169,11 +169,11 @@ except Exception as e:
     print(f"[ERROR] Failed to register AdminSlaughterPartViewSet: {e}")
 
 try:
-    from .viewsets import AdminFarmerViewSet
-    router.register(r'admin/farmers', AdminFarmerViewSet, basename='admin-farmers')
-    print("[OK] AdminFarmerViewSet registered successfully")
+    from .viewsets import AdminAbbatoirViewSet
+    router.register(r'admin/abbatoirs', AdminAbbatoirViewSet, basename='admin-abbatoirs')
+    print("[OK] AdminAbbatoirViewSet registered successfully")
 except Exception as e:
-    print(f"[ERROR] Failed to register AdminFarmerViewSet: {e}")
+    print(f"[ERROR] Failed to register AdminAbbatoirViewSet: {e}")
 
 try:
     from .viewsets import AdminAnalyticsViewSet
@@ -240,7 +240,7 @@ urlpatterns = [
     path('api/v2/health/', views.health_check, name='health_check'),
     path('api/v2/dashboard/', views.dashboard_view, name='dashboard'),
     path('api/v2/activities/', views.activities_view, name='activities'),
-    path('api/v2/farmer/dashboard/', views.farmer_dashboard, name='farmer_dashboard'),
+    path('api/v2/abbatoir/dashboard/', views.abbatoir_dashboard, name='abbatoir_dashboard'),
     path('api/v2/production-stats/', views.production_stats_view, name='production_stats'),
     path('api/v2/processing-pipeline/', views.processing_pipeline_view, name='processing_pipeline'),
 

@@ -9,7 +9,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('meat_trace', '0018_remove_animal_farm_name_animal_abbatoir_name'),
+        ('meat_trace', '0018_remove_animal_abbatoir_name_animal_abbatoir_name'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 

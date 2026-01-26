@@ -79,7 +79,7 @@ class Command(BaseCommand):
     def create_demo_users(self):
         """Create demo users across different date ranges"""
         users = []
-        user_roles = ['Farmer', 'Processor', 'ShopOwner', 'Admin']
+        user_roles = ['Abbatoir', 'Processor', 'ShopOwner', 'Admin']
         
         # Create users over the last 90 days
         for i in range(50):
@@ -198,12 +198,12 @@ class Command(BaseCommand):
     def create_animals(self, users):
         """Create demo animals with historical dates"""
         animals = []
-        # Get users with Farmer role
-        farmers = [u for u in users if hasattr(u, 'profile') and u.profile.role == 'Farmer'][:20]
+        # Get users with Abbatoir role
+        abbatoirs = [u for u in users if hasattr(u, 'profile') and u.profile.role == 'Abbatoir'][:20]
         
-        # If no farmers, use any users
-        if not farmers:
-            farmers = users[:20]
+        # If no abbatoirs, use any users
+        if not abbatoirs:
+            abbatoirs = users[:20]
         
         species_choices = ['cow', 'pig', 'chicken', 'sheep', 'goat']
         
@@ -213,7 +213,7 @@ class Command(BaseCommand):
             created_date = timezone.now() - timedelta(days=days_ago)
             
             animal = Animal.objects.create(
-                farmer=random.choice(farmers),
+                abbatoir=random.choice(abbatoirs),
                 species=random.choice(species_choices),
                 breed=f'Demo Breed {random.randint(1, 10)}',
                 age=Decimal(str(random.uniform(6, 60))),  # Age in months

@@ -32,7 +32,7 @@ class Migration(migrations.Migration):
                 ('animal_id', models.CharField(blank=True, max_length=50, null=True)),
                 ('animal_name', models.CharField(blank=True, max_length=100, null=True)),
                 ('animal_species', models.CharField(blank=True, max_length=20, null=True)),
-                ('farmer_username', models.CharField(blank=True, max_length=150, null=True)),
+                ('abbatoir_username', models.CharField(blank=True, max_length=150, null=True)),
                 ('animal_live_weight', models.DecimalField(blank=True, decimal_places=2, max_digits=5, null=True)),
                 ('animal_slaughtered', models.BooleanField(default=False)),
                 ('animal_slaughtered_at', models.DateTimeField(blank=True, null=True)),

@@ -304,7 +304,7 @@ class Migration(migrations.Migration):
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('title', models.CharField(max_length=200)),
                 ('schedule_type', models.CharField(choices=[('one_time', 'One Time'), ('recurring', 'Recurring')], default='one_time', max_length=10)),
-                ('recipient_groups', models.JSONField(blank=True, default=list, help_text="Groups to send to (e.g., ['farmers', 'processors'])")),
+                ('recipient_groups', models.JSONField(blank=True, default=list, help_text="Groups to send to (e.g., ['abbatoirs', 'processors'])")),
                 ('notification_type', models.CharField(choices=[('join_request', 'Join Request'), ('join_approved', 'Join Request Approved'), ('join_rejected', 'Join Request Rejected'), ('invitation', 'User Invitation'), ('role_change', 'Role Changed'), ('profile_update', 'Profile Update Required'), ('verification', 'Account Verification'), ('animal_rejected', 'Animal Rejected'), ('part_rejected', 'Slaughter Part Rejected'), ('appeal_submitted', 'Appeal Submitted'), ('appeal_approved', 'Appeal Approved'), ('appeal_denied', 'Appeal Denied'), ('system_alert', 'System Alert'), ('maintenance', 'Maintenance Notice'), ('custom', 'Custom Notification')], max_length=30)),
                 ('title_template', models.CharField(max_length=200)),
                 ('message_template', models.TextField()),

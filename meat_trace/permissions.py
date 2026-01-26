@@ -1,9 +1,9 @@
 from rest_framework import permissions
 from .models import UserProfile, ShopUser
 
-class IsFarmer(permissions.BasePermission):
+class IsAbbatoir(permissions.BasePermission):
     def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.profile.role == 'Farmer'
+        return request.user.is_authenticated and request.user.profile.role == 'Abbatoir'
 
 class IsProcessingUnit(permissions.BasePermission):
     def has_permission(self, request, view):
@@ -25,7 +25,7 @@ class IsOwnerOrReadOnly(permissions.BasePermission):
             return True
 
         # Write permissions are only allowed to the owner of the object.
-        return obj.farmer == request.user
+        return obj.abbatoir == request.user
 
 class IsProcessingUnitOwner(permissions.BasePermission):
     def has_object_permission(self, request, view, obj):

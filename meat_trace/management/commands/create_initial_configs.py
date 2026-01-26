@@ -92,7 +92,7 @@ class Command(BaseCommand):
                 'target_audience': {
                     'type': 'percentage',
                     'percentage': 100,
-                    'user_segments': ['farmers', 'processors'],
+                    'user_segments': ['abbatoirs', 'processors'],
                     'excluded_users': []
                 },
                 'rollout_schedule': {

@@ -11,17 +11,17 @@
 ## 1. EXECUTIVE SUMMARY
 
 ### 1.1 Project Overview
-The MeatTrace platform is required to provide end-to-end traceability of meat products from farm to consumer in compliance with international food safety standards (HACCP, ISO 22000) and local regulatory requirements. The system must track the complete journey of livestock through slaughter, processing, distribution, and retail sale while ensuring food safety, quality control, and regulatory compliance.
+The MeatTrace platform is required to provide end-to-end traceability of meat products from abbatoir to consumer in compliance with international food safety standards (HACCP, ISO 22000) and local regulatory requirements. The system must track the complete journey of livestock through slaughter, processing, distribution, and retail sale while ensuring food safety, quality control, and regulatory compliance.
 
 ### 1.2 Business Objectives
 1. **Food Safety Assurance** - Enable rapid tracing of meat products during food safety incidents or disease outbreaks
 2. **Regulatory Compliance** - Meet government requirements for livestock tracking and meat product certification
-3. **Supply Chain Transparency** - Provide visibility to all stakeholders from farmers to consumers
+3. **Supply Chain Transparency** - Provide visibility to all stakeholders from abbatoirs to consumers
 4. **Quality Management** - Implement rejection/appeal workflows for quality control
 5. **Consumer Confidence** - Enable consumers to verify product authenticity and origin via QR codes
 
 ### 1.3 Target Users
-- **Farmers** - Livestock owners registering and managing animals
+- **Abbatoirs** - Livestock owners registering and managing animals
 - **Processing Unit Staff** - Abattoir workers, quality controllers, managers
 - **Shop Owners/Staff** - Retail outlet personnel
 - **Government Inspectors** - Regulatory auditors and certifiers
@@ -39,7 +39,7 @@ The MeatTrace platform is required to provide end-to-end traceability of meat pr
 **Description:** The system must support multiple distinct user roles with hierarchical permissions.
 
 **Required User Roles:**
-- **Farmer** - Livestock owners
+- **Abbatoir** - Livestock owners
 - **Processing Unit Owner** - Abattoir/processing facility owners
 - **Processing Unit Manager** - Facility supervisors
 - **Processing Unit Supervisor** - Shift supervisors
@@ -58,8 +58,8 @@ The MeatTrace platform is required to provide end-to-end traceability of meat pr
 - Profile completion wizard with progressive disclosure
 - Avatar upload capability
 - Contact information (phone, address)
-- Geographic coordinates (auto-geocoded from address for farmers)
-- Preferred species selection (for farmers)
+- Geographic coordinates (auto-geocoded from address for abbatoirs)
+- Preferred species selection (for abbatoirs)
 - Notification preferences (email, SMS, push, in-app)
 - Bio/description field
 
@@ -86,7 +86,7 @@ The MeatTrace platform is required to provide end-to-end traceability of meat pr
 #### FR-LM-001: Animal Registration
 **Priority:** CRITICAL  
 **Requirements:**
-- Farmers can register animals with following attributes:
+- Abbatoirs can register animals with following attributes:
   - Auto-generated unique animal ID
   - Optional custom animal name/tag
   - Species (Cow, Pig, Chicken, Sheep, Goat)
@@ -96,7 +96,7 @@ The MeatTrace platform is required to provide end-to-end traceability of meat pr
   - Live weight
   - Health status
   - Photo upload
-  - Farmer's address with auto-geocoding
+  - Abbatoir's address with auto-geocoding
   - Notes/remarks
 - Support for batch registration of multiple animals
 - QR code generation for each animal
@@ -121,7 +121,7 @@ The MeatTrace platform is required to provide end-to-end traceability of meat pr
   - Detailed notes
   - Timestamp and rejector information
   - Associated processing unit
-- Farmers can appeal rejections with:
+- Abbatoirs can appeal rejections with:
   - Appeal status: Pending → Approved → Denied → Resolved
   - Appeal notes
   - Resolution tracking
@@ -273,7 +273,7 @@ The MeatTrace platform is required to provide end-to-end traceability of meat pr
 **Priority:** CRITICAL  
 **Requirements:**
 - Consumers can scan product QR code to view:
-  - Farm origin and farmer details
+  - Abbatoir origin and abbatoir details
   - Animal information (species, age, health)
   - Slaughter date and location
   - Processing timeline
@@ -290,7 +290,7 @@ The MeatTrace platform is required to provide end-to-end traceability of meat pr
 - Track regulatory inspections for:
   - Processing units
   - Shops
-  - Farmers
+  - Abbatoirs
 - Audit attributes:
   - Auditor (government inspector)
   - Audit date
@@ -305,7 +305,7 @@ The MeatTrace platform is required to provide end-to-end traceability of meat pr
 #### FR-CC-002: Certification Management
 **Priority:** HIGH  
 **Requirements:**
-- Track certifications for processing units, shops, and farmers:
+- Track certifications for processing units, shops, and abbatoirs:
   - HACCP certification
   - ISO 22000 (Food Safety Management)
   - Halal certification
@@ -433,7 +433,7 @@ The MeatTrace platform is required to provide end-to-end traceability of meat pr
 #### FR-QC-002: Appeal Process
 **Priority:** HIGH  
 **Requirements:**
-- Farmers/suppliers can appeal rejections
+- Abbatoirs/suppliers can appeal rejections
 - Appeal submission with notes/justification
 - Appeal review workflow
 - Appeal status: Pending → Approved → Denied → Resolved
@@ -448,12 +448,12 @@ The MeatTrace platform is required to provide end-to-end traceability of meat pr
 - Store geographic coordinates for:
   - Processing units
   - Shops
-  - Farmers (via user profile address)
+  - Abbatoirs (via user profile address)
 - Auto-geocoding service integration
   - Convert addresses to latitude/longitude
   - Fallback to manual coordinate entry
 - Map display of:
-  - Farm locations
+  - Abbatoir locations
   - Processing unit locations
   - Shop locations
   - Product distribution routes
@@ -463,7 +463,7 @@ The MeatTrace platform is required to provide end-to-end traceability of meat pr
 #### FR-RA-001: Activity Monitoring
 **Priority:** MEDIUM  
 **Requirements:**
-- Activity feed for farmers showing:
+- Activity feed for abbatoirs showing:
   - Animals registered
   - Slaughter events
   - Product creations
@@ -562,7 +562,7 @@ The MeatTrace platform is required to provide end-to-end traceability of meat pr
 - **NFR-R-004:** Graceful error handling and user-friendly error messages
 
 ### 3.5 Usability
-- **NFR-U-001:** Mobile-responsive design for farmers in field
+- **NFR-U-001:** Mobile-responsive design for abbatoirs in field
 - **NFR-U-002:** Multi-language support (English, Swahili)
 - **NFR-U-003:** Accessibility compliance (WCAG 2.1 Level AA)
 - **NFR-U-004:** Progressive profile completion (step-by-step wizard)
@@ -594,16 +594,16 @@ The MeatTrace platform is required to provide end-to-end traceability of meat pr
 
 ## 4. USER STORIES
 
-### 4.1 Farmer Stories
-**US-F-001:** As a farmer, I want to register my animals with photos and health details so I can track them through the supply chain.
+### 4.1 Abbatoir Stories
+**US-F-001:** As a abbatoir, I want to register my animals with photos and health details so I can track them through the supply chain.
 
-**US-F-002:** As a farmer, I want to receive notifications when my animals are rejected so I can quickly appeal the decision.
+**US-F-002:** As a abbatoir, I want to receive notifications when my animals are rejected so I can quickly appeal the decision.
 
-**US-F-003:** As a farmer, I want to view my complete animal inventory and their current status/location.
+**US-F-003:** As a abbatoir, I want to view my complete animal inventory and their current status/location.
 
-**US-F-004:** As a farmer, I want to transfer animals to processing units for slaughter.
+**US-F-004:** As a abbatoir, I want to transfer animals to processing units for slaughter.
 
-**US-F-005:** As a farmer, I want to see an activity feed of all my livestock operations.
+**US-F-005:** As a abbatoir, I want to see an activity feed of all my livestock operations.
 
 ### 4.2 Processing Unit Stories
 **US-PU-001:** As a processing unit manager, I want to receive animal transfers and confirm their receipt.
@@ -632,7 +632,7 @@ The MeatTrace platform is required to provide end-to-end traceability of meat pr
 ### 4.4 Consumer Stories
 **US-C-001:** As a consumer, I want to scan a QR code on a meat product to see its full traceability history.
 
-**US-C-002:** As a consumer, I want to verify the farm origin, slaughter date, and certifications of the meat I'm buying.
+**US-C-002:** As a consumer, I want to verify the abbatoir origin, slaughter date, and certifications of the meat I'm buying.
 
 **US-C-003:** As a consumer, I want to track my order status using an order QR code.
 
@@ -672,7 +672,7 @@ The MeatTrace platform is required to provide end-to-end traceability of meat pr
 
 ### 5.3 Adoption Success
 - 📊 80% of registered processing units actively using system (6 months post-launch)
-- 📊 500+ farmers registered and tracking animals (6 months)
+- 📊 500+ abbatoirs registered and tracking animals (6 months)
 - 📊 50+ shops placing orders through the system (6 months)
 - 📊 Consumer QR scans: 1000+ scans per month (6 months)
 

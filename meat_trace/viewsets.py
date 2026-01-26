@@ -444,8 +444,8 @@ class AdminNotificationScheduleViewSet(AdminViewSet):
                 User = get_user_model()
 
                 for group in schedule.recipient_groups:
-                    if group == 'farmers':
-                        recipients.extend(User.objects.filter(profile__role='Farmer'))
+                    if group == 'abbatoirs':
+                        recipients.extend(User.objects.filter(profile__role='Abbatoir'))
                     elif group == 'processors':
                         recipients.extend(User.objects.filter(profile__role='Processor'))
                     elif group == 'shop_owners':
@@ -665,7 +665,7 @@ class AdminDashboardViewSet(viewsets.ViewSet):
         total_users = User.objects.count()
         user_role_counts = UserProfile.objects.values('role').annotate(count=Count('id'))
 
-        farmers_count = next((item['count'] for item in user_role_counts if item['role'] == 'Farmer'), 0)
+        abbatoirs_count = next((item['count'] for item in user_role_counts if item['role'] == 'Abbatoir'), 0)
         processors_count = next((item['count'] for item in user_role_counts if item['role'] == 'Processor'), 0)
         shop_owners_count = next((item['count'] for item in user_role_counts if item['role'] == 'ShopOwner'), 0)
         admins_count = next((item['count'] for item in user_role_counts if item['role'] == 'Admin'), 0)
@@ -708,7 +708,7 @@ class AdminDashboardViewSet(viewsets.ViewSet):
 
         stats_data = {
             'total_users': total_users,
-            'total_farmers': farmers_count,
+            'total_abbatoirs': abbatoirs_count,
             'total_processors': processors_count,
             'total_shop_owners': shop_owners_count,
             'total_admins': admins_count,
@@ -783,11 +783,11 @@ class AdminDashboardViewSet(viewsets.ViewSet):
         
         todays_transfers = animals_transferred_today + products_transferred_today
         
-        # Active locations: farms + processing units + shops that are active
-        active_farms = UserProfile.objects.filter(role='Farmer', user__is_active=True).count()
+        # Active locations: abbatoirs + processing units + shops that are active
+        active_abbatoirs = UserProfile.objects.filter(role='Abbatoir', user__is_active=True).count()
         active_processing_units = ProcessingUnit.objects.filter(is_active=True).count()
         active_shops = Shop.objects.filter(is_active=True).count()
-        active_locations = active_farms + active_processing_units + active_shops
+        active_locations = active_abbatoirs + active_processing_units + active_shops
         
         # Pending transfer requests (transit alerts)
         pending_transfers = TransferRequest.objects.filter(status='pending').count()
@@ -797,7 +797,7 @@ class AdminDashboardViewSet(viewsets.ViewSet):
             'animals_transferred_today': animals_transferred_today,
             'products_transferred_today': products_transferred_today,
             'active_locations': active_locations,
-            'active_farms': active_farms,
+            'active_abbatoirs': active_abbatoirs,
             'active_processing_units': active_processing_units,
             'active_shops': active_shops,
             'pending_transfers': pending_transfers,
@@ -808,7 +808,7 @@ class AdminDashboardViewSet(viewsets.ViewSet):
     def map_locations(self, request):
         """
         Get all active locations with coordinates for the Supply Chain Map.
-        Returns processing units, shops, and farmers with their geographic coordinates.
+        Returns processing units, shops, and abbatoirs with their geographic coordinates.
         """
         from .models import ProcessingUnit, Shop, UserProfile
         
@@ -850,33 +850,33 @@ class AdminDashboardViewSet(viewsets.ViewSet):
                 'contact_phone': shop.contact_phone or '',
             })
         
-        # Get farmers with coordinates
-        farmers = UserProfile.objects.filter(
-            role='Farmer',
+        # Get abbatoirs with coordinates
+        abbatoirs = UserProfile.objects.filter(
+            role='Abbatoir',
             user__is_active=True,
             latitude__isnull=False,
             longitude__isnull=False
         ).select_related('user')
-        for farmer in farmers:
+        for abbatoir in abbatoirs:
             locations.append({
-                'id': f'farmer_{farmer.id}',
-                'name': f"{farmer.user.first_name} {farmer.user.last_name}".strip() or farmer.user.username,
-                'type': 'Farmer',
-                'lat': float(farmer.latitude),
-                'lng': float(farmer.longitude),
-                'location': farmer.address or '',
-                'contact_email': farmer.user.email or '',
-                'contact_phone': farmer.phone or '',
+                'id': f'abbatoir_{abbatoir.id}',
+                'name': f"{abbatoir.user.first_name} {abbatoir.user.last_name}".strip() or abbatoir.user.username,
+                'type': 'Abbatoir',
+                'lat': float(abbatoir.latitude),
+                'lng': float(abbatoir.longitude),
+                'location': abbatoir.address or '',
+                'contact_email': abbatoir.user.email or '',
+                'contact_phone': abbatoir.phone or '',
             })
         
         # Summary statistics
         total_pu = ProcessingUnit.objects.filter(is_active=True).count()
         total_shops = Shop.objects.filter(is_active=True).count()
-        total_farmers = UserProfile.objects.filter(role='Farmer', user__is_active=True).count()
+        total_abbatoirs = UserProfile.objects.filter(role='Abbatoir', user__is_active=True).count()
         
         geocoded_pu = processing_units.count()
         geocoded_shops = shops.count()
-        geocoded_farmers = farmers.count()
+        geocoded_abbatoirs = abbatoirs.count()
         
         return Response({
             'locations': locations,
@@ -884,7 +884,7 @@ class AdminDashboardViewSet(viewsets.ViewSet):
             'summary': {
                 'processing_units': {'total': total_pu, 'geocoded': geocoded_pu},
                 'shops': {'total': total_shops, 'geocoded': geocoded_shops},
-                'farmers': {'total': total_farmers, 'geocoded': geocoded_farmers},
+                'abbatoirs': {'total': total_abbatoirs, 'geocoded': geocoded_abbatoirs},
             }
         })
 
@@ -1058,7 +1058,7 @@ class AdminAnimalViewSet(viewsets.ModelViewSet):
     serializer_class = None  # Will be set in get_serializer_class
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['species', 'slaughtered', 'transferred_to']
-    search_fields = ['animal_id', 'animal_name', 'farmer__username']
+    search_fields = ['animal_id', 'animal_name', 'abbatoir__username']
     ordering_fields = ['created_at', 'slaughtered_at', 'transferred_at']
     ordering = ['-created_at']
 
@@ -1071,7 +1071,7 @@ class AdminAnimalViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Override to add lifecycle status filtering"""
         from .models import Animal
-        queryset = Animal.objects.select_related('farmer', 'transferred_to').all()
+        queryset = Animal.objects.select_related('abbatoir', 'transferred_to').all()
 
         lifecycle_status = self.request.query_params.get('lifecycle_status')
         if lifecycle_status:
@@ -1150,10 +1150,10 @@ class AdminSlaughterPartViewSet(viewsets.ModelViewSet):
         return queryset
 
 
-class AdminFarmerViewSet(viewsets.ReadOnlyModelViewSet):
+class AdminAbbatoirViewSet(viewsets.ReadOnlyModelViewSet):
     """
-    ViewSet for listing farmers for admin selection dropdowns.
-    Read-only - farmers are managed through the user management interface.
+    ViewSet for listing abbatoirs for admin selection dropdowns.
+    Read-only - abbatoirs are managed through the user management interface.
     """
     permission_classes = [IsAuthenticated]
     queryset = None  # Will be set in get_queryset
@@ -1163,14 +1163,14 @@ class AdminFarmerViewSet(viewsets.ReadOnlyModelViewSet):
     ordering = ['username']
 
     def get_serializer_class(self):
-        from .serializers import AdminFarmerListSerializer
-        return AdminFarmerListSerializer
+        from .serializers import AdminAbbatoirListSerializer
+        return AdminAbbatoirListSerializer
 
     def get_queryset(self):
         from django.contrib.auth import get_user_model
         User = get_user_model()
         return User.objects.filter(
-            profile__role='Farmer',
+            profile__role='Abbatoir',
             is_active=True
         ).select_related('profile').prefetch_related('animals')
 
@@ -1376,7 +1376,7 @@ class AdminAnalyticsViewSet(viewsets.ViewSet):
         animal_id = request.query_params.get('animal_id')
         product_id = request.query_params.get('product_id')
         shop_id = request.query_params.get('shop_id')
-        farmer_id = request.query_params.get('farmer_id')
+        abbatoir_id = request.query_params.get('abbatoir_id')
         processing_unit_id = request.query_params.get('processing_unit_id')
 
         # Base filters
@@ -1412,14 +1412,14 @@ class AdminAnalyticsViewSet(viewsets.ViewSet):
             # Products link to shop via received_by_shop
             q_products &= Q(received_by_shop_id=shop_id)
 
-        if farmer_id:
-            q_animals &= Q(farmer_id=farmer_id)
+        if abbatoir_id:
+            q_animals &= Q(abbatoir_id=abbatoir_id)
         
         if processing_unit_id:
             q_products &= Q(processing_unit_id=processing_unit_id)
 
         # Execute queries
-        animals = Animal.objects.filter(q_animals).select_related('farmer', 'transferred_to')
+        animals = Animal.objects.filter(q_animals).select_related('abbatoir', 'transferred_to')
         products = Product.objects.filter(q_products).select_related('animal', 'processing_unit', 'received_by_shop')
         orders = Order.objects.filter(q_orders).select_related('shop', 'customer')
         sales = Sale.objects.filter(q_sales).select_related('shop', 'seller')
@@ -1438,7 +1438,7 @@ class AdminAnalyticsViewSet(viewsets.ViewSet):
                 'animal_id': animal_id,
                 'product_id': product_id,
                 'shop_id': shop_id,
-                'farmer_id': farmer_id,
+                'abbatoir_id': abbatoir_id,
                 'processing_unit_id': processing_unit_id,
             }
         }
@@ -1448,7 +1448,7 @@ class AdminAnalyticsViewSet(viewsets.ViewSet):
             'id': a.id,
             'animal_id': a.animal_id,
             'species': a.species,
-            'farmer': a.farmer.username if a.farmer else 'Unknown',
+            'abbatoir': a.abbatoir.username if a.abbatoir else 'Unknown',
             'created_at': a.created_at.isoformat(),
             'slaughtered': a.slaughtered
         } for a in animals[:100]] # Limit to 100 for API response
@@ -1529,16 +1529,16 @@ class AdminAnalyticsViewSet(viewsets.ViewSet):
         
         # Animals Sheet
         ws_animals = wb.create_sheet("Animals")
-        headers = ["ID", "Animal ID", "Species", "Farmer", "Registered At", "Slaughtered"]
+        headers = ["ID", "Animal ID", "Species", "Abbatoir", "Registered At", "Slaughtered"]
         ws_animals.append(headers)
         for cell in ws_animals[1]:
             cell.font = header_font
             cell.fill = header_fill
             
-        for a in Animal.objects.filter(q_animals).select_related('farmer')[:1000]:
+        for a in Animal.objects.filter(q_animals).select_related('abbatoir')[:1000]:
             ws_animals.append([
                 a.id, a.animal_id, a.species, 
-                a.farmer.username if a.farmer else 'Unknown',
+                a.abbatoir.username if a.abbatoir else 'Unknown',
                 a.created_at.strftime("%Y-%m-%d %H:%M"),
                 "Yes" if a.slaughtered else "No"
             ])
@@ -1632,7 +1632,7 @@ class AdminComplianceAuditViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     # Only include actual model fields - status and audit_type exist on the model
     filterset_fields = ['status', 'audit_type']
-    search_fields = ['processing_unit__name', 'shop__name', 'farmer__username', 'auditor__username']
+    search_fields = ['processing_unit__name', 'shop__name', 'abbatoir__username', 'auditor__username']
 
 class AdminCertificationViewSet(viewsets.ModelViewSet):
     queryset = Certification.objects.all().order_by('-created_at')

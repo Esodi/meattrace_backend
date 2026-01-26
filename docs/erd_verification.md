@@ -77,7 +77,7 @@ These exist in your codebase but aren't shown in the ERD diagram to keep it read
 ### Key Relationships Verified ✅
 
 1. **USER → USER_PROFILE** (one-to-one) ✓
-2. **USER → ANIMAL** (one-to-many, farmer owns animals) ✓
+2. **USER → ANIMAL** (one-to-many, abbatoir owns animals) ✓
 3. **ANIMAL → SLAUGHTER_PART** (one-to-many) ✓
 4. **ANIMAL → CARCASS_MEASUREMENT** (one-to-one) ✓
 5. **ANIMAL → PROCESSING_UNIT** (transferred_to) ✓

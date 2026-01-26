@@ -422,8 +422,8 @@ class NotificationService:
                     User = get_user_model()
 
                     for group in schedule.recipient_groups:
-                        if group == 'farmers':
-                            recipients.extend(User.objects.filter(profile__role='Farmer'))
+                        if group == 'abbatoirs':
+                            recipients.extend(User.objects.filter(profile__role='Abbatoir'))
                         elif group == 'processors':
                             recipients.extend(User.objects.filter(profile__role='Processor'))
                         elif group == 'shop_owners':
@@ -833,10 +833,10 @@ class NotificationService:
         )
 
     @staticmethod
-    def notify_animal_rejected(farmer, animal, category, specific_reason):
+    def notify_animal_rejected(abbatoir, animal, category, specific_reason):
         """Send notification for animal rejection"""
         return NotificationService.create_notification(
-            farmer,
+            abbatoir,
             'animal_rejected',
             f'Animal {animal.animal_id} rejected',
             f'Your animal {animal.animal_id} was rejected during processing: {category} - {specific_reason}',
@@ -846,10 +846,10 @@ class NotificationService:
         )
 
     @staticmethod
-    def notify_part_rejected(farmer, part, category, specific_reason):
+    def notify_part_rejected(abbatoir, part, category, specific_reason):
         """Send notification for slaughter part rejection"""
         return NotificationService.create_notification(
-            farmer,
+            abbatoir,
             'part_rejected',
             f'Animal part rejected',
             f'A part ({part.part_type}) of your animal {part.animal.animal_id} was rejected: {category} - {specific_reason}',
@@ -880,10 +880,10 @@ class NotificationService:
         )
 
     @staticmethod
-    def notify_appeal_submitted(farmer, item_type, item_id, appeal_notes):
+    def notify_appeal_submitted(abbatoir, item_type, item_id, appeal_notes):
         """Send notification for appeal submission"""
         return NotificationService.create_notification(
-            farmer,
+            abbatoir,
             'appeal_submitted',
             f'Appeal submitted',
             f'Your appeal for {item_type} has been submitted and is pending review',
@@ -892,7 +892,7 @@ class NotificationService:
         )
 
     @staticmethod
-    def notify_appeal_resolved(farmer, item_type, item_id, resolution, notes=None):
+    def notify_appeal_resolved(abbatoir, item_type, item_id, resolution, notes=None):
         """Send notification for appeal resolution"""
         notification_type = 'appeal_approved' if resolution == 'approved' else 'appeal_denied'
         title = f'Appeal {resolution.title()}'
@@ -904,7 +904,7 @@ class NotificationService:
         priority = 'high' if resolution == 'approved' else 'medium'
 
         return NotificationService.create_notification(
-            farmer,
+            abbatoir,
             notification_type,
             title,
             message,

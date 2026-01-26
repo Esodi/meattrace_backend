@@ -207,7 +207,7 @@ class MetricsService:
                 'active_users_today': active_users_today,
                 'new_users_this_week': new_users_this_week,
                 'users_by_role': {
-                    'farmers': role_counts.get('Farmer', 0),
+                    'abbatoirs': role_counts.get('Abbatoir', 0),
                     'processors': role_counts.get('Processor', 0),
                     'shop_owners': role_counts.get('ShopOwner', 0),
                     'admins': role_counts.get('Admin', 0)
@@ -219,7 +219,7 @@ class MetricsService:
                 'total_users': 0,
                 'active_users_today': 0,
                 'new_users_this_week': 0,
-                'users_by_role': {'farmers': 0, 'processors': 0, 'shop_owners': 0, 'admins': 0}
+                'users_by_role': {'abbatoirs': 0, 'processors': 0, 'shop_owners': 0, 'admins': 0}
             }
 
     @classmethod

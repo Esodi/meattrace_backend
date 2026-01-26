@@ -14,7 +14,7 @@ class Command(BaseCommand):
 
         # Clean up any existing test users
         User.objects.filter(username='pu_test').delete()
-        User.objects.filter(username='farmer_x').delete()
+        User.objects.filter(username='abbatoir_x').delete()
 
         # Create processing unit user
         pu_user = User.objects.create_user(username='pu_test', password='test')
@@ -29,9 +29,9 @@ class Command(BaseCommand):
         profile.processing_unit = pu
         profile.save()
 
-        # Create farmer and an animal that is slaughtered and received by the processing unit user
-        farmer = User.objects.create_user(username='farmer_x', password='test')
-        a = Animal.objects.create(farmer=farmer, species='cow', age=12.0, live_weight=200.0)
+        # Create abbatoir and an animal that is slaughtered and received by the processing unit user
+        abbatoir = User.objects.create_user(username='abbatoir_x', password='test')
+        a = Animal.objects.create(abbatoir=abbatoir, species='cow', age=12.0, live_weight=200.0)
         # mark slaughtered and received
         a.slaughtered = True
         a.received_by = pu_user

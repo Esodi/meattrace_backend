@@ -13,6 +13,6 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name='userprofile',
             name='role',
-            field=models.CharField(choices=[('Farmer', 'Farmer'), ('Processor', 'Processor'), ('ShopOwner', 'Shop Owner'), ('Admin', 'Administrator')], default='Farmer', max_length=20),
+            field=models.CharField(choices=[('Abbatoir', 'Abbatoir'), ('Processor', 'Processor'), ('ShopOwner', 'Shop Owner'), ('Admin', 'Administrator')], default='Abbatoir', max_length=20),
         ),
     ]

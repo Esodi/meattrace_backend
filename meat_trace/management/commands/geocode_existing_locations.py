@@ -110,30 +110,30 @@ class Command(BaseCommand):
             
             time.sleep(1.1)
 
-        # Geocode Farmers (UserProfiles)
-        self.stdout.write(self.style.NOTICE('\n=== Farmers ==='))
-        farmer_queryset = UserProfile.objects.filter(
+        # Geocode Abbatoirs (UserProfiles)
+        self.stdout.write(self.style.NOTICE('\n=== Abbatoirs ==='))
+        abbatoir_queryset = UserProfile.objects.filter(
             Q(latitude__isnull=True) | Q(longitude__isnull=True),
-            role='Farmer',
+            role='Abbatoir',
             address__isnull=False
         ).exclude(address='').select_related('user')
         
         if limit:
-            farmer_queryset = farmer_queryset[:limit]
+            abbatoir_queryset = abbatoir_queryset[:limit]
         
-        for farmer in farmer_queryset:
-            self.stdout.write(f'  Processing: {farmer.user.username} - "{farmer.address}"')
+        for abbatoir in abbatoir_queryset:
+            self.stdout.write(f'  Processing: {abbatoir.user.username} - "{abbatoir.address}"')
             
             if dry_run:
-                coords = GeocodingService.geocode(farmer.address)
+                coords = GeocodingService.geocode(abbatoir.address)
                 if coords:
                     self.stdout.write(self.style.SUCCESS(f'    Would set: {coords}'))
                 else:
                     self.stdout.write(self.style.WARNING(f'    No coordinates found'))
             else:
-                coords = GeocodingService.geocode(farmer.address)
+                coords = GeocodingService.geocode(abbatoir.address)
                 if coords:
-                    UserProfile.objects.filter(pk=farmer.pk).update(
+                    UserProfile.objects.filter(pk=abbatoir.pk).update(
                         latitude=coords['latitude'],
                         longitude=coords['longitude']
                     )

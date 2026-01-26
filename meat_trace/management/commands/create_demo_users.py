@@ -6,13 +6,13 @@ class Command(BaseCommand):
     help = 'Create demo users for testing'
 
     def handle(self, *args, **options):
-        # Create demo farmer user
+        # Create demo abbatoir user
         demo_users = [
             {
-                'username': 'demo_farmer',
-                'email': 'demo_farmer@example.com',
+                'username': 'demo_abbatoir',
+                'email': 'demo_abbatoir@example.com',
                 'password': 'demo123',
-                'role': 'Farmer'
+                'role': 'Abbatoir'
             },
             {
                 'username': 'demo_processor',

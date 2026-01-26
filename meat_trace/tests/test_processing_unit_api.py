@@ -21,15 +21,15 @@ class ProcessingUnitAPITests(APITestCase):
         self.processor_user.profile.role = 'processing_unit'
         self.processor_user.profile.save()
 
-        self.farmer_user = User.objects.create_user(
-            username="farmer",
-            email="farmer@example.com",
+        self.abbatoir_user = User.objects.create_user(
+            username="abbatoir",
+            email="abbatoir@example.com",
             password="testpassword",
-            first_name="Farmer",
+            first_name="Abbatoir",
             last_name="User"
         )
-        self.farmer_user.profile.role = 'farmer'
-        self.farmer_user.profile.save()
+        self.abbatoir_user.profile.role = 'abbatoir'
+        self.abbatoir_user.profile.save()
 
         # Authenticate the processor user
         self.client.force_authenticate(user=self.processor_user)
@@ -85,11 +85,11 @@ class ProcessingUnitAPITests(APITestCase):
         """
         Ensure a user can request to join a processing unit and an admin can approve it.
         """
-        self.client.force_authenticate(user=self.farmer_user)
+        self.client.force_authenticate(user=self.abbatoir_user)
         join_url = reverse('api-v2:join-requests-list')
         expires_at = timezone.now() + timezone.timedelta(days=7)
         data = {
-            'user': self.farmer_user.pk,
+            'user': self.abbatoir_user.pk,
             'request_type': 'processing_unit',
             'processing_unit': self.unit.pk,
             'requested_role': 'worker',
@@ -106,15 +106,15 @@ class ProcessingUnitAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['message'], 'Join request approved.')
 
-        # Verify the farmer is now a member of the unit
+        # Verify the abbatoir is now a member of the unit
         self.unit.refresh_from_db()
-        self.assertTrue(ProcessingUnitUser.objects.filter(user=self.farmer_user, processing_unit=self.unit).exists())
+        self.assertTrue(ProcessingUnitUser.objects.filter(user=self.abbatoir_user, processing_unit=self.unit).exists())
 
     def test_join_non_existent_processing_unit(self):
         """
         Ensure API returns an error when a user tries to join a non-existent processing unit.
         """
-        self.client.force_authenticate(user=self.farmer_user)
+        self.client.force_authenticate(user=self.abbatoir_user)
         join_url = reverse('api-v2:join-requests-list')
         data = {'request_type': 'processing_unit', 'processing_unit': 999, 'requested_role': 'worker', 'message': 'I would like to join'}
         response = self.client.post(join_url, data, format='json')
@@ -124,50 +124,50 @@ class ProcessingUnitAPITests(APITestCase):
         """
         Ensure an admin can suspend a user in their processing unit.
         """
-        processing_unit_user = ProcessingUnitUser.objects.create(user=self.farmer_user, processing_unit=self.unit)
+        processing_unit_user = ProcessingUnitUser.objects.create(user=self.abbatoir_user, processing_unit=self.unit)
 
         self.client.force_authenticate(user=self.processor_user)
         suspend_url = reverse('api-v2:processing-units-suspend-user', kwargs={'pk': self.unit.pk})
-        response = self.client.post(suspend_url, {'user_id': self.farmer_user.id}, format='json')
+        response = self.client.post(suspend_url, {'user_id': self.abbatoir_user.id}, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['status'], 'user suspended')
 
-        pu_user = ProcessingUnitUser.objects.get(user=self.farmer_user, processing_unit=self.unit)
+        pu_user = ProcessingUnitUser.objects.get(user=self.abbatoir_user, processing_unit=self.unit)
         self.assertFalse(pu_user.is_active)
 
     def test_reactivate_user(self):
         """
         Ensure an admin can reactivate a suspended user in their processing unit.
         """
-        processing_unit_user = ProcessingUnitUser.objects.create(user=self.farmer_user, processing_unit=self.unit)
+        processing_unit_user = ProcessingUnitUser.objects.create(user=self.abbatoir_user, processing_unit=self.unit)
         processing_unit_user.is_active = False
         processing_unit_user.save()
 
         self.client.force_authenticate(user=self.processor_user)
         reactivate_url = reverse('api-v2:processing-units-activate-user', kwargs={'pk': self.unit.pk})
-        response = self.client.post(reactivate_url, {'user_id': self.farmer_user.id}, format='json')
+        response = self.client.post(reactivate_url, {'user_id': self.abbatoir_user.id}, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['status'], 'user activated')
 
-        pu_user = ProcessingUnitUser.objects.get(user=self.farmer_user, processing_unit=self.unit)
+        pu_user = ProcessingUnitUser.objects.get(user=self.abbatoir_user, processing_unit=self.unit)
         self.assertTrue(pu_user.is_active)
 
     def test_get_processing_unit_details(self):
         """
         Ensure the API returns the correct details for a processing unit.
         """
-        ProcessingUnitUser.objects.create(user=self.farmer_user, processing_unit=self.unit)
+        ProcessingUnitUser.objects.create(user=self.abbatoir_user, processing_unit=self.unit)
 
         url = reverse('api-v2:processing-units-detail', kwargs={'pk': self.unit.pk})
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['name'], self.unit.name)
 
-    def test_farmer_can_list_processing_units(self):
+    def test_abbatoir_can_list_processing_units(self):
         """
-        Ensure a farmer can list all processing units.
+        Ensure a abbatoir can list all processing units.
         """
-        self.client.force_authenticate(user=self.farmer_user)
+        self.client.force_authenticate(user=self.abbatoir_user)
         url = reverse('api-v2:processing-units-list')
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)

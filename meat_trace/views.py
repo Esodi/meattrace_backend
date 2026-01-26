@@ -21,7 +21,7 @@ from django.db import models
 from django.db import transaction
 
 from .models import Animal, Product, Receipt, UserProfile, ProductCategory, ProcessingStage, ProductTimelineEvent, Inventory, Order, OrderItem, CarcassMeasurement, SlaughterPart, ProcessingUnit, ProcessingUnitUser, Shop, ShopUser, UserAuditLog, JoinRequest, Notification, Activity, SystemAlert, PerformanceMetric, ComplianceAudit, Certification, SystemHealth, SecurityLog, TransferRequest, BackupSchedule, Sale, SaleItem, RejectionReason
-from .farmer_dashboard_serializer import FarmerDashboardSerializer
+from .abbatoir_dashboard_serializer import AbbatoirDashboardSerializer
 from .serializers import AnimalSerializer, ProductSerializer, OrderSerializer, ShopSerializer, SlaughterPartSerializer, ActivitySerializer, ProcessingUnitSerializer, JoinRequestSerializer, ProductCategorySerializer, CarcassMeasurementSerializer, SaleSerializer, SaleItemSerializer, NotificationSerializer, UserProfileSerializer
 from .utils.rejection_service import RejectionService
 from .utils.notification_service import NotificationService
@@ -53,7 +53,7 @@ class AnimalViewSet(viewsets.ModelViewSet):
         Supports filtering by species, slaughtered status, search, and ordering.
         
         Filtering logic:
-        - Farmers: see their own animals
+        - Abbatoirs: see their own animals
         - Processors: see animals transferred to ANY processing unit they belong to
         - Admins: see all animals
         """
@@ -61,12 +61,12 @@ class AnimalViewSet(viewsets.ModelViewSet):
         # FIX: Add prefetch_related for carcass_measurement and slaughter_parts
         # This ensures split carcass animals load their measurement and parts data
         queryset = Animal.objects.all().select_related(
-            'farmer', 'transferred_to', 'received_by', 'carcass_measurement'
+            'abbatoir', 'transferred_to', 'received_by', 'carcass_measurement'
         ).prefetch_related('slaughter_parts')
 
-        # Farmers see their own animals
-        if hasattr(user, 'profile') and user.profile.role == 'Farmer':
-            queryset = queryset.filter(farmer=user)
+        # Abbatoirs see their own animals
+        if hasattr(user, 'profile') and user.profile.role == 'Abbatoir':
+            queryset = queryset.filter(abbatoir=user)
 
         # ProcessingUnit users see animals transferred to ANY processing unit they belong to
         elif hasattr(user, 'profile') and user.profile.role == 'Processor':
@@ -116,11 +116,11 @@ class AnimalViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
-        """Set the farmer to the current user when creating an animal"""
+        """Set the abbatoir to the current user when creating an animal"""
         try:
             print(f"[ANIMAL_CREATE] Request data: {self.request.data}")
             print(f"[ANIMAL_CREATE] User: {self.request.user.username}")
-            serializer.save(farmer=self.request.user)
+            serializer.save(abbatoir=self.request.user)
             print(f"[ANIMAL_CREATE] ✅ Animal created successfully")
         except Exception as e:
             print(f"[ANIMAL_CREATE] ❌ Error: {e}")
@@ -234,7 +234,7 @@ class AnimalViewSet(viewsets.ModelViewSet):
                     # Use select_for_update to prevent race conditions
                     animals = Animal.objects.select_for_update().filter(
                         id__in=animal_ids,
-                        farmer=request.user,
+                        abbatoir=request.user,
                         transferred_to__isnull=True  # Not already transferred
                     )
 
@@ -253,7 +253,7 @@ class AnimalViewSet(viewsets.ModelViewSet):
                         # Use select_for_update to prevent race conditions
                         parts = SlaughterPart.objects.select_for_update().filter(
                             id__in=part_ids,
-                            animal__farmer=request.user,
+                            animal__abbatoir=request.user,
                             transferred_to__isnull=True  # Not already transferred
                         )
 
@@ -348,7 +348,7 @@ class AnimalViewSet(viewsets.ModelViewSet):
     def transferred_animals(self, request):
         """Get animals transferred by the current user"""
         queryset = Animal.objects.filter(
-            farmer=request.user,
+            abbatoir=request.user,
             transferred_to__isnull=False
         ).order_by('-transferred_at')
 
@@ -574,16 +574,16 @@ class SlaughterPartViewSet(viewsets.ModelViewSet):
         Return slaughter parts for the current user with optional filtering.
         
         Filtering logic:
-        - Farmers: see parts from their animals
+        - Abbatoirs: see parts from their animals
         - Processors: see parts transferred to or received by them
         - Admins: see all parts
         """
         user = self.request.user
         queryset = SlaughterPart.objects.all().select_related('animal', 'transferred_to', 'received_by')
 
-        # Farmers see parts from their own animals
-        if hasattr(user, 'profile') and user.profile.role == 'Farmer':
-            queryset = queryset.filter(animal__farmer=user)
+        # Abbatoirs see parts from their own animals
+        if hasattr(user, 'profile') and user.profile.role == 'Abbatoir':
+            queryset = queryset.filter(animal__abbatoir=user)
 
         # ProcessingUnit users see parts transferred to or received by them
         elif hasattr(user, 'profile') and user.profile.role == 'Processor':
@@ -1381,7 +1381,7 @@ def user_profile_view(request):
             'is_active': request.user.is_active,
             'date_joined': request.user.date_joined.isoformat() if request.user.date_joined else None,
             'last_login': request.user.last_login.isoformat() if request.user.last_login else None,
-            'role': 'Farmer',  # Default role
+            'role': 'Abbatoir',  # Default role
             'processing_unit': None,
             'shop': None,
             'processing_unit_memberships': [],
@@ -1403,7 +1403,7 @@ def dashboard_view(request):
         print(f"[DASHBOARD] User: {user.username}")
         
         # Safely get role
-        role = 'Farmer'  # Default
+        role = 'Abbatoir'  # Default
         if hasattr(user, 'profile') and user.profile:
             role = user.profile.role
         print(f"[DASHBOARD] Role: {role}")
@@ -1419,10 +1419,10 @@ def dashboard_view(request):
         }
         
         # Add role-specific data
-        if role.lower() == 'farmer':
+        if role.lower() == 'abbatoir':
             try:
-                animals_count = Animal.objects.filter(farmer=user).count()
-                active_animals = Animal.objects.filter(farmer=user, slaughtered=False).count()
+                animals_count = Animal.objects.filter(abbatoir=user).count()
+                active_animals = Animal.objects.filter(abbatoir=user, slaughtered=False).count()
                 dashboard_data['stats'] = {
                     'total_animals': animals_count,
                     'active_animals': active_animals,
@@ -1486,10 +1486,10 @@ def activities_view(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
-def farmer_dashboard(request):
-    # Return a small serialized payload compatible with farmer dashboard
+def abbatoir_dashboard(request):
+    # Return a small serialized payload compatible with abbatoir dashboard
     try:
-        serializer = FarmerDashboardSerializer({'user': request.user})
+        serializer = AbbatoirDashboardSerializer({'user': request.user})
         data = serializer.data
     except Exception:
         data = {}
@@ -1499,7 +1499,7 @@ def farmer_dashboard(request):
 def product_info_view(request, product_id):
     try:
         product = Product.objects.select_related(
-            'animal', 'animal__farmer', 'processing_unit', 
+            'animal', 'animal__abbatoir', 'processing_unit', 
             'category', 'slaughter_part', 'transferred_to',
             'received_by_shop'
         ).prefetch_related(
@@ -1511,12 +1511,12 @@ def product_info_view(request, product_id):
         # Build comprehensive timeline
         timeline = []
         
-        # 1. Animal Registration (Farmer Stage)
+        # 1. Animal Registration (Abbatoir Stage)
         if product.animal:
             animal = product.animal
             
-            # Get farmer contact info
-            farmer_details = {
+            # Get abbatoir contact info
+            abbatoir_details = {
                 'Animal ID': animal.animal_id,
                 'Animal Name': animal.animal_name or 'Not named',
                 'Species': animal.get_species_display(),
@@ -1525,32 +1525,32 @@ def product_info_view(request, product_id):
                 'Live Weight': f'{animal.live_weight} kg' if animal.live_weight else 'Not recorded',
                 'Health Status': animal.health_status or 'Not recorded',
                 'Breed': animal.breed or 'Not specified',
-                'Farmer Name': animal.farmer.get_full_name() if animal.farmer.first_name else animal.farmer.username,
-                'Farmer Email': animal.farmer.email or 'Not provided',
+                'Abbatoir Name': animal.abbatoir.get_full_name() if animal.abbatoir.first_name else animal.abbatoir.username,
+                'Abbatoir Email': animal.abbatoir.email or 'Not provided',
                 'Notes': animal.notes or 'None'
             }
             
-            # Add farmer phone if available
-            if hasattr(animal.farmer, 'profile') and hasattr(animal.farmer.profile, 'phone'):
-                farmer_details['Farmer Phone'] = animal.farmer.profile.phone or 'Not provided'
-            elif hasattr(animal.farmer, 'phone_number'):
-                farmer_details['Farmer Phone'] = animal.farmer.phone_number or 'Not provided'
+            # Add abbatoir phone if available
+            if hasattr(animal.abbatoir, 'profile') and hasattr(animal.abbatoir.profile, 'phone'):
+                abbatoir_details['Abbatoir Phone'] = animal.abbatoir.profile.phone or 'Not provided'
+            elif hasattr(animal.abbatoir, 'phone_number'):
+                abbatoir_details['Abbatoir Phone'] = animal.abbatoir.phone_number or 'Not provided'
             
             timeline.append({
                 'stage': 'Animal Registration',
-                'category': 'farmer',
+                'category': 'abbatoir',
                 'timestamp': animal.created_at,
-                'location': f'Farm - {animal.farmer.username}',
-                'actor': animal.farmer.get_full_name() if animal.farmer.first_name else animal.farmer.username,
-                'action': f'Animal {animal.animal_id} registered at farm',
+                'location': f'Abbatoir - {animal.abbatoir.username}',
+                'actor': animal.abbatoir.get_full_name() if animal.abbatoir.first_name else animal.abbatoir.username,
+                'action': f'Animal {animal.animal_id} registered at abbatoir',
                 'icon': 'fa-clipboard-list',
-                'details': farmer_details
+                'details': abbatoir_details
             })
             
             # 2. Animal Transfer to Processing Unit
             if animal.transferred_at and animal.transferred_to:
                 transfer_details = {
-                    'From': f'Farm - {animal.farmer.get_full_name() if animal.farmer.first_name else animal.farmer.username}',
+                    'From': f'Abbatoir - {animal.abbatoir.get_full_name() if animal.abbatoir.first_name else animal.abbatoir.username}',
                     'To': animal.transferred_to.name,
                     'Transfer Date': animal.transferred_at.strftime('%Y-%m-%d %H:%M:%S'),
                     'Transfer Mode': 'Live Animal Transport',
@@ -1567,7 +1567,7 @@ def product_info_view(request, product_id):
                     'category': 'logistics',
                     'timestamp': animal.transferred_at,
                     'location': animal.transferred_to.name,
-                    'actor': animal.farmer.get_full_name() if animal.farmer.first_name else animal.farmer.username,
+                    'actor': animal.abbatoir.get_full_name() if animal.abbatoir.first_name else animal.abbatoir.username,
                     'action': f'Live animal transported to {animal.transferred_to.name}',
                     'icon': 'fa-truck',
                     'details': transfer_details
@@ -2480,7 +2480,7 @@ class ProcessingUnitViewSet(viewsets.ViewSet):
             # Log query parameters for debugging
             logger.info(f"[PROCESSING_UNIT_VIEWSET] Query params: {request.query_params}")
             
-            # Check if requesting all processing units (for farmers transferring animals)
+            # Check if requesting all processing units (for abbatoirs transferring animals)
             show_all = request.query_params.get('all', 'false').lower() == 'true'
             logger.info(f"[PROCESSING_UNIT_VIEWSET] show_all: {show_all}")
             
@@ -2828,9 +2828,9 @@ class CarcassMeasurementViewSet(viewsets.ModelViewSet):
                     return CarcassMeasurement.objects.filter(animal_id__in=animal_ids)
                 return CarcassMeasurement.objects.none()
             
-            # Farmer can see measurements for their own animals
-            elif profile.role == 'Farmer':
-                return CarcassMeasurement.objects.filter(animal__farmer=user)
+            # Abbatoir can see measurements for their own animals
+            elif profile.role == 'Abbatoir':
+                return CarcassMeasurement.objects.filter(animal__abbatoir=user)
             
             # Shop owners can see measurements for animals they've purchased
             elif profile.role == 'ShopOwner':

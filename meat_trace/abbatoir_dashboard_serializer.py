@@ -2,9 +2,9 @@ from rest_framework import serializers
 from .models import Animal, Activity
 from .serializers import ActivitySerializer
 
-class FarmerDashboardSerializer(serializers.Serializer):
+class AbbatoirDashboardSerializer(serializers.Serializer):
     """
-    Serializer for the farmer dashboard, providing a structured and validated
+    Serializer for the abbatoir dashboard, providing a structured and validated
     representation of the data required by the frontend.
     """
     class UserSerializer(serializers.Serializer):

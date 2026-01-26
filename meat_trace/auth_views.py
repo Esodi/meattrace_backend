@@ -253,7 +253,7 @@ class RegisterView(APIView):
         # Map frontend role names to backend role values
         print(f"[REGISTRATION] Role received from frontend: '{role}'")
         role_mapping = {
-            'farmer': 'Farmer',
+            'abbatoir': 'Abbatoir',
             'processingunit': 'Processor',
             'processing_unit': 'Processor',
             'processor': 'Processor',

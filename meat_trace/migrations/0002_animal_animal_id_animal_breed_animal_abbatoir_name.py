@@ -22,7 +22,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddField(
             model_name='animal',
-            name='farm_name',
-            field=models.CharField(blank=True, help_text='Farm name', max_length=100, null=True),
+            name='abbatoir_name',
+            field=models.CharField(blank=True, help_text='Abbatoir name', max_length=100, null=True),
         ),
     ]

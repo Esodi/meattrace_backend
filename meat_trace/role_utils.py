@@ -2,24 +2,24 @@
 Role normalization utilities to handle inconsistent role naming across the codebase.
 
 The system uses two role naming conventions:
-- Model/Database: 'Farmer', 'Processor', 'ShopOwner', 'Admin' (capitalized)
-- API/Frontend: 'farmer', 'processing_unit', 'shop', 'admin' (lowercase with underscores)
+- Model/Database: 'Abbatoir', 'Processor', 'ShopOwner', 'Admin' (capitalized)
+- API/Frontend: 'abbatoir', 'processing_unit', 'shop', 'admin' (lowercase with underscores)
 
 This utility ensures both conventions work seamlessly.
 """
 
 # Canonical role constants (match UserProfile.ROLE_CHOICES)
-ROLE_FARMER = 'Farmer'
+ROLE_ABBATOIR = 'Abbatoir'
 ROLE_PROCESSOR = 'Processor'
 ROLE_SHOPOWNER = 'ShopOwner'
 ROLE_ADMIN = 'Admin'
 
 # Role normalization mapping (all variants map to canonical form)
 ROLE_MAPPING = {
-    # Farmer variants
-    'farmer': ROLE_FARMER,
-    'Farmer': ROLE_FARMER,
-    'FARMER': ROLE_FARMER,
+    # Abbatoir variants
+    'abbatoir': ROLE_ABBATOIR,
+    'Abbatoir': ROLE_ABBATOIR,
+    'ABBATOIR': ROLE_ABBATOIR,
     
     # Processor variants
     'processor': ROLE_PROCESSOR,
@@ -53,7 +53,7 @@ def normalize_role(role):
     Normalize a role string to its canonical form.
     
     Handles all naming conventions:
-    - 'farmer' -> 'Farmer'
+    - 'abbatoir' -> 'Abbatoir'
     - 'processing_unit' -> 'Processor'
     - 'Processor' -> 'Processor'
     - 'shop' -> 'ShopOwner'
@@ -83,11 +83,11 @@ def normalize_role(role):
     return role
 
 
-def is_farmer(user):
-    """Check if user has farmer role"""
+def is_abbatoir(user):
+    """Check if user has abbatoir role"""
     if not hasattr(user, 'profile') or not user.profile:
         return False
-    return normalize_role(user.profile.role) == ROLE_FARMER
+    return normalize_role(user.profile.role) == ROLE_ABBATOIR
 
 
 def is_processor(user):

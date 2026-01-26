@@ -29,6 +29,6 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name='userprofile',
             name='role',
-            field=models.CharField(choices=[('farmer', 'Farmer'), ('processing_unit', 'Processing Unit'), ('shop', 'Shop')], default='farmer', max_length=20),
+            field=models.CharField(choices=[('abbatoir', 'Abbatoir'), ('processing_unit', 'Processing Unit'), ('shop', 'Shop')], default='abbatoir', max_length=20),
         ),
     ]

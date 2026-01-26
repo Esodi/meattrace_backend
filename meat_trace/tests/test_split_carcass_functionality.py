@@ -24,12 +24,12 @@ class SplitCarcassModelTests(TestCase):
     def setUp(self):
         """Set up test data"""
         # Clean up any existing test data first
-        UserProfile.objects.filter(user__username__in=['test_farmer_model', 'test_processor_model']).delete()
-        User.objects.filter(username__in=['test_farmer_model', 'test_processor_model']).delete()
+        UserProfile.objects.filter(user__username__in=['test_abbatoir_model', 'test_processor_model']).delete()
+        User.objects.filter(username__in=['test_abbatoir_model', 'test_processor_model']).delete()
         ProcessingUnit.objects.filter(name='Test Processing Unit Model').delete()
 
-        self.farmer = User.objects.create_user(
-            username='test_farmer_model', email='farmer_model@test.com', password='testpass123'
+        self.abbatoir = User.objects.create_user(
+            username='test_abbatoir_model', email='abbatoir_model@test.com', password='testpass123'
         )
         self.processor = User.objects.create_user(
             username='test_processor_model', email='processor_model@test.com', password='testpass123'
@@ -39,7 +39,7 @@ class SplitCarcassModelTests(TestCase):
         )
 
         # Create user profiles
-        UserProfile.objects.create(user=self.farmer, role='farmer')
+        UserProfile.objects.create(user=self.abbatoir, role='abbatoir')
         UserProfile.objects.create(user=self.processor, role='processing_unit',
                                   processing_unit=self.processing_unit)
 
@@ -47,7 +47,7 @@ class SplitCarcassModelTests(TestCase):
         """Test creating a split carcass animal with measurement"""
         # Create animal
         animal = Animal.objects.create(
-            farmer=self.farmer,
+            abbatoir=self.abbatoir,
             species='cow',
             age=24.0,
             live_weight=500.0,
@@ -75,7 +75,7 @@ class SplitCarcassModelTests(TestCase):
         """Test automatic creation of slaughter parts for split carcass"""
         # Create animal
         animal = Animal.objects.create(
-            farmer=self.farmer,
+            abbatoir=self.abbatoir,
             species='cow',
             age=24.0,
             live_weight=500.0,
@@ -136,7 +136,7 @@ class SplitCarcassModelTests(TestCase):
     def test_split_carcass_measurement_validation(self):
         """Test validation of split carcass measurements"""
         animal = Animal.objects.create(
-            farmer=self.farmer,
+            abbatoir=self.abbatoir,
             species='cow',
             age=24.0,
             live_weight=500.0,
@@ -178,7 +178,7 @@ class SplitCarcassModelTests(TestCase):
         """Test lifecycle status for split carcass animals"""
         # Create split carcass animal
         animal = Animal.objects.create(
-            farmer=self.farmer,
+            abbatoir=self.abbatoir,
             species='cow',
             age=24.0,
             live_weight=500.0,
@@ -230,14 +230,14 @@ class SplitCarcassAPITests(APITestCase):
         self.client = APIClient()
 
         # Clean up any existing test data first
-        UserProfile.objects.filter(user__username__in=['test_farmer_api', 'test_processor_api']).delete()
-        User.objects.filter(username__in=['test_farmer_api', 'test_processor_api']).delete()
+        UserProfile.objects.filter(user__username__in=['test_abbatoir_api', 'test_processor_api']).delete()
+        User.objects.filter(username__in=['test_abbatoir_api', 'test_processor_api']).delete()
         ProcessingUnit.objects.filter(name='Test Processing Unit API').delete()
         Animal.objects.filter(animal_id='TEST_SPLIT_API_001').delete()
 
         # Create users
-        self.farmer = User.objects.create_user(
-            username='test_farmer_api', email='farmer_api@test.com', password='testpass123'
+        self.abbatoir = User.objects.create_user(
+            username='test_abbatoir_api', email='abbatoir_api@test.com', password='testpass123'
         )
         self.processor = User.objects.create_user(
             username='test_processor_api', email='processor_api@test.com', password='testpass123'
@@ -249,13 +249,13 @@ class SplitCarcassAPITests(APITestCase):
         )
 
         # Create profiles
-        UserProfile.objects.create(user=self.farmer, role='farmer')
+        UserProfile.objects.create(user=self.abbatoir, role='abbatoir')
         UserProfile.objects.create(user=self.processor, role='processing_unit',
                                   processing_unit=self.processing_unit)
 
         # Create split carcass animal
         self.split_animal = Animal.objects.create(
-            farmer=self.farmer,
+            abbatoir=self.abbatoir,
             species='cow',
             age=24.0,
             live_weight=500.0,
@@ -293,7 +293,7 @@ class SplitCarcassAPITests(APITestCase):
 
     def test_carcass_measurement_api_create_split(self):
         """Test creating split carcass measurement via API"""
-        self.client.force_authenticate(user=self.farmer)
+        self.client.force_authenticate(user=self.abbatoir)
 
         measurement_data = {
             'animal_id': self.split_animal.id,
@@ -389,7 +389,7 @@ class SplitCarcassAPITests(APITestCase):
 
     def test_transfer_split_carcass_parts(self):
         """Test transferring split carcass parts"""
-        self.client.force_authenticate(user=self.farmer)
+        self.client.force_authenticate(user=self.abbatoir)
 
         # Transfer individual parts
         part_ids = [self.parts[0].id, self.parts[1].id]  # left and right carcass
@@ -463,15 +463,15 @@ class SplitCarcassIntegrationTests(TransactionTestCase):
         self.client = APIClient()
 
         # Clean up any existing test data first
-        UserProfile.objects.filter(user__username__in=['farmer_integration', 'processor_integration']).delete()
-        User.objects.filter(username__in=['farmer_integration', 'processor_integration']).delete()
+        UserProfile.objects.filter(user__username__in=['abbatoir_integration', 'processor_integration']).delete()
+        User.objects.filter(username__in=['abbatoir_integration', 'processor_integration']).delete()
         ProcessingUnit.objects.filter(name='Test PU Integration').delete()
         Animal.objects.filter(animal_id='WORKFLOW_TEST_001').delete()
         ProductCategory.objects.filter(name='Test Category').delete()
 
         # Create users and processing unit
-        self.farmer = User.objects.create_user(
-            username='farmer_integration', email='farmer_integration@test.com', password='testpass123'
+        self.abbatoir = User.objects.create_user(
+            username='abbatoir_integration', email='abbatoir_integration@test.com', password='testpass123'
         )
         self.processor = User.objects.create_user(
             username='processor_integration', email='processor_integration@test.com', password='testpass123'
@@ -480,7 +480,7 @@ class SplitCarcassIntegrationTests(TransactionTestCase):
             name='Test PU Integration', location='Test Location'
         )
 
-        UserProfile.objects.create(user=self.farmer, role='farmer')
+        UserProfile.objects.create(user=self.abbatoir, role='abbatoir')
         UserProfile.objects.create(user=self.processor, role='processing_unit',
                                   processing_unit=self.processing_unit)
 
@@ -488,7 +488,7 @@ class SplitCarcassIntegrationTests(TransactionTestCase):
         """Test complete workflow from creation to product creation"""
         # 1. Create animal
         animal = Animal.objects.create(
-            farmer=self.farmer,
+            abbatoir=self.abbatoir,
             species='cow',
             age=24.0,
             live_weight=500.0,
@@ -496,7 +496,7 @@ class SplitCarcassIntegrationTests(TransactionTestCase):
         )
 
         # 2. Create split carcass measurement
-        self.client.force_authenticate(user=self.farmer)
+        self.client.force_authenticate(user=self.abbatoir)
         measurement_data = {
             'animal_id': animal.id,
             'carcass_type': 'split',

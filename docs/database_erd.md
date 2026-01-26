@@ -105,7 +105,7 @@ erDiagram
     
     ANIMAL {
         int id PK
-        int farmer_id FK
+        int abbatoir_id FK
         string animal_id
         string animal_name
         string species
@@ -444,11 +444,11 @@ erDiagram
     COMPLIANCE_AUDIT }o--|| USER : "conducted by"
     COMPLIANCE_AUDIT }o--|| PROCESSING_UNIT : "audits unit"
     COMPLIANCE_AUDIT }o--|| SHOP : "audits shop"
-    COMPLIANCE_AUDIT }o--|| USER : "audits farmer"
+    COMPLIANCE_AUDIT }o--|| USER : "audits abbatoir"
     
     CERTIFICATION }o--|| PROCESSING_UNIT : "certifies unit"
     CERTIFICATION }o--|| SHOP : "certifies shop"
-    CERTIFICATION }o--|| USER : "certifies farmer"
+    CERTIFICATION }o--|| USER : "certifies abbatoir"
     
     NOTIFICATION }o--|| USER : "sent to"
     NOTIFICATION }o--|| NOTIFICATION_TEMPLATE : uses
@@ -477,4 +477,4 @@ erDiagram
 
 ## Database Summary
 
-**Total Models: 50+** covering the complete meat traceability supply chain from farm to consumer.
+**Total Models: 50+** covering the complete meat traceability supply chain from abbatoir to consumer.

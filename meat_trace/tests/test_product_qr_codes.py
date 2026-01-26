@@ -25,16 +25,16 @@ class ProductQRCodeTests(TestCase):
             processing_unit=self.processing_unit_obj
         )
 
-        # Create a farmer user
-        self.farmer = User.objects.create_user(
-            username='farmer1',
+        # Create a abbatoir user
+        self.abbatoir = User.objects.create_user(
+            username='abbatoir1',
             password='testpass123'
         )
-        UserProfile.objects.filter(user=self.farmer).update(role='Farmer')
+        UserProfile.objects.filter(user=self.abbatoir).update(role='Abbatoir')
 
         # Create an animal
         self.animal = Animal.objects.create(
-            farmer=self.farmer,
+            abbatoir=self.abbatoir,
             species='cow',
             age=24,
             live_weight=500,
@@ -67,8 +67,8 @@ class ProductQRCodeTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_regenerate_qr_code_forbidden(self):
-        # Log in as farmer (who shouldn't have access)
-        self.api_client.force_authenticate(user=self.farmer)
+        # Log in as abbatoir (who shouldn't have access)
+        self.api_client.force_authenticate(user=self.abbatoir)
         response = self.api_client.post(f'/api/v2/products/{self.product.id}/regenerate_qr/')
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 

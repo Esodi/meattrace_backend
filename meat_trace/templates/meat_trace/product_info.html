@@ -170,7 +170,7 @@
         box-shadow: 0 0 0 4px rgba(40, 167, 69, 0.2);
     }
     
-    .timeline-event.farmer::before { border-color: #8B4513; }
+    .timeline-event.abbatoir::before { border-color: #8B4513; }
     .timeline-event.logistics::before { border-color: var(--info-color); }
     .timeline-event.processing::before { border-color: var(--accent-color); }
     .timeline-event.shop::before { border-color: var(--primary-color); }
@@ -185,7 +185,7 @@
         transition: all 0.3s ease;
     }
     
-    .timeline-event.farmer .timeline-event-card { border-left-color: #8B4513; }
+    .timeline-event.abbatoir .timeline-event-card { border-left-color: #8B4513; }
     .timeline-event.logistics .timeline-event-card { border-left-color: var(--info-color); }
     .timeline-event.processing .timeline-event-card { border-left-color: var(--accent-color); }
     .timeline-event.shop .timeline-event-card { border-left-color: var(--primary-color); }
@@ -225,7 +225,7 @@
         font-size: 0.9rem;
     }
     
-    .farmer .event-icon { background: #8B4513; }
+    .abbatoir .event-icon { background: #8B4513; }
     .logistics .event-icon { background: var(--info-color); }
     .processing .event-icon { background: var(--accent-color); }
     .shop .event-icon { background: var(--primary-color); }
@@ -310,7 +310,7 @@
         box-shadow: var(--card-hover);
     }
     
-    .stat-card.farmer { border-top-color: #8B4513; }
+    .stat-card.abbatoir { border-top-color: #8B4513; }
     .stat-card.processing { border-top-color: var(--accent-color); }
     .stat-card.shop { border-top-color: var(--primary-color); }
     .stat-card.sale { border-top-color: var(--success-color); }
@@ -321,7 +321,7 @@
         color: var(--primary-color);
     }
     
-    .stat-card.farmer .stat-icon { color: #8B4513; }
+    .stat-card.abbatoir .stat-icon { color: #8B4513; }
     .stat-card.processing .stat-icon { color: var(--accent-color); }
     .stat-card.shop .stat-icon { color: var(--primary-color); }
     .stat-card.sale .stat-icon { color: var(--success-color); }
@@ -458,13 +458,13 @@
 {% block content %}
 <div class="dashboard-hero">
     <h1><i class="fas fa-chart-line"></i> Meat Traceability Dashboard</h1>
-    <p>Complete journey from farm to fork - Track every step of your meat products</p>
+    <p>Complete journey from abbatoir to fork - Track every step of your meat products</p>
 </div>
 
 {% if product_infos %}
     <!-- Summary Statistics -->
     <div class="stats-grid">
-        <div class="stat-card farmer">
+        <div class="stat-card abbatoir">
             <div class="stat-icon"><i class="fas fa-tractor"></i></div>
             <div class="stat-value">{{ product_infos|length }}</div>
             <div class="stat-label">Products Tracked</div>

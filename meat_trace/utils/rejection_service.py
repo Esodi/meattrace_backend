@@ -32,7 +32,7 @@ class RejectionService:
             animal.rejected_by = rejected_by
             animal.rejected_at = timezone.now()
             
-            # Clear transfer and receive fields to return animal to farmer
+            # Clear transfer and receive fields to return animal to abbatoir
             animal.transferred_to = None
             animal.transferred_at = None
             animal.received_by = None
@@ -51,9 +51,9 @@ class RejectionService:
                 processing_unit=processing_unit,
             )
 
-            # Send notification to farmer using NotificationService
+            # Send notification to abbatoir using NotificationService
             NotificationService.notify_animal_rejected(
-                animal.farmer,
+                animal.abbatoir,
                 animal,
                 rejection_data['category'],
                 rejection_data['specific_reason']
@@ -77,7 +77,7 @@ class RejectionService:
             # Create audit log
             UserAuditLog.objects.create(
                 performed_by=rejected_by,
-                affected_user=animal.farmer,
+                affected_user=animal.abbatoir,
                 processing_unit=processing_unit,
                 action='animal_rejected',
                 description=f'Animal {animal.animal_id} rejected by processing unit {processing_unit.name}',
@@ -115,7 +115,7 @@ class RejectionService:
             part.rejected_by = rejected_by
             part.rejected_at = timezone.now()
             
-            # Clear transfer and receive fields to return part to farmer
+            # Clear transfer and receive fields to return part to abbatoir
             part.transferred_to = None
             part.transferred_at = None
             part.received_by = None
@@ -134,9 +134,9 @@ class RejectionService:
                 processing_unit=processing_unit,
             )
 
-            # Send notification to farmer using NotificationService
+            # Send notification to abbatoir using NotificationService
             NotificationService.notify_part_rejected(
-                part.animal.farmer,
+                part.animal.abbatoir,
                 part,
                 rejection_data['category'],
                 rejection_data['specific_reason']
@@ -162,7 +162,7 @@ class RejectionService:
             # Create audit log
             UserAuditLog.objects.create(
                 performed_by=rejected_by,
-                affected_user=part.animal.farmer,
+                affected_user=part.animal.abbatoir,
                 processing_unit=processing_unit,
                 action='part_rejected',
                 description=f'Part {part.part_type} of animal {part.animal.animal_id} rejected by processing unit {processing_unit.name}',
@@ -204,7 +204,7 @@ class RejectionService:
 
                 # Send notification using NotificationService
                 NotificationService.notify_appeal_resolved(
-                    animal.farmer, 'animal', animal.id, resolution, resolution_notes
+                    animal.abbatoir, 'animal', animal.id, resolution, resolution_notes
                 )
 
                 # Create activity
@@ -233,7 +233,7 @@ class RejectionService:
 
                 # Send notification using NotificationService
                 NotificationService.notify_appeal_resolved(
-                    part.animal.farmer, 'part', part.id, resolution, resolution_notes
+                    part.animal.abbatoir, 'part', part.id, resolution, resolution_notes
                 )
 
                 # Create activity
@@ -254,8 +254,8 @@ class RejectionService:
                 )
 
     @staticmethod
-    def _send_rejection_notification(item_type, farmer, item, category, specific_reason):
-        """Send rejection notification to farmer"""
+    def _send_rejection_notification(item_type, abbatoir, item, category, specific_reason):
+        """Send rejection notification to abbatoir"""
         if item_type == 'animal':
             title = f'Animal {item.animal_id} Rejected'
             message = f'Your animal {item.animal_id} was rejected during processing. Reason: {category} - {specific_reason}'
@@ -266,7 +266,7 @@ class RejectionService:
             notification_type = 'part_rejected'
 
         Notification.objects.create(
-            user=farmer,
+            user=abbatoir,
             notification_type=notification_type,
             title=title,
             message=message,
@@ -280,8 +280,8 @@ class RejectionService:
         )
 
     @staticmethod
-    def _send_appeal_resolution_notification(item_type, farmer, item, resolution, resolution_notes):
-        """Send appeal resolution notification to farmer"""
+    def _send_appeal_resolution_notification(item_type, abbatoir, item, resolution, resolution_notes):
+        """Send appeal resolution notification to abbatoir"""
         if item_type == 'animal':
             title = f'Appeal {resolution.title()} for Animal {item.animal_id}'
             message = f'Your appeal for animal {item.animal_id} has been {resolution}.'
@@ -295,7 +295,7 @@ class RejectionService:
             message += f' Notes: {resolution_notes}'
 
         Notification.objects.create(
-            user=farmer,
+            user=abbatoir,
             notification_type=notification_type,
             title=title,
             message=message,

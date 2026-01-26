@@ -57,8 +57,8 @@ class ComplianceAuditSerializer(serializers.ModelSerializer):
             return obj.processing_unit.name
         elif obj.shop:
             return obj.shop.name
-        elif obj.farmer:
-            return obj.farmer.username
+        elif obj.abbatoir:
+            return obj.abbatoir.username
         return 'Unknown Entity'
     
     def get_auditor_name(self, obj):
@@ -80,8 +80,8 @@ class CertificationSerializer(serializers.ModelSerializer):
             return obj.processing_unit.name
         elif obj.shop:
             return obj.shop.name
-        elif obj.farmer:
-            return obj.farmer.username
+        elif obj.abbatoir:
+            return obj.abbatoir.username
         return 'Unknown Entity'
 
 
@@ -388,7 +388,7 @@ class CarcassMeasurementSerializer(serializers.ModelSerializer):
 
 
 class AnimalSerializer(serializers.ModelSerializer):
-    farmer_name = serializers.CharField(source='farmer.username', read_only=True)
+    abbatoir_name = serializers.CharField(source='abbatoir.username', read_only=True)
     processing_unit_name = serializers.CharField(source='transferred_to.name', read_only=True)
     shop_name = serializers.CharField(source='received_by_shop.name', read_only=True)
     # FIX: Include nested carcass_measurement and slaughter_parts for split carcass detection
@@ -405,7 +405,7 @@ class AnimalSerializer(serializers.ModelSerializer):
     class Meta:
         model = Animal
         fields = '__all__'
-        read_only_fields = ['farmer', 'animal_id', 'created_at', 'slaughtered_at',
+        read_only_fields = ['abbatoir', 'animal_id', 'created_at', 'slaughtered_at',
                            'transferred_at', 'received_at', 'rejected_at',
                            'appealed_at', 'appeal_resolved_at']
 
@@ -641,7 +641,7 @@ class RejectionReasonSerializer(serializers.ModelSerializer):
 class AdminDashboardStatsSerializer(serializers.Serializer):
     """Serializer for admin dashboard overview statistics"""
     total_users = serializers.IntegerField()
-    total_farmers = serializers.IntegerField()
+    total_abbatoirs = serializers.IntegerField()
     total_processors = serializers.IntegerField()
     total_shop_owners = serializers.IntegerField()
     total_admins = serializers.IntegerField()
@@ -722,7 +722,7 @@ class AdminUserCreateUpdateSerializer(serializers.ModelSerializer):
         self.fields['role'].choices = UserProfile.ROLE_CHOICES
 
     def create(self, validated_data):
-        role = validated_data.pop('role', 'Farmer')  # Default to Farmer
+        role = validated_data.pop('role', 'Abbatoir')  # Default to Abbatoir
         processing_unit_id = validated_data.pop('processing_unit_id', None)
         shop_id = validated_data.pop('shop_id', None)
         password = validated_data.pop('password', None)
@@ -915,7 +915,7 @@ class AdminShopSerializer(serializers.ModelSerializer):
 
 class AdminAnimalOverviewSerializer(serializers.ModelSerializer):
     """Serializer for admin animal traceability overview"""
-    farmer_name = serializers.CharField(source='farmer.username', read_only=True)
+    abbatoir_name = serializers.CharField(source='abbatoir.username', read_only=True)
     processing_unit_name = serializers.CharField(source='transferred_to.name', read_only=True)
     lifecycle_status = serializers.ReadOnlyField()
     has_rejections = serializers.SerializerMethodField()
@@ -925,7 +925,7 @@ class AdminAnimalOverviewSerializer(serializers.ModelSerializer):
         model = Animal
         fields = [
             'id', 'animal_id', 'animal_name', 'species', 'age', 'live_weight',
-            'farmer_name', 'processing_unit_name', 'slaughtered', 'slaughtered_at',
+            'abbatoir_name', 'processing_unit_name', 'slaughtered', 'slaughtered_at',
             'transferred_at', 'lifecycle_status', 'has_rejections', 'has_appeals',
             'created_at'
         ]
@@ -1010,11 +1010,11 @@ class ReceiptSerializer(serializers.ModelSerializer):
 
 class AdminAnimalCreateUpdateSerializer(serializers.ModelSerializer):
     """Serializer for admin to create/update animals at any traceability point"""
-    farmer_id = serializers.IntegerField(write_only=True)
+    abbatoir_id = serializers.IntegerField(write_only=True)
     processing_unit_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
     
     # Read-only fields for response
-    farmer_name = serializers.CharField(source='farmer.username', read_only=True)
+    abbatoir_name = serializers.CharField(source='abbatoir.username', read_only=True)
     processing_unit_name = serializers.CharField(source='transferred_to.name', read_only=True)
     lifecycle_status = serializers.ReadOnlyField()
 
@@ -1024,20 +1024,20 @@ class AdminAnimalCreateUpdateSerializer(serializers.ModelSerializer):
             'id', 'animal_id', 'animal_name', 'species', 'breed', 'age', 'gender',
             'live_weight', 'remaining_weight', 'notes', 'health_status',
             'slaughtered', 'slaughtered_at', 'processed',
-            'farmer_id', 'farmer_name', 'processing_unit_id', 'processing_unit_name',
+            'abbatoir_id', 'abbatoir_name', 'processing_unit_id', 'processing_unit_name',
             'lifecycle_status', 'created_at'
         ]
         read_only_fields = ['animal_id', 'created_at', 'lifecycle_status']
 
-    def validate_farmer_id(self, value):
+    def validate_abbatoir_id(self, value):
         try:
             user = User.objects.get(id=value)
-            # Verify user is a farmer
-            if hasattr(user, 'profile') and user.profile.role != 'Farmer':
-                raise serializers.ValidationError("Selected user is not a farmer.")
+            # Verify user is a abbatoir
+            if hasattr(user, 'profile') and user.profile.role != 'Abbatoir':
+                raise serializers.ValidationError("Selected user is not a abbatoir.")
             return value
         except User.DoesNotExist:
-            raise serializers.ValidationError("Farmer not found.")
+            raise serializers.ValidationError("Abbatoir not found.")
 
     def validate_processing_unit_id(self, value):
         if value is None:
@@ -1050,11 +1050,11 @@ class AdminAnimalCreateUpdateSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         from django.utils import timezone
-        farmer_id = validated_data.pop('farmer_id')
+        abbatoir_id = validated_data.pop('abbatoir_id')
         processing_unit_id = validated_data.pop('processing_unit_id', None)
         
-        farmer = User.objects.get(id=farmer_id)
-        validated_data['farmer'] = farmer
+        abbatoir = User.objects.get(id=abbatoir_id)
+        validated_data['abbatoir'] = abbatoir
         
         if processing_unit_id:
             processing_unit = ProcessingUnit.objects.get(id=processing_unit_id)
@@ -1065,11 +1065,11 @@ class AdminAnimalCreateUpdateSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         from django.utils import timezone
-        farmer_id = validated_data.pop('farmer_id', None)
+        abbatoir_id = validated_data.pop('abbatoir_id', None)
         processing_unit_id = validated_data.pop('processing_unit_id', None)
         
-        if farmer_id:
-            instance.farmer = User.objects.get(id=farmer_id)
+        if abbatoir_id:
+            instance.abbatoir = User.objects.get(id=abbatoir_id)
         
         if processing_unit_id is not None:
             if processing_unit_id:
@@ -1303,8 +1303,8 @@ class AdminSlaughterPartCreateUpdateSerializer(serializers.ModelSerializer):
         return super().update(instance, validated_data)
 
 
-class AdminFarmerListSerializer(serializers.ModelSerializer):
-    """Serializer for listing farmers for selection dropdowns"""
+class AdminAbbatoirListSerializer(serializers.ModelSerializer):
+    """Serializer for listing abbatoirs for selection dropdowns"""
     full_name = serializers.SerializerMethodField()
     location = serializers.CharField(source='profile.address', read_only=True)
     phone = serializers.CharField(source='profile.phone', read_only=True)

@@ -26,7 +26,7 @@ class Migration(migrations.Migration):
                 ('created_at', models.DateTimeField(default=django.utils.timezone.now)),
                 ('slaughtered', models.BooleanField(default=False)),
                 ('slaughtered_at', models.DateTimeField(blank=True, null=True)),
-                ('farmer', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='animals', to=settings.AUTH_USER_MODEL)),
+                ('abbatoir', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='animals', to=settings.AUTH_USER_MODEL)),
             ],
         ),
         migrations.CreateModel(
@@ -54,7 +54,7 @@ class Migration(migrations.Migration):
             name='UserProfile',
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('role', models.CharField(choices=[('Farmer', 'Farmer'), ('ProcessingUnit', 'Processing Unit'), ('Shop', 'Shop')], default='Farmer', max_length=20)),
+                ('role', models.CharField(choices=[('Abbatoir', 'Abbatoir'), ('ProcessingUnit', 'Processing Unit'), ('Shop', 'Shop')], default='Abbatoir', max_length=20)),
                 ('user', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='profile', to=settings.AUTH_USER_MODEL)),
             ],
         ),

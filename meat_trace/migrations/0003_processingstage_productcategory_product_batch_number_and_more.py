@@ -9,7 +9,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('meat_trace', '0002_animal_animal_id_animal_breed_animal_farm_name'),
+        ('meat_trace', '0002_animal_animal_id_animal_breed_animal_abbatoir_name'),
     ]
 
     operations = [
