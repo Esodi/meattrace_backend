@@ -31,7 +31,6 @@ class SplitCarcassModelTests(TestCase):
         self.abbatoir = User.objects.create_user(
             username='test_abbatoir_model', email='abbatoir_model@test.com', password='testpass123'
             username='test_farmer_model', email='farmer_model@test.com', password='testpass123'
->>>>>>> aa57a1f (Implement weight-based selling and inventory management)
         )
         self.processor = User.objects.create_user(
             username='test_processor_model', email='processor_model@test.com', password='testpass123'
@@ -241,7 +240,6 @@ class SplitCarcassAPITests(APITestCase):
         self.abbatoir = User.objects.create_user(
             username='test_abbatoir_api', email='abbatoir_api@test.com', password='testpass123'
             username='test_farmer_api', email='farmer_api@test.com', password='testpass123'
->>>>>>> aa57a1f (Implement weight-based selling and inventory management)
         )
         self.processor = User.objects.create_user(
             username='test_processor_api', email='processor_api@test.com', password='testpass123'
@@ -477,7 +475,6 @@ class SplitCarcassIntegrationTests(TransactionTestCase):
         self.abbatoir = User.objects.create_user(
             username='abbatoir_integration', email='abbatoir_integration@test.com', password='testpass123'
             username='farmer_integration', email='farmer_integration@test.com', password='testpass123'
->>>>>>> aa57a1f (Implement weight-based selling and inventory management)
         )
         self.processor = User.objects.create_user(
             username='processor_integration', email='processor_integration@test.com', password='testpass123'

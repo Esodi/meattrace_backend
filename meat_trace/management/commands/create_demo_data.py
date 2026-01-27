@@ -201,7 +201,6 @@ class Command(BaseCommand):
         # Get users with Abbatoir role
         abbatoirs = [u for u in users if hasattr(u, 'profile') and u.profile.role == 'Abbatoir'][:20]
         farmers = [u for u in users if hasattr(u, 'profile') and u.profile.role == 'Abbatoir'][:20]
->>>>>>> aa57a1f (Implement weight-based selling and inventory management)
         
         # If no abbatoirs, use any users
         if not abbatoirs:
@@ -217,7 +216,6 @@ class Command(BaseCommand):
             animal = Animal.objects.create(
                 abbatoir=random.choice(abbatoirs),
                 abbatoir=random.choice(farmers),
->>>>>>> aa57a1f (Implement weight-based selling and inventory management)
                 species=random.choice(species_choices),
                 breed=f'Demo Breed {random.randint(1, 10)}',
                 age=Decimal(str(random.uniform(6, 60))),  # Age in months
