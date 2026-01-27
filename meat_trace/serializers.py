@@ -437,9 +437,12 @@ class ShopSerializer(serializers.ModelSerializer):
 
 
 class ProductCategorySerializer(serializers.ModelSerializer):
+    processing_unit_name = serializers.CharField(source='processing_unit.name', read_only=True)
+    
     class Meta:
         model = ProductCategory
-        fields = '__all__'
+        fields = ['id', 'name', 'description', 'processing_unit', 'processing_unit_name', 'created_at']
+        read_only_fields = ['created_at']
 
 
 class ProductIngredientSerializer(serializers.ModelSerializer):

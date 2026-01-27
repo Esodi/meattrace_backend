@@ -4631,13 +4631,54 @@ class ProductViewSet(viewsets.ModelViewSet):
 
 
 class ProductCategoryViewSet(viewsets.ModelViewSet):
-    """ViewSet for managing product categories"""
+    """ViewSet for managing product categories - scoped to processing unit"""
     serializer_class = ProductCategorySerializer
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
-        """All authenticated users can see all product categories"""
-        return ProductCategory.objects.all().order_by('name')
+        """Filter product categories by user's processing unit"""
+        user = self.request.user
+        
+        # Get user's processing units
+        try:
+            from .models import ProcessingUnitUser
+            user_processing_units = ProcessingUnitUser.objects.filter(
+                user=user,
+                is_active=True,
+                is_suspended=False
+            ).values_list('processing_unit_id', flat=True)
+            
+            if user_processing_units:
+                # Show categories belonging to user's processing units
+                # Also include legacy global categories (processing_unit=None) for compatibility
+                return ProductCategory.objects.filter(
+                    models.Q(processing_unit_id__in=user_processing_units) |
+                    models.Q(processing_unit__isnull=True)
+                ).order_by('name')
+        except Exception as e:
+            print(f"Error filtering product categories: {e}")
+        
+        # Fallback: show only global categories (legacy)
+        return ProductCategory.objects.filter(processing_unit__isnull=True).order_by('name')
+    
+    def perform_create(self, serializer):
+        """Auto-set processing_unit to user's processing unit on create"""
+        user = self.request.user
+        processing_unit = None
+        
+        try:
+            from .models import ProcessingUnitUser
+            pu_user = ProcessingUnitUser.objects.filter(
+                user=user,
+                is_active=True,
+                is_suspended=False
+            ).first()
+            if pu_user:
+                processing_unit = pu_user.processing_unit
+        except Exception as e:
+            print(f"Error getting processing unit for category creation: {e}")
+        
+        serializer.save(processing_unit=processing_unit)
 
 
 class InventoryViewSet(viewsets.ModelViewSet):

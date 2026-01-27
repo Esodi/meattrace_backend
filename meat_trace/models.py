@@ -662,11 +662,26 @@ class CarcassMeasurement(models.Model):
 
 
 class ProductCategory(models.Model):
-    name = models.CharField(max_length=100, unique=True)
+    name = models.CharField(max_length=100)
     description = models.TextField(blank=True, null=True)
+    processing_unit = models.ForeignKey(
+        'ProcessingUnit',
+        on_delete=models.CASCADE,
+        related_name='product_categories',
+        null=True,
+        blank=True,
+        help_text="Processing unit this category belongs to (null for legacy global categories)"
+    )
     created_at = models.DateTimeField(default=timezone.now)
 
+    class Meta:
+        # Name must be unique within each processing unit
+        unique_together = ['name', 'processing_unit']
+        verbose_name_plural = 'Product categories'
+
     def __str__(self):
+        if self.processing_unit:
+            return f"{self.name} ({self.processing_unit.name})"
         return self.name
 
 class ProcessingStage(models.Model):
