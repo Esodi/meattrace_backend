@@ -445,8 +445,6 @@ class AdminNotificationScheduleViewSet(AdminViewSet):
 
                 for group in schedule.recipient_groups:
                     if group == 'abbatoirs':
-                    if group == 'farmers':
->>>>>>> aa57a1f (Implement weight-based selling and inventory management)
                         recipients.extend(User.objects.filter(profile__role='Abbatoir'))
                     elif group == 'processors':
                         recipients.extend(User.objects.filter(profile__role='Processor'))
@@ -668,8 +666,6 @@ class AdminDashboardViewSet(viewsets.ViewSet):
         user_role_counts = UserProfile.objects.values('role').annotate(count=Count('id'))
 
         abbatoirs_count = next((item['count'] for item in user_role_counts if item['role'] == 'Abbatoir'), 0)
-        farmers_count = next((item['count'] for item in user_role_counts if item['role'] == 'Abbatoir'), 0)
->>>>>>> aa57a1f (Implement weight-based selling and inventory management)
         processors_count = next((item['count'] for item in user_role_counts if item['role'] == 'Processor'), 0)
         shop_owners_count = next((item['count'] for item in user_role_counts if item['role'] == 'ShopOwner'), 0)
         admins_count = next((item['count'] for item in user_role_counts if item['role'] == 'Admin'), 0)
@@ -789,9 +785,6 @@ class AdminDashboardViewSet(viewsets.ViewSet):
         
         # Active locations: abbatoirs + processing units + shops that are active
         active_abbatoirs = UserProfile.objects.filter(role='Abbatoir', user__is_active=True).count()
-        # Active locations: farms + processing units + shops that are active
-        active_farms = UserProfile.objects.filter(role='Abbatoir', user__is_active=True).count()
->>>>>>> aa57a1f (Implement weight-based selling and inventory management)
         active_processing_units = ProcessingUnit.objects.filter(is_active=True).count()
         active_shops = Shop.objects.filter(is_active=True).count()
         active_locations = active_abbatoirs + active_processing_units + active_shops
@@ -859,9 +852,6 @@ class AdminDashboardViewSet(viewsets.ViewSet):
         
         # Get abbatoirs with coordinates
         abbatoirs = UserProfile.objects.filter(
-        # Get farmers with coordinates
-        farmers = UserProfile.objects.filter(
->>>>>>> aa57a1f (Implement weight-based selling and inventory management)
             role='Abbatoir',
             user__is_active=True,
             latitude__isnull=False,
@@ -870,10 +860,6 @@ class AdminDashboardViewSet(viewsets.ViewSet):
         for abbatoir in abbatoirs:
             locations.append({
                 'id': f'abbatoir_{abbatoir.id}',
-        for abbatoir in farmers:
-            locations.append({
-                'id': f'farmer_{abbatoir.id}',
->>>>>>> aa57a1f (Implement weight-based selling and inventory management)
                 'name': f"{abbatoir.user.first_name} {abbatoir.user.last_name}".strip() or abbatoir.user.username,
                 'type': 'Abbatoir',
                 'lat': float(abbatoir.latitude),
@@ -887,8 +873,6 @@ class AdminDashboardViewSet(viewsets.ViewSet):
         total_pu = ProcessingUnit.objects.filter(is_active=True).count()
         total_shops = Shop.objects.filter(is_active=True).count()
         total_abbatoirs = UserProfile.objects.filter(role='Abbatoir', user__is_active=True).count()
-        total_farmers = UserProfile.objects.filter(role='Abbatoir', user__is_active=True).count()
->>>>>>> aa57a1f (Implement weight-based selling and inventory management)
         
         geocoded_pu = processing_units.count()
         geocoded_shops = shops.count()

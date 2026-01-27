@@ -194,8 +194,6 @@ class UserProfile(models.Model):
     
     def save(self, *args, **kwargs):
         # Auto-geocode address if coordinates are not set (for Abbatoirs)
-        # Auto-geocode address if coordinates are not set (for Farmers)
->>>>>>> aa57a1f (Implement weight-based selling and inventory management)
         if self.address and self.role == 'Abbatoir' and (self.latitude is None or self.longitude is None):
             try:
                 from .utils.geocoding_service import GeocodingService
@@ -1059,8 +1057,6 @@ def generate_order_qr_code(sender, instance, created, **kwargs):
                     'animal_id': item.product.animal.animal_id if item.product.animal else None,
                     'animal_species': item.product.animal.species if item.product.animal else None,
                     'abbatoir_name': item.product.animal.abbatoir.username if item.product.animal else None,
-                    'farmer_name': item.product.animal.abbatoir.username if item.product.animal else None,
->>>>>>> aa57a1f (Implement weight-based selling and inventory management)
                 }
                 qr_data['products'].append(product_data)
 
@@ -2129,8 +2125,6 @@ class ProductInfo(models.Model):
             self.animal_name = animal.animal_name
             self.animal_species = animal.species
             self.abbatoir_username = animal.abbatoir.username
-            self.farmer_username = animal.abbatoir.username
->>>>>>> aa57a1f (Implement weight-based selling and inventory management)
             self.animal_live_weight = getattr(animal, 'live_weight', None)
             self.animal_slaughtered = animal.slaughtered
             self.animal_slaughtered_at = animal.slaughtered_at
@@ -2149,8 +2143,6 @@ class ProductInfo(models.Model):
                 'category': 'abbatoir',
                 'timestamp': animal.created_at.isoformat(),
                 'location': f'Abbatoir - {self.abbatoir_username}',
-                'location': f'Abbatoir - {self.farmer_username}',
->>>>>>> aa57a1f (Implement weight-based selling and inventory management)
                 'action': f'Animal {self.animal_id} registered',
                 'icon': 'fa-clipboard-list',
                 'details': {
@@ -2158,8 +2150,6 @@ class ProductInfo(models.Model):
                     'Animal Name': self.animal_name or 'Not named',
                     'Species': self.animal_species or 'Unknown',
                     'Abbatoir': self.abbatoir_username or 'Unknown',
-                    'Abbatoir': self.farmer_username or 'Unknown',
->>>>>>> aa57a1f (Implement weight-based selling and inventory management)
                     'Age': f'{animal.age} months' if animal.age else 'Not recorded',
                     'Weight': f'{animal.weight} kg' if animal.weight else 'Not recorded'
                 }
@@ -2176,8 +2166,6 @@ class ProductInfo(models.Model):
                     'icon': 'fa-truck',
                     'details': {
                         'From': f'Abbatoir - {self.abbatoir_username}',
-                        'From': f'Abbatoir - {self.farmer_username}',
->>>>>>> aa57a1f (Implement weight-based selling and inventory management)
                         'To': self.animal_transferred_to_name,
                         'Animal ID': self.animal_id
                     }

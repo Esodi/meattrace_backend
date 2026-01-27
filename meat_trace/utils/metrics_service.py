@@ -208,8 +208,6 @@ class MetricsService:
                 'new_users_this_week': new_users_this_week,
                 'users_by_role': {
                     'abbatoirs': role_counts.get('Abbatoir', 0),
-                    'farmers': role_counts.get('Abbatoir', 0),
->>>>>>> aa57a1f (Implement weight-based selling and inventory management)
                     'processors': role_counts.get('Processor', 0),
                     'shop_owners': role_counts.get('ShopOwner', 0),
                     'admins': role_counts.get('Admin', 0)

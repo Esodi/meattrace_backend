@@ -65,8 +65,6 @@ class AnimalViewSet(viewsets.ModelViewSet):
         ).prefetch_related('slaughter_parts')
 
         # Abbatoirs see their own animals
-        # Farmers see their own animals
->>>>>>> aa57a1f (Implement weight-based selling and inventory management)
         if hasattr(user, 'profile') and user.profile.role == 'Abbatoir':
             queryset = queryset.filter(abbatoir=user)
 
@@ -586,10 +584,8 @@ class SlaughterPartViewSet(viewsets.ModelViewSet):
         # Abbatoirs see parts from their own animals
         if hasattr(user, 'profile') and user.profile.role == 'Abbatoir':
             queryset = queryset.filter(animal__abbatoir=user)
-        # Farmers see parts from their own animals
         if hasattr(user, 'profile') and user.profile.role == 'Abbatoir':
-            queryset = queryset.filter(animal__farmer=user)
->>>>>>> aa57a1f (Implement weight-based selling and inventory management)
+            queryset = queryset.filter(animal__abbatoir=user)
 
         # ProcessingUnit users see parts transferred to or received by them
         elif hasattr(user, 'profile') and user.profile.role == 'Processor':
@@ -1493,8 +1489,6 @@ def activities_view(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def abbatoir_dashboard(request):
-def farmer_dashboard(request):
->>>>>>> aa57a1f (Implement weight-based selling and inventory management)
     # Return a small serialized payload compatible with abbatoir dashboard
     try:
         serializer = AbbatoirDashboardSerializer({'user': request.user})
@@ -1525,8 +1519,6 @@ def product_info_view(request, product_id):
             
             # Get abbatoir contact info
             abbatoir_details = {
-            farmer_details = {
->>>>>>> aa57a1f (Implement weight-based selling and inventory management)
                 'Animal ID': animal.animal_id,
                 'Animal Name': animal.animal_name or 'Not named',
                 'Species': animal.get_species_display(),
@@ -1545,10 +1537,6 @@ def product_info_view(request, product_id):
                 abbatoir_details['Abbatoir Phone'] = animal.abbatoir.profile.phone or 'Not provided'
             elif hasattr(animal.abbatoir, 'phone_number'):
                 abbatoir_details['Abbatoir Phone'] = animal.abbatoir.phone_number or 'Not provided'
-                farmer_details['Abbatoir Phone'] = animal.abbatoir.profile.phone or 'Not provided'
-            elif hasattr(animal.abbatoir, 'phone_number'):
-                farmer_details['Abbatoir Phone'] = animal.abbatoir.phone_number or 'Not provided'
->>>>>>> aa57a1f (Implement weight-based selling and inventory management)
             
             timeline.append({
                 'stage': 'Animal Registration',
@@ -2845,8 +2833,6 @@ class CarcassMeasurementViewSet(viewsets.ModelViewSet):
             # Abbatoir can see measurements for their own animals
             elif profile.role == 'Abbatoir':
                 return CarcassMeasurement.objects.filter(animal__abbatoir=user)
-                return CarcassMeasurement.objects.filter(animal__farmer=user)
->>>>>>> aa57a1f (Implement weight-based selling and inventory management)
             
             # Shop owners can see measurements for animals they've purchased
             elif profile.role == 'ShopOwner':
@@ -4579,52 +4565,31 @@ class ProductViewSet(viewsets.ModelViewSet):
                             transferred_at=timezone.now()
                         )
                             
-                            # Create activity for split and transfer
-                            Activity.objects.create(
-                                user=user,
-                                activity_type='transfer',
-                                title=f'Product {product.name} split and transferred',
-                                description=f'Split {product.name}: kept {product.quantity}, transferred {quantity_to_transfer} to {shop.name}',
-                                entity_id=str(transferred_product.id),
-                                entity_type='product',
-                                metadata={
-                                    'original_product_id': product.id,
-                                    'transferred_product_id': transferred_product.id,
-                                    'original_batch': product.batch_number,
-                                    'transferred_batch': transferred_product.batch_number,
-                                    'quantity_kept': float(product.quantity),
-                                    'quantity_transferred': float(quantity_to_transfer),
-                                    'shop_name': shop.name
-                                }
-                            )
-                        else:
-                            # Transfer full product
-                            product.transferred_to = shop
-                            product.transferred_at = timezone.now()
-                            product.save()
-                            
-                            # Create activity for full transfer
-                            Activity.objects.create(
-                                user=user,
-                                activity_type='transfer',
-                                title=f'Product {product.name} transferred',
-                                description=f'Transferred {product.name} (Batch: {product.batch_number}) to {shop.name}',
-                                entity_id=str(product.id),
-                                entity_type='product',
-                                metadata={
-                                    'product_id': product.id,
-                                    'batch_number': product.batch_number,
-                                    'shop_name': shop.name,
-                                    'quantity': float(product.quantity)
-                                }
-                            )
+                        # Create activity for split and transfer
+                        Activity.objects.create(
+                            user=user,
+                            activity_type='transfer',
+                            title=f'Product {product.name} split and transferred',
+                            description=f'Split {product.name}: kept {product.quantity}, transferred {quantity_to_transfer} to {shop.name}',
+                            entity_id=str(transferred_product.id),
+                            entity_type='product',
+                            metadata={
+                                'original_product_id': product.id,
+                                'transferred_product_id': transferred_product.id,
+                                'original_batch': product.batch_number,
+                                'transferred_batch': transferred_product.batch_number,
+                                'quantity_kept': float(product.quantity),
+                                'quantity_transferred': float(quantity_to_transfer),
+                                'shop_name': shop.name
+                            }
+                        )
                     else:
-                        # No quantity specified - transfer full product (legacy behavior)
+                        # Transfer full product
                         product.transferred_to = shop
                         product.transferred_at = timezone.now()
                         product.save()
                         
-                        # Create activity
+                        # Create activity for full transfer
                         Activity.objects.create(
                             user=user,
                             activity_type='transfer',
@@ -4635,10 +4600,10 @@ class ProductViewSet(viewsets.ModelViewSet):
                             metadata={
                                 'product_id': product.id,
                                 'batch_number': product.batch_number,
-                                'shop_name': shop.name
+                                'shop_name': shop.name,
+                                'quantity': float(product.quantity)
                             }
                         )
-                    
                     transferred_count += 1
                 
                 # Check if there were any errors

@@ -241,8 +241,6 @@ urlpatterns = [
     path('api/v2/dashboard/', views.dashboard_view, name='dashboard'),
     path('api/v2/activities/', views.activities_view, name='activities'),
     path('api/v2/abbatoir/dashboard/', views.abbatoir_dashboard, name='abbatoir_dashboard'),
-    path('api/v2/abbatoir/dashboard/', views.farmer_dashboard, name='farmer_dashboard'),
->>>>>>> aa57a1f (Implement weight-based selling and inventory management)
     path('api/v2/production-stats/', views.production_stats_view, name='production_stats'),
     path('api/v2/processing-pipeline/', views.processing_pipeline_view, name='processing_pipeline'),
 

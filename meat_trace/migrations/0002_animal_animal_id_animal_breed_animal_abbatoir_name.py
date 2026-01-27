@@ -23,8 +23,6 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='animal',
             name='abbatoir_name',
-            name='farm_name',
->>>>>>> aa57a1f (Implement weight-based selling and inventory management):meat_trace/migrations/0002_animal_animal_id_animal_breed_animal_farm_name.py
             field=models.CharField(blank=True, help_text='Abbatoir name', max_length=100, null=True),
         ),
     ]
