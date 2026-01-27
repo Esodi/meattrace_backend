@@ -34,6 +34,7 @@ ALLOWED_HOSTS = ['*']
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',  # ASGI server for WebSockets
     # 'django.contrib.admin',  # Removed - admin implementation removed from project
     'django.contrib.auth',
     'django.contrib.contenttypes',

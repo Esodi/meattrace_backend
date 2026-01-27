@@ -122,6 +122,8 @@ class Command(BaseCommand):
             abbatoir_queryset = abbatoir_queryset[:limit]
         
         for abbatoir in abbatoir_queryset:
+        for abbatoir in farmer_queryset:
+>>>>>>> aa57a1f (Implement weight-based selling and inventory management)
             self.stdout.write(f'  Processing: {abbatoir.user.username} - "{abbatoir.address}"')
             
             if dry_run:

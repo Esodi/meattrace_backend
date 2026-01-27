@@ -31,6 +31,8 @@ class Command(BaseCommand):
 
         # Create abbatoir and an animal that is slaughtered and received by the processing unit user
         abbatoir = User.objects.create_user(username='abbatoir_x', password='test')
+        abbatoir = User.objects.create_user(username='farmer_x', password='test')
+>>>>>>> aa57a1f (Implement weight-based selling and inventory management)
         a = Animal.objects.create(abbatoir=abbatoir, species='cow', age=12.0, live_weight=200.0)
         # mark slaughtered and received
         a.slaughtered = True

@@ -22,6 +22,8 @@ class ProcessingUnitAPITests(APITestCase):
         self.processor_user.profile.save()
 
         self.abbatoir_user = User.objects.create_user(
+        self.farmer_user = User.objects.create_user(
+>>>>>>> aa57a1f (Implement weight-based selling and inventory management)
             username="abbatoir",
             email="abbatoir@example.com",
             password="testpassword",
@@ -30,6 +32,9 @@ class ProcessingUnitAPITests(APITestCase):
         )
         self.abbatoir_user.profile.role = 'abbatoir'
         self.abbatoir_user.profile.save()
+        self.farmer_user.profile.role = 'abbatoir'
+        self.farmer_user.profile.save()
+>>>>>>> aa57a1f (Implement weight-based selling and inventory management)
 
         # Authenticate the processor user
         self.client.force_authenticate(user=self.processor_user)

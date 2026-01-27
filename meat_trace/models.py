@@ -194,6 +194,8 @@ class UserProfile(models.Model):
     
     def save(self, *args, **kwargs):
         # Auto-geocode address if coordinates are not set (for Abbatoirs)
+        # Auto-geocode address if coordinates are not set (for Farmers)
+>>>>>>> aa57a1f (Implement weight-based selling and inventory management)
         if self.address and self.role == 'Abbatoir' and (self.latitude is None or self.longitude is None):
             try:
                 from .utils.geocoding_service import GeocodingService
@@ -743,6 +745,7 @@ class Product(models.Model):
     received_by_shop = models.ForeignKey(Shop, on_delete=models.SET_NULL, null=True, blank=True, related_name='received_products_as_shop')
     received_at = models.DateTimeField(null=True, blank=True)
     quantity_received = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)], default=0, help_text="Quantity actually received by shop")
+    weight_received = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)], default=0, help_text="Weight actually received by shop")
     
     # Rejection fields for products
     REJECTION_STATUS_CHOICES = [
@@ -753,6 +756,7 @@ class Product(models.Model):
     rejection_status = models.CharField(max_length=20, choices=REJECTION_STATUS_CHOICES, blank=True, null=True, help_text="Current rejection status")
     rejection_reason = models.TextField(blank=True, null=True, help_text="Reason for rejection")
     quantity_rejected = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)], default=0, help_text="Quantity rejected by shop")
+    weight_rejected = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)], default=0, help_text="Weight rejected by shop")
     rejected_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='rejected_products', help_text="User who rejected the product")
     rejected_at = models.DateTimeField(null=True, blank=True, help_text="Date and time when the product was rejected")
 
@@ -764,6 +768,8 @@ class Inventory(models.Model):
     shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name='inventory')
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='inventory')
     quantity = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
+    weight = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)], default=0, help_text="Total weight in stock")
+    weight_unit = models.CharField(max_length=10, choices=Product.WEIGHT_UNIT_CHOICES, default='kg')
     min_stock_level = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)], default=0)
     last_updated = models.DateTimeField(default=timezone.now)
 
@@ -781,6 +787,8 @@ class Receipt(models.Model):
     shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name='receipts')
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='receipts')
     received_quantity = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
+    received_weight = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)], default=0)
+    weight_unit = models.CharField(max_length=10, choices=Product.WEIGHT_UNIT_CHOICES, default='kg')
     received_at = models.DateTimeField(default=timezone.now)
 
     def __str__(self):
@@ -792,9 +800,11 @@ class Receipt(models.Model):
         inventory, created = Inventory.objects.get_or_create(
             shop=self.shop,
             product=self.product,
-            defaults={'quantity': 0}
+            defaults={'quantity': 0, 'weight': 0, 'weight_unit': self.weight_unit}
         )
         inventory.quantity += self.received_quantity
+        inventory.weight += self.received_weight
+        inventory.weight_unit = self.weight_unit
         inventory.last_updated = timezone.now()
         inventory.save()
 
@@ -833,6 +843,8 @@ class OrderItem(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='items')
     product = models.ForeignKey(Product, on_delete=models.CASCADE)
     quantity = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
+    weight = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)], default=0)
+    weight_unit = models.CharField(max_length=10, choices=Product.WEIGHT_UNIT_CHOICES, default='kg')
     unit_price = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
     subtotal = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
 
@@ -1047,6 +1059,8 @@ def generate_order_qr_code(sender, instance, created, **kwargs):
                     'animal_id': item.product.animal.animal_id if item.product.animal else None,
                     'animal_species': item.product.animal.species if item.product.animal else None,
                     'abbatoir_name': item.product.animal.abbatoir.username if item.product.animal else None,
+                    'farmer_name': item.product.animal.abbatoir.username if item.product.animal else None,
+>>>>>>> aa57a1f (Implement weight-based selling and inventory management)
                 }
                 qr_data['products'].append(product_data)
 
@@ -2115,6 +2129,8 @@ class ProductInfo(models.Model):
             self.animal_name = animal.animal_name
             self.animal_species = animal.species
             self.abbatoir_username = animal.abbatoir.username
+            self.farmer_username = animal.abbatoir.username
+>>>>>>> aa57a1f (Implement weight-based selling and inventory management)
             self.animal_live_weight = getattr(animal, 'live_weight', None)
             self.animal_slaughtered = animal.slaughtered
             self.animal_slaughtered_at = animal.slaughtered_at
@@ -2133,6 +2149,8 @@ class ProductInfo(models.Model):
                 'category': 'abbatoir',
                 'timestamp': animal.created_at.isoformat(),
                 'location': f'Abbatoir - {self.abbatoir_username}',
+                'location': f'Abbatoir - {self.farmer_username}',
+>>>>>>> aa57a1f (Implement weight-based selling and inventory management)
                 'action': f'Animal {self.animal_id} registered',
                 'icon': 'fa-clipboard-list',
                 'details': {
@@ -2140,6 +2158,8 @@ class ProductInfo(models.Model):
                     'Animal Name': self.animal_name or 'Not named',
                     'Species': self.animal_species or 'Unknown',
                     'Abbatoir': self.abbatoir_username or 'Unknown',
+                    'Abbatoir': self.farmer_username or 'Unknown',
+>>>>>>> aa57a1f (Implement weight-based selling and inventory management)
                     'Age': f'{animal.age} months' if animal.age else 'Not recorded',
                     'Weight': f'{animal.weight} kg' if animal.weight else 'Not recorded'
                 }
@@ -2156,6 +2176,8 @@ class ProductInfo(models.Model):
                     'icon': 'fa-truck',
                     'details': {
                         'From': f'Abbatoir - {self.abbatoir_username}',
+                        'From': f'Abbatoir - {self.farmer_username}',
+>>>>>>> aa57a1f (Implement weight-based selling and inventory management)
                         'To': self.animal_transferred_to_name,
                         'Animal ID': self.animal_id
                     }
@@ -2413,6 +2435,8 @@ class SaleItem(models.Model):
     sale = models.ForeignKey(Sale, on_delete=models.CASCADE, related_name='items')
     product = models.ForeignKey(Product, on_delete=models.CASCADE)
     quantity = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
+    weight = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)], default=0)
+    weight_unit = models.CharField(max_length=10, choices=Product.WEIGHT_UNIT_CHOICES, default='kg')
     unit_price = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
     subtotal = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
 

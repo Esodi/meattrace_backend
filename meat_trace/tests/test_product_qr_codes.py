@@ -28,6 +28,8 @@ class ProductQRCodeTests(TestCase):
         # Create a abbatoir user
         self.abbatoir = User.objects.create_user(
             username='abbatoir1',
+            username='farmer1',
+>>>>>>> aa57a1f (Implement weight-based selling and inventory management)
             password='testpass123'
         )
         UserProfile.objects.filter(user=self.abbatoir).update(role='Abbatoir')

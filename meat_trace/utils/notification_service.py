@@ -423,6 +423,8 @@ class NotificationService:
 
                     for group in schedule.recipient_groups:
                         if group == 'abbatoirs':
+                        if group == 'farmers':
+>>>>>>> aa57a1f (Implement weight-based selling and inventory management)
                             recipients.extend(User.objects.filter(profile__role='Abbatoir'))
                         elif group == 'processors':
                             recipients.extend(User.objects.filter(profile__role='Processor'))

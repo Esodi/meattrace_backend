@@ -389,6 +389,8 @@ class CarcassMeasurementSerializer(serializers.ModelSerializer):
 
 class AnimalSerializer(serializers.ModelSerializer):
     abbatoir_name = serializers.CharField(source='abbatoir.username', read_only=True)
+    farmer_name = serializers.CharField(source='abbatoir.username', read_only=True)
+>>>>>>> aa57a1f (Implement weight-based selling and inventory management)
     processing_unit_name = serializers.CharField(source='transferred_to.name', read_only=True)
     shop_name = serializers.CharField(source='received_by_shop.name', read_only=True)
     # FIX: Include nested carcass_measurement and slaughter_parts for split carcass detection
@@ -566,7 +568,7 @@ class SaleItemWriteSerializer(serializers.ModelSerializer):
     """Write-only serializer used to accept nested sale item payloads."""
     class Meta:
         model = SaleItem
-        fields = ['product', 'quantity', 'unit_price', 'subtotal']
+        fields = ['product', 'quantity', 'weight', 'weight_unit', 'unit_price', 'subtotal']
 
 
 
@@ -916,6 +918,8 @@ class AdminShopSerializer(serializers.ModelSerializer):
 class AdminAnimalOverviewSerializer(serializers.ModelSerializer):
     """Serializer for admin animal traceability overview"""
     abbatoir_name = serializers.CharField(source='abbatoir.username', read_only=True)
+    farmer_name = serializers.CharField(source='abbatoir.username', read_only=True)
+>>>>>>> aa57a1f (Implement weight-based selling and inventory management)
     processing_unit_name = serializers.CharField(source='transferred_to.name', read_only=True)
     lifecycle_status = serializers.ReadOnlyField()
     has_rejections = serializers.SerializerMethodField()
@@ -1000,7 +1004,7 @@ class ReceiptSerializer(serializers.ModelSerializer):
         from .models import Receipt
         model = Receipt
         fields = ['id', 'shop', 'shop_name', 'product', 'product_name', 'product_type', 
-                  'received_quantity', 'received_at']
+                  'received_quantity', 'received_weight', 'weight_unit', 'received_at']
         read_only_fields = ['received_at']
 
 
@@ -1015,6 +1019,8 @@ class AdminAnimalCreateUpdateSerializer(serializers.ModelSerializer):
     
     # Read-only fields for response
     abbatoir_name = serializers.CharField(source='abbatoir.username', read_only=True)
+    farmer_name = serializers.CharField(source='abbatoir.username', read_only=True)
+>>>>>>> aa57a1f (Implement weight-based selling and inventory management)
     processing_unit_name = serializers.CharField(source='transferred_to.name', read_only=True)
     lifecycle_status = serializers.ReadOnlyField()
 
@@ -1054,6 +1060,8 @@ class AdminAnimalCreateUpdateSerializer(serializers.ModelSerializer):
         processing_unit_id = validated_data.pop('processing_unit_id', None)
         
         abbatoir = User.objects.get(id=abbatoir_id)
+        abbatoir = User.objects.get(id=farmer_id)
+>>>>>>> aa57a1f (Implement weight-based selling and inventory management)
         validated_data['abbatoir'] = abbatoir
         
         if processing_unit_id:
@@ -1070,6 +1078,9 @@ class AdminAnimalCreateUpdateSerializer(serializers.ModelSerializer):
         
         if abbatoir_id:
             instance.abbatoir = User.objects.get(id=abbatoir_id)
+        if farmer_id:
+            instance.abbatoir = User.objects.get(id=farmer_id)
+>>>>>>> aa57a1f (Implement weight-based selling and inventory management)
         
         if processing_unit_id is not None:
             if processing_unit_id:

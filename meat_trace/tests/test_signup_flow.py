@@ -17,6 +17,11 @@ class SignupFlowTests(TestCase):
         """Test basic abbatoir signup flow"""
         abbatoir_data = {
             'username': 'testabbatoir',
+    def test_farmer_signup_basic_flow(self):
+        """Test basic abbatoir signup flow"""
+        farmer_data = {
+            'username': 'testfarmer',
+>>>>>>> aa57a1f (Implement weight-based selling and inventory management)
             'email': 'abbatoir@test.com',
             'password': 'testpass123',
             'role': 'Abbatoir'
@@ -28,6 +33,8 @@ class SignupFlowTests(TestCase):
 
         # Verify user was created
         user = User.objects.get(username='testabbatoir')
+        user = User.objects.get(username='testfarmer')
+>>>>>>> aa57a1f (Implement weight-based selling and inventory management)
         self.assertEqual(user.email, 'abbatoir@test.com')
 
         # Verify user profile was created
@@ -553,6 +560,8 @@ class SignupFlowTests(TestCase):
         """Test that users can only access appropriate endpoints"""
         # Create users of different roles
         abbatoir = User.objects.create_user(username='test_abbatoir', email='abbatoir@test.com', password='pass')
+        abbatoir = User.objects.create_user(username='test_farmer', email='abbatoir@test.com', password='pass')
+>>>>>>> aa57a1f (Implement weight-based selling and inventory management)
         UserProfile.objects.create(user=abbatoir, role='Abbatoir')
 
         processor = User.objects.create_user(username='test_processor', email='processor@test.com', password='pass')
@@ -563,6 +572,8 @@ class SignupFlowTests(TestCase):
 
         # Test that abbatoir cannot create processing unit
         login_data = {'username': 'test_abbatoir', 'password': 'pass'}
+        login_data = {'username': 'test_farmer', 'password': 'pass'}
+>>>>>>> aa57a1f (Implement weight-based selling and inventory management)
         response = self.client.post('/api/v2/auth/login/', login_data, format='json')
         access_token = response.data['tokens']['access']
 

@@ -65,6 +65,8 @@ class AnimalViewSet(viewsets.ModelViewSet):
         ).prefetch_related('slaughter_parts')
 
         # Abbatoirs see their own animals
+        # Farmers see their own animals
+>>>>>>> aa57a1f (Implement weight-based selling and inventory management)
         if hasattr(user, 'profile') and user.profile.role == 'Abbatoir':
             queryset = queryset.filter(abbatoir=user)
 
@@ -584,6 +586,10 @@ class SlaughterPartViewSet(viewsets.ModelViewSet):
         # Abbatoirs see parts from their own animals
         if hasattr(user, 'profile') and user.profile.role == 'Abbatoir':
             queryset = queryset.filter(animal__abbatoir=user)
+        # Farmers see parts from their own animals
+        if hasattr(user, 'profile') and user.profile.role == 'Abbatoir':
+            queryset = queryset.filter(animal__farmer=user)
+>>>>>>> aa57a1f (Implement weight-based selling and inventory management)
 
         # ProcessingUnit users see parts transferred to or received by them
         elif hasattr(user, 'profile') and user.profile.role == 'Processor':
@@ -1487,6 +1493,8 @@ def activities_view(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def abbatoir_dashboard(request):
+def farmer_dashboard(request):
+>>>>>>> aa57a1f (Implement weight-based selling and inventory management)
     # Return a small serialized payload compatible with abbatoir dashboard
     try:
         serializer = AbbatoirDashboardSerializer({'user': request.user})
@@ -1517,6 +1525,8 @@ def product_info_view(request, product_id):
             
             # Get abbatoir contact info
             abbatoir_details = {
+            farmer_details = {
+>>>>>>> aa57a1f (Implement weight-based selling and inventory management)
                 'Animal ID': animal.animal_id,
                 'Animal Name': animal.animal_name or 'Not named',
                 'Species': animal.get_species_display(),
@@ -1535,6 +1545,10 @@ def product_info_view(request, product_id):
                 abbatoir_details['Abbatoir Phone'] = animal.abbatoir.profile.phone or 'Not provided'
             elif hasattr(animal.abbatoir, 'phone_number'):
                 abbatoir_details['Abbatoir Phone'] = animal.abbatoir.phone_number or 'Not provided'
+                farmer_details['Abbatoir Phone'] = animal.abbatoir.profile.phone or 'Not provided'
+            elif hasattr(animal.abbatoir, 'phone_number'):
+                farmer_details['Abbatoir Phone'] = animal.abbatoir.phone_number or 'Not provided'
+>>>>>>> aa57a1f (Implement weight-based selling and inventory management)
             
             timeline.append({
                 'stage': 'Animal Registration',
@@ -2831,6 +2845,8 @@ class CarcassMeasurementViewSet(viewsets.ModelViewSet):
             # Abbatoir can see measurements for their own animals
             elif profile.role == 'Abbatoir':
                 return CarcassMeasurement.objects.filter(animal__abbatoir=user)
+                return CarcassMeasurement.objects.filter(animal__farmer=user)
+>>>>>>> aa57a1f (Implement weight-based selling and inventory management)
             
             # Shop owners can see measurements for animals they've purchased
             elif profile.role == 'ShopOwner':
@@ -4139,9 +4155,12 @@ class ProductViewSet(viewsets.ModelViewSet):
             for receive in receives:
                 product_id = receive.get('product_id')
                 quantity_received = Decimal(str(receive.get('quantity_received', 0)))
+                weight_received = receive.get('weight_received')
+                if weight_received is not None:
+                    weight_received = Decimal(str(weight_received))
 
-                if quantity_received <= 0:
-                    errors.append(f"Product {product_id}: quantity_received must be greater than 0")
+                if quantity_received <= 0 and (weight_received is None or weight_received <= 0):
+                    errors.append(f"Product {product_id}: quantity_received or weight_received must be greater than 0")
                     continue
 
                 try:
@@ -4150,21 +4169,26 @@ class ProductViewSet(viewsets.ModelViewSet):
                         transferred_to=user_shop
                     )
 
-                    # Validate quantity
-                    total_accounted = product.quantity_received + product.quantity_rejected
-                    remaining = product.quantity - total_accounted
-
-                    if quantity_received > remaining:
-                        errors.append(
-                            f"Product {product_id}: Cannot receive {quantity_received}. "
-                            f"Only {remaining} remaining (Total: {product.quantity}, "
-                            f"Already received: {product.quantity_received}, "
-                            f"Already rejected: {product.quantity_rejected})"
-                        )
+                    # Validate quantity and weight
+                    total_accounted_qty = product.quantity_received + product.quantity_rejected
+                    remaining_qty = product.quantity - total_accounted_qty
+                    
+                    if quantity_received > remaining_qty:
+                        errors.append(f"Product {product_id}: Cannot receive {quantity_received}. Only {remaining_qty} remaining")
                         continue
 
-                    # Update product received quantity
+                    if weight_received is not None:
+                        total_accounted_wt = product.weight_received + product.weight_rejected
+                        remaining_wt = product.weight - total_accounted_wt
+                        if weight_received > remaining_wt:
+                            errors.append(f"Product {product_id}: Cannot receive {weight_received} weight. Only {remaining_wt} remaining")
+                            continue
+
+                    # Update product received fields
                     product.quantity_received += quantity_received
+                    if weight_received is not None:
+                        product.weight_received += weight_received
+                    
                     product.received_by_shop = user_shop
                     product.received_at = timezone.now()
                     product.save()
@@ -4175,11 +4199,15 @@ class ProductViewSet(viewsets.ModelViewSet):
                         product=product,
                         defaults={
                             'quantity': quantity_received,
+                            'weight': weight_received or 0,
+                            'weight_unit': product.weight_unit,
                             'last_updated': timezone.now()
                         }
                     )
                     if not created:
                         inventory.quantity += quantity_received
+                        if weight_received is not None:
+                            inventory.weight += weight_received
                         inventory.last_updated = timezone.now()
                         inventory.save()
 
@@ -4187,8 +4215,11 @@ class ProductViewSet(viewsets.ModelViewSet):
                         'product_id': product.id,
                         'product_name': product.name,
                         'quantity_received': float(quantity_received),
-                        'total_received': float(product.quantity_received),
-                        'inventory_quantity': float(inventory.quantity)
+                        'weight_received': float(weight_received) if weight_received else 0,
+                        'total_received_qty': float(product.quantity_received),
+                        'total_received_wt': float(product.weight_received),
+                        'inventory_quantity': float(inventory.quantity),
+                        'inventory_weight': float(inventory.weight)
                     })
 
                 except Product.DoesNotExist:
@@ -4199,10 +4230,14 @@ class ProductViewSet(viewsets.ModelViewSet):
             for rejection in rejections:
                 product_id = rejection.get('product_id')
                 quantity_rejected = Decimal(str(rejection.get('quantity_rejected', 0)))
+                weight_rejected = rejection.get('weight_rejected')
+                if weight_rejected is not None:
+                    weight_rejected = Decimal(str(weight_rejected))
+                
                 rejection_reason = rejection.get('rejection_reason', 'Not specified')
 
-                if quantity_rejected <= 0:
-                    errors.append(f"Product {product_id}: quantity_rejected must be greater than 0")
+                if quantity_rejected <= 0 and (weight_rejected is None or weight_rejected <= 0):
+                    errors.append(f"Product {product_id}: quantity_rejected or weight_rejected must be greater than 0")
                     continue
 
                 try:
@@ -4211,25 +4246,30 @@ class ProductViewSet(viewsets.ModelViewSet):
                         transferred_to=user_shop
                     )
 
-                    # Validate quantity
-                    total_accounted = product.quantity_received + product.quantity_rejected
-                    remaining = product.quantity - total_accounted
+                    # Validate quantity and weight
+                    total_accounted_qty = product.quantity_received + product.quantity_rejected
+                    remaining_qty = product.quantity - total_accounted_qty
 
-                    if quantity_rejected > remaining:
-                        errors.append(
-                            f"Product {product_id}: Cannot reject {quantity_rejected}. "
-                            f"Only {remaining} remaining (Total: {product.quantity}, "
-                            f"Already received: {product.quantity_received}, "
-                            f"Already rejected: {product.quantity_rejected})"
-                        )
+                    if quantity_rejected > remaining_qty:
+                        errors.append(f"Product {product_id}: Cannot reject {quantity_rejected}. Only {remaining_qty} remaining")
                         continue
 
+                    if weight_rejected is not None:
+                        total_accounted_wt = product.weight_received + product.weight_rejected
+                        remaining_wt = product.weight - total_accounted_wt
+                        if weight_rejected > remaining_wt:
+                            errors.append(f"Product {product_id}: Cannot reject {weight_rejected} weight. Only {remaining_wt} remaining")
+                            continue
+
                     # Determine if this is a full or partial rejection
-                    is_full_rejection = quantity_rejected >= remaining
+                    is_full_rejection = (quantity_rejected >= remaining_qty) if remaining_qty > 0 else (weight_rejected >= remaining_wt if weight_rejected else True)
 
                     if is_full_rejection:
                         # FULL REJECTION: Reset transfer fields to return product to processor
                         product.quantity_rejected += quantity_rejected
+                        if weight_rejected:
+                            product.weight_rejected += weight_rejected
+                        
                         product.rejection_reason = rejection_reason
                         product.rejected_by = request.user
                         product.rejected_at = timezone.now()
@@ -4244,7 +4284,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                             'product_id': product.id,
                             'product_name': product.name,
                             'quantity_rejected': float(quantity_rejected),
-                            'total_rejected': float(product.quantity_rejected),
+                            'weight_rejected': float(weight_rejected) if weight_rejected else 0,
                             'rejection_reason': rejection_reason,
                             'rejection_status': product.rejection_status,
                             'rejection_type': 'full'
@@ -4255,25 +4295,33 @@ class ProductViewSet(viewsets.ModelViewSet):
                         original_quantity = product.quantity
                         product.quantity -= quantity_rejected
                         
+                        original_weight = product.weight
+                        actual_weight_to_reject = weight_rejected if weight_rejected is not None else (original_weight * (quantity_rejected / original_quantity) if original_quantity > 0 else 0)
+                        
+                        if product.weight:
+                            product.weight -= actual_weight_to_reject
+                        
                         # Automatically receive the remaining quantity to mark it as fully processed
-                        # This prevents the product from appearing in the pending list
                         product.quantity_received = product.quantity
+                        product.weight_received = product.weight
                         product.received_by_shop = user_shop
                         product.received_at = timezone.now()
                         product.save()
                         
-                        # Update inventory for the received portion (remaining quantity)
+                        # Update inventory for the received portion
                         inventory, created = Inventory.objects.get_or_create(
                             shop=user_shop,
                             product=product,
                             defaults={
                                 'quantity': product.quantity,
+                                'weight': product.weight,
+                                'weight_unit': product.weight_unit,
                                 'last_updated': timezone.now()
                             }
                         )
                         if not created:
-                            # If inventory exists, update to reflect only the received portion
                             inventory.quantity = product.quantity_received
+                            inventory.weight = product.weight_received
                             inventory.last_updated = timezone.now()
                             inventory.save()
 
@@ -4283,7 +4331,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                             batch_number=f"{product.batch_number}-REJ",
                             product_type=product.product_type,
                             quantity=quantity_rejected,
-                            weight=product.weight * (quantity_rejected / original_quantity) if product.weight else None,
+                            weight=actual_weight_to_reject,
                             weight_unit=product.weight_unit,
                             price=product.price,
                             description=product.description,
@@ -4291,13 +4339,12 @@ class ProductViewSet(viewsets.ModelViewSet):
                             animal=product.animal,
                             slaughter_part=product.slaughter_part,
                             category=product.category,
-                            # Rejection fields
                             rejection_status='rejected',
                             rejection_reason=rejection_reason,
                             rejected_by=request.user,
                             rejected_at=timezone.now(),
                             quantity_rejected=quantity_rejected,
-                            # NOT transferred - returns to processor
+                            weight_rejected=actual_weight_to_reject,
                             transferred_to=None,
                             transferred_at=None
                         )
@@ -4306,14 +4353,18 @@ class ProductViewSet(viewsets.ModelViewSet):
                             'product_id': product.id,
                             'product_name': product.name,
                             'quantity_rejected': float(quantity_rejected),
-                            'total_rejected': float(quantity_rejected),
+                            'weight_rejected': float(actual_weight_to_reject),
                             'rejection_reason': rejection_reason,
                             'rejection_status': 'rejected',
                             'rejection_type': 'partial',
                             'rejected_product_id': rejected_product.id,
                             'remaining_quantity': float(product.quantity),
-                            'remaining_quantity_auto_received': True
+                            'remaining_weight': float(product.weight),
+                            'remaining_auto_received': True
                         }
+                    
+                    # (Notification logic remains same)
+                    rejected_products.append(rejection_info)
 
                     # Send notification to all active processors in the processing unit
                     try:
@@ -4471,7 +4522,13 @@ class ProductViewSet(viewsets.ModelViewSet):
                 for transfer in transfers:
                     product_id = transfer.get('product_id')
                     quantity_to_transfer = transfer.get('quantity')
+                    weight_to_transfer = transfer.get('weight')
                     
+                    if quantity_to_transfer is not None:
+                        quantity_to_transfer = Decimal(str(quantity_to_transfer))
+                    if weight_to_transfer is not None:
+                        weight_to_transfer = Decimal(str(weight_to_transfer))
+
                     try:
                         product = Product.objects.get(
                             id=product_id,
@@ -4485,45 +4542,42 @@ class ProductViewSet(viewsets.ModelViewSet):
                         errors.append(f'Product {product.name} has already been transferred')
                         continue
                     
-                    # If quantity specified, validate it
-                    if quantity_to_transfer is not None:
-                        quantity_to_transfer = Decimal(str(quantity_to_transfer))
+                    # If quantity or weight specified, split product
+                    is_partial = False
+                    if quantity_to_transfer is not None and quantity_to_transfer < product.quantity:
+                        is_partial = True
+                    elif weight_to_transfer is not None and product.weight and weight_to_transfer < product.weight:
+                        is_partial = True
+
+                    if is_partial:
+                        # Use provided quantities or calculate if missing
+                        q_trans = quantity_to_transfer if quantity_to_transfer is not None else product.quantity
+                        w_trans = weight_to_transfer if weight_to_transfer is not None else (product.weight * (q_trans / product.quantity) if product.quantity > 0 else 0)
                         
-                        if quantity_to_transfer <= 0:
-                            errors.append(f'Product {product.name}: quantity must be greater than 0')
-                            continue
+                        # Reduce original product quantity/weight
+                        original_quantity = product.quantity
+                        product.quantity -= q_trans
+                        if product.weight:
+                            product.weight -= w_trans
+                        product.save()
                         
-                        if quantity_to_transfer > product.quantity:
-                            errors.append(
-                                f'Product {product.name}: cannot transfer {quantity_to_transfer}. '
-                                f'Only {product.quantity} available'
-                            )
-                            continue
-                        
-                        # If transferring partial quantity, create a new product for the transfer
-                        if quantity_to_transfer < product.quantity:
-                            # Reduce original product quantity
-                            original_quantity = product.quantity
-                            product.quantity -= quantity_to_transfer
-                            product.save()
-                            
-                            # Create new product for transfer
-                            transferred_product = Product.objects.create(
-                                name=product.name,
-                                batch_number=f"{product.batch_number}-T",
-                                product_type=product.product_type,
-                                quantity=quantity_to_transfer,
-                                weight=product.weight * (quantity_to_transfer / original_quantity) if product.weight else None,
-                                weight_unit=product.weight_unit,
-                                price=product.price,
-                                description=product.description,
-                                processing_unit=processing_unit,
-                                animal=product.animal,
-                                slaughter_part=product.slaughter_part,
-                                category=product.category,
-                                transferred_to=shop,
-                                transferred_at=timezone.now()
-                            )
+                        # Create new product for transfer
+                        transferred_product = Product.objects.create(
+                            name=product.name,
+                            batch_number=f"{product.batch_number}-T",
+                            product_type=product.product_type,
+                            quantity=q_trans,
+                            weight=w_trans,
+                            weight_unit=product.weight_unit,
+                            price=product.price,
+                            description=product.description,
+                            processing_unit=processing_unit,
+                            animal=product.animal,
+                            slaughter_part=product.slaughter_part,
+                            category=product.category,
+                            transferred_to=shop,
+                            transferred_at=timezone.now()
+                        )
                             
                             # Create activity for split and transfer
                             Activity.objects.create(
