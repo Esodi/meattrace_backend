@@ -243,6 +243,7 @@ urlpatterns = [
     path('api/v2/abbatoir/dashboard/', views.abbatoir_dashboard, name='abbatoir_dashboard'),
     path('api/v2/production-stats/', views.production_stats_view, name='production_stats'),
     path('api/v2/processing-pipeline/', views.processing_pipeline_view, name='processing_pipeline'),
+    path('api/v2/processing-unit/traceability/', views.traceability_report_view, name='traceability_report'),
 
     # Product info endpoints
     path('api/v2/product-info/view/<int:product_id>/', views.product_info_view, name='product_info_view'),
@@ -250,6 +251,9 @@ urlpatterns = [
     
     # Sale info endpoint (for QR codes)
     path('api/v2/sale-info/view/<int:sale_id>/', views.sale_info_view, name='sale_info_view'),
+    
+    # Public sale receipt API endpoint (no auth required - for QR code scanning)
+    path('api/v2/public/sale-receipt/<uuid:receipt_uuid>/', views.public_sale_receipt_api, name='public_sale_receipt_api'),
 
     # Processing Unit dashboard endpoints
     path('processor/add-product-category/', views.add_product_category, name='add_product_category'),

@@ -2338,9 +2338,14 @@ class Sale(models.Model):
     payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default='cash')
     created_at = models.DateTimeField(default=timezone.now)
     qr_code = models.CharField(max_length=500, blank=True)
+    receipt_uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True, db_index=True)
 
     def __str__(self):
         return f"Sale #{self.id} - {self.shop.name} - {self.total_amount}"
+    
+    def get_public_receipt_url(self):
+        """Get the public URL for viewing this receipt"""
+        return f"/sale-receipt/{self.receipt_uuid}/"
 
     class Meta:
         ordering = ['-created_at']

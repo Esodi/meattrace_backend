@@ -2128,6 +2128,62 @@ def sale_info_view(request, sale_id):
 
 
 @api_view(['GET'])
+@permission_classes([])  # No authentication required - public endpoint
+def public_sale_receipt_api(request, receipt_uuid):
+    """
+    Public API endpoint for sale receipts - accessible via QR code scanning.
+    Returns sale details as JSON without requiring authentication.
+    """
+    try:
+        import uuid as uuid_module
+        # Validate and parse UUID
+        try:
+            uuid_obj = uuid_module.UUID(str(receipt_uuid))
+        except ValueError:
+            return Response(
+                {'error': 'Invalid receipt UUID format'},
+                status=status_module.HTTP_400_BAD_REQUEST
+            )
+        
+        sale = Sale.objects.select_related('shop', 'sold_by').prefetch_related('items__product').get(receipt_uuid=uuid_obj)
+        
+        # Build items list
+        items = []
+        for item in sale.items.all():
+            items.append({
+                'product_name': item.product.name if item.product else 'Unknown',
+                'batch_number': item.product.batch_number if item.product else '',
+                'quantity': float(item.quantity),
+                'weight': float(item.weight) if item.weight else None,
+                'weight_unit': item.weight_unit,
+                'unit_price': float(item.unit_price),
+                'subtotal': float(item.subtotal),
+            })
+        
+        return Response({
+            'receipt_id': str(sale.receipt_uuid),
+            'sale_id': sale.id,
+            'shop_name': sale.shop.name if sale.shop else 'Unknown',
+            'shop_address': sale.shop.address if sale.shop else '',
+            'shop_phone': sale.shop.phone if sale.shop else '',
+            'sold_by': sale.sold_by.get_full_name() or sale.sold_by.username if sale.sold_by else 'Unknown',
+            'customer_name': sale.customer_name,
+            'customer_phone': sale.customer_phone,
+            'payment_method': sale.payment_method,
+            'total_amount': float(sale.total_amount),
+            'created_at': sale.created_at.isoformat(),
+            'items': items,
+            'items_count': len(items),
+        })
+        
+    except Sale.DoesNotExist:
+        return Response(
+            {'error': 'Receipt not found'},
+            status=status_module.HTTP_404_NOT_FOUND
+        )
+
+
+@api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def rejection_reasons_view(request):
     try:
@@ -2453,6 +2509,147 @@ def processing_pipeline_view(request):
                 'total_pending': 0
             }
         })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def traceability_report_view(request):
+    """
+    Detailed traceability report for a processing unit.
+    Returns a list of raw materials (animals/parts) and their utilization history.
+    """
+    user = request.user
+    from .models import UserProfile, Animal, SlaughterPart, Product, ProcessingUnitUser
+    from django.utils import timezone
+    from decimal import Decimal
+    
+    try:
+        profile = user.profile
+        
+        # Get processing units the user is associated with
+        user_units = ProcessingUnitUser.objects.filter(
+            user=user,
+            is_active=True,
+            is_suspended=False
+        ).values_list('processing_unit_id', flat=True)
+        
+        # If no units found via ProcessingUnitUser, fallback to profile field (for owners)
+        unit_ids = list(user_units)
+        if not unit_ids and hasattr(profile, 'processing_unit') and profile.processing_unit:
+            unit_ids = [profile.processing_unit.id]
+            
+        if not unit_ids:
+            return Response({
+                'error': 'User is not associated with any active processing unit.',
+                'role': profile.role
+            }, status=403)
+                
+    except UserProfile.DoesNotExist:
+        return Response({'error': 'User profile not found.'}, status=404)
+
+    # Filtering parameters
+    species_filter = request.query_params.get('species')
+    date_from = request.query_params.get('date_from')
+    date_to = request.query_params.get('date_to')
+    search_query = request.query_params.get('search')
+    
+    # 1. Base query for Animals
+    animals_qs = Animal.objects.filter(
+        transferred_to_id__in=unit_ids, 
+        received_at__isnull=False
+    ).select_related('abbatoir').prefetch_related('products__transferred_to')
+    
+    # 2. Base query for SlaughterParts
+    parts_qs = SlaughterPart.objects.filter(
+        transferred_to_id__in=unit_ids, 
+        received_by__isnull=False
+    ).select_related('animal', 'received_by').prefetch_related('products__transferred_to')
+
+    # Apply filters
+    if species_filter:
+        animals_qs = animals_qs.filter(species=species_filter)
+        parts_qs = parts_qs.filter(animal__species=species_filter)
+        
+    if date_from:
+        animals_qs = animals_qs.filter(received_at__gte=date_from)
+        parts_qs = parts_qs.filter(received_at__gte=date_from)
+        
+    if date_to:
+        animals_qs = animals_qs.filter(received_at__lte=date_to)
+        parts_qs = parts_qs.filter(received_at__lte=date_to)
+        
+    if search_query:
+        from django.db.models import Q
+        animals_qs = animals_qs.filter(Q(animal_id__icontains=search_query) | Q(animal_name__icontains=search_query))
+        parts_qs = parts_qs.filter(Q(animal__animal_id__icontains=search_query) | Q(part_id__icontains=search_query))
+
+    report_data = []
+
+    # Helper function to enrich products with transfer details
+    def get_utilization_data(obj):
+        products = obj.products.all()
+        util_list = []
+        for p in products:
+            util_list.append({
+                'id': p.id,
+                'name': p.name,
+                'batch_number': p.batch_number,
+                'weight': float(p.weight),
+                'weight_unit': p.weight_unit,
+                'quantity': float(p.quantity),
+                'created_at': p.created_at,
+                'transferred_to': p.transferred_to.name if p.transferred_to else None,
+                'transferred_at': p.transferred_at if p.transferred_at else None,
+                'qr_code': p.qr_code,
+            })
+        return util_list
+
+    # Process Animals
+    for a in animals_qs.order_by('-received_at')[:50]:
+        initial_weight = float(a.live_weight) if a.live_weight else 0.0
+        remaining_weight = float(a.remaining_weight) if a.remaining_weight is not None else initial_weight
+        
+        report_data.append({
+            'type': 'animal',
+            'id': a.id,
+            'item_id': a.animal_id,
+            'name': a.animal_name or f"{a.species.title()} ({a.animal_id})",
+            'species': a.species,
+            'received_at': a.received_at,
+            'initial_weight': initial_weight,
+            'remaining_weight': remaining_weight,
+            'processed_weight': max(0, initial_weight - remaining_weight),
+            'utilization_rate': ((initial_weight - remaining_weight) / initial_weight * 100) if initial_weight > 0 else 0,
+            'utilization_history': get_utilization_data(a),
+            'origin': a.abbatoir_name or (a.abbatoir.username if a.abbatoir else "Unknown"),
+        })
+
+    # Process SlaughterParts
+    for p in parts_qs.order_by('-received_at')[:50]:
+        initial_weight = float(p.weight)
+        remaining_weight = float(p.remaining_weight) if p.remaining_weight is not None else initial_weight
+        
+        report_data.append({
+            'type': 'slaughter_part',
+            'id': p.id,
+            'item_id': p.part_id or f"PART-{p.id}",
+            'animal_id': p.animal.animal_id if p.animal else "Unknown",
+            'name': f"{p.get_part_type_display()} from {p.animal.animal_id if p.animal else 'Unknown'}",
+            'part_type': p.part_type,
+            'species': p.animal.species if p.animal else "Unknown",
+            'received_at': p.received_at,
+            'initial_weight': initial_weight,
+            'remaining_weight': remaining_weight,
+            'processed_weight': max(0, initial_weight - remaining_weight),
+            'utilization_rate': ((initial_weight - remaining_weight) / initial_weight * 100) if initial_weight > 0 else 0,
+            'utilization_history': get_utilization_data(p),
+            'origin': p.animal.abbatoir_name if p.animal else "Unknown",
+        })
+
+    # Sort everything by received_at descending
+    report_data.sort(key=lambda x: x['received_at'] if x['received_at'] else timezone.now(), reverse=True)
+
+    return Response(report_data)
 
 
 @api_view(['POST'])
@@ -4782,41 +4979,190 @@ class SaleViewSet(viewsets.ModelViewSet):
             raise
     
     def get_queryset(self):
-        """Filter sales based on user permissions"""
+        """Filter sales based on user permissions and query parameters"""
         user = self.request.user
+        queryset = Sale.objects.none()
         
         # First check ShopUser memberships (new system)
         shop_membership = user.shop_memberships.filter(is_active=True).first()
         if shop_membership:
             # ShopUser can see sales from their shop
-            return Sale.objects.filter(shop=shop_membership.shop).order_by('-created_at')
+            queryset = Sale.objects.filter(shop=shop_membership.shop)
+        else:
+            # Fall back to UserProfile (old system)
+            try:
+                profile = user.profile
+                
+                # Admin can see all sales
+                if profile.role == 'Admin':
+                    queryset = Sale.objects.all()
+                
+                # Shop owners can see sales from their shop
+                elif profile.role == 'ShopOwner':
+                    if profile.shop:
+                        queryset = Sale.objects.filter(shop=profile.shop)
+                
+                # Processor can see sales of products from their processing unit
+                elif profile.role == 'Processor':
+                    if profile.processing_unit:
+                        queryset = Sale.objects.filter(
+                            items__product__processing_unit=profile.processing_unit
+                        ).distinct()
+                        
+            except UserProfile.DoesNotExist:
+                pass
         
-        # Fall back to UserProfile (old system)
-        try:
-            profile = user.profile
+        # Apply date filters from query params
+        date_from = self.request.query_params.get('date_from')
+        date_to = self.request.query_params.get('date_to')
+        product_name = self.request.query_params.get('product_name')
+        product_id = self.request.query_params.get('product_id')
+        
+        if date_from:
+            try:
+                from datetime import datetime
+                date_from_parsed = datetime.strptime(date_from, '%Y-%m-%d')
+                queryset = queryset.filter(created_at__date__gte=date_from_parsed.date())
+            except ValueError:
+                pass
+        
+        if date_to:
+            try:
+                from datetime import datetime
+                date_to_parsed = datetime.strptime(date_to, '%Y-%m-%d')
+                queryset = queryset.filter(created_at__date__lte=date_to_parsed.date())
+            except ValueError:
+                pass
+        
+        # Filter by product name (searches in sale items)
+        if product_name:
+            queryset = queryset.filter(
+                items__product__name__icontains=product_name
+            ).distinct()
+        
+        # Filter by specific product ID
+        if product_id:
+            queryset = queryset.filter(items__product_id=product_id).distinct()
+        
+        return queryset.order_by('-created_at')
+    
+    @action(detail=False, methods=['get'], url_path='category-summary/(?P<product_name>[^/.]+)')
+    def category_summary(self, request, product_name=None):
+        """
+        Get aggregated sales summary for a product name/category across all batches.
+        Returns total quantity sold, weight sold, remaining stock, revenue, and transactions.
+        """
+        from django.db.models import Sum, Count
+        from urllib.parse import unquote
+        
+        # Decode URL-encoded product name
+        product_name = unquote(product_name)
+        
+        # Get user's shop
+        shop = None
+        shop_membership = request.user.shop_memberships.filter(is_active=True).first()
+        if shop_membership:
+            shop = shop_membership.shop
+        else:
+            try:
+                profile = request.user.profile
+                shop = profile.shop
+            except UserProfile.DoesNotExist:
+                pass
+        
+        if not shop:
+            return Response(
+                {'error': 'User is not associated with any shop'},
+                status=status_module.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get all products with this name in the shop's inventory
+        from .models import Inventory
+        inventory_items = Inventory.objects.filter(
+            shop=shop,
+            product__name__iexact=product_name
+        ).select_related('product')
+        
+        # Aggregate totals across all batches
+        total_initial_quantity = 0
+        total_initial_weight = 0
+        total_remaining_quantity = 0
+        total_remaining_weight = 0
+        first_received_at = None
+        stock_additions = []
+        
+        for inv in inventory_items:
+            product = inv.product
+            total_initial_quantity += float(product.quantity_received or product.quantity)
+            total_initial_weight += float(product.weight_received or product.weight or 0)
+            total_remaining_quantity += float(inv.quantity)
+            total_remaining_weight += float(inv.weight or 0)
             
-            # Admin can see all sales
-            if profile.role == 'Admin':
-                return Sale.objects.all().order_by('-created_at')
+            # Track first received date
+            received_at = product.received_at
+            if received_at and (first_received_at is None or received_at < first_received_at):
+                first_received_at = received_at
             
-            # Shop owners can see sales from their shop
-            elif profile.role == 'ShopOwner':
-                if profile.shop:
-                    return Sale.objects.filter(shop=profile.shop).order_by('-created_at')
-                return Sale.objects.none()
+            # Track stock additions
+            if product.received_at:
+                stock_additions.append({
+                    'batch_number': product.batch_number,
+                    'quantity': float(product.quantity_received or product.quantity),
+                    'weight': float(product.weight_received or product.weight or 0),
+                    'weight_unit': product.weight_unit,
+                    'received_at': product.received_at.isoformat() if product.received_at else None,
+                    'processing_unit': product.processing_unit.name if product.processing_unit else None
+                })
+        
+        # Get all sale items for this product name from this shop
+        sale_items = SaleItem.objects.filter(
+            sale__shop=shop,
+            product__name__iexact=product_name
+        ).select_related('sale', 'product')
+        
+        # Aggregate sales data
+        total_sold_quantity = 0
+        total_sold_weight = 0
+        total_revenue = 0
+        transactions = []
+        
+        # Group by sale to avoid duplicates
+        sales_seen = set()
+        for item in sale_items:
+            total_sold_quantity += float(item.quantity)
+            total_sold_weight += float(item.weight or 0)
+            total_revenue += float(item.subtotal)
             
-            # Processor can see sales of products from their processing unit
-            elif profile.role == 'Processor':
-                if profile.processing_unit:
-                    return Sale.objects.filter(
-                        items__product__processing_unit=profile.processing_unit
-                    ).distinct().order_by('-created_at')
-                return Sale.objects.none()
-            
-            return Sale.objects.none()
-            
-        except UserProfile.DoesNotExist:
-            return Sale.objects.none()
+            if item.sale.id not in sales_seen:
+                sales_seen.add(item.sale.id)
+                transactions.append({
+                    'sale_id': item.sale.id,
+                    'created_at': item.sale.created_at.isoformat(),
+                    'customer_name': item.sale.customer_name,
+                    'total_amount': float(item.sale.total_amount),
+                    'payment_method': item.sale.payment_method,
+                    'quantity_sold': float(item.quantity),
+                    'weight_sold': float(item.weight or 0),
+                    'subtotal': float(item.subtotal)
+                })
+        
+        # Sort transactions by date (newest first)
+        transactions.sort(key=lambda x: x['created_at'], reverse=True)
+        
+        return Response({
+            'product_name': product_name,
+            'total_initial_quantity': total_initial_quantity,
+            'total_initial_weight': total_initial_weight,
+            'total_sold_quantity': total_sold_quantity,
+            'total_sold_weight': total_sold_weight,
+            'remaining_quantity': total_remaining_quantity,
+            'remaining_weight': total_remaining_weight,
+            'total_revenue': total_revenue,
+            'first_received_at': first_received_at.isoformat() if first_received_at else None,
+            'stock_additions': stock_additions,
+            'transactions': transactions,
+            'transaction_count': len(transactions)
+        })
     
     def perform_create(self, serializer):
         """Automatically set shop and sold_by when creating a sale"""
@@ -4852,3 +5198,4 @@ class SaleViewSet(viewsets.ModelViewSet):
         else:
             print(f"[SALE_PERFORM_CREATE] ❌ No shop found for user")
             raise ValidationError("User is not associated with any shop")
+
