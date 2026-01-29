@@ -751,6 +751,13 @@ class Product(models.Model):
     # QR code field for traceability
     qr_code = models.CharField(max_length=500, blank=True, null=True)
 
+    # External Source Tracking
+    is_external_source = models.BooleanField(default=False, help_text="Whether this product was acquired from an external vendor")
+    external_vendor_id = models.IntegerField(null=True, blank=True, help_text="Reference to ExternalVendor ID if applicable")
+    external_vendor_name = models.CharField(max_length=200, blank=True, null=True, help_text="Name of the external vendor")
+    acquisition_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True, help_text="Total price paid for external acquisition")
+    remaining_weight = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text="Remaining weight available in stock (mostly for external items)")
+
     # Transfer fields (products are transferred to Shop-level entities)
     transferred_to = models.ForeignKey(Shop, on_delete=models.SET_NULL, null=True, blank=True, related_name='transferred_products')
     transferred_at = models.DateTimeField(null=True, blank=True)
