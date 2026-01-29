@@ -2217,25 +2217,50 @@ def production_stats_view(request):
 
         # Get user's processing units
         from .models import ProcessingUnitUser
-        user_processing_units = ProcessingUnitUser.objects.filter(
-            user=user,
-            is_active=True,
-            is_suspended=False
-        ).values_list('processing_unit_id', flat=True)
+        
+        # Priority: use unit_id from query params if provided and user has access
+        requested_unit_id = request.query_params.get('unit_id')
+        
+        if requested_unit_id:
+            # Check if user is a member of this specific unit
+            has_access = ProcessingUnitUser.objects.filter(
+                user=user,
+                processing_unit_id=requested_unit_id,
+                is_active=True
+            ).exists()
+            
+            if not has_access and profile.role != 'Admin':
+                # Fallback: check if they are the owner via profile (legacy)
+                if not (profile.processing_unit and str(profile.processing_unit.id) == str(requested_unit_id)):
+                    return Response({'error': 'Unauthorized to access this processing unit.'}, status=403)
+            
+            user_processing_units = [requested_unit_id]
+        else:
+            # Default to all units user is a member of
+            user_processing_units = ProcessingUnitUser.objects.filter(
+                user=user,
+                is_active=True,
+                is_suspended=False
+            ).values_list('processing_unit_id', flat=True)
+
+            if not user_processing_units and profile.processing_unit:
+                user_processing_units = [profile.processing_unit.id]
 
         if not user_processing_units:
             return Response({'production': {}})
 
         from datetime import datetime, timedelta
 
-        # RECEIVED: Count whole animals + slaughter parts received by this user
+        # RECEIVED: Count whole animals + slaughter parts received by these units
         received_whole_animals = Animal.objects.filter(
-            received_by=user
-        ).count()
+            Q(transferred_to_id__in=user_processing_units) | Q(received_by=user),
+            received_at__isnull=False
+        ).distinct().count()
         
         received_slaughter_parts = SlaughterPart.objects.filter(
-            received_by=user
-        ).count()
+            Q(transferred_to_id__in=user_processing_units) | Q(received_by=user),
+            received_by__isnull=False
+        ).distinct().count()
         
         total_animals_received = received_whole_animals + received_slaughter_parts
 
@@ -2403,13 +2428,29 @@ def processing_pipeline_view(request):
             logger.info(f"[PROCESSING_PIPELINE] User {user.username} has role '{getattr(profile, 'role', None)}' which is not a processing unit role - returning empty pipeline")
             return Response(empty_pipeline)
 
-        # Get user's processing units
-        from .models import ProcessingUnitUser
-        user_processing_units = ProcessingUnitUser.objects.filter(
-            user=user,
-            is_active=True,
-            is_suspended=False
-        ).values_list('processing_unit_id', flat=True)
+        # Priority: use unit_id from query params if provided and user has access
+        requested_unit_id = request.query_params.get('unit_id')
+        if requested_unit_id:
+            # Check access
+            has_access = ProcessingUnitUser.objects.filter(
+                user=user,
+                processing_unit_id=requested_unit_id,
+                is_active=True
+            ).exists()
+            if not has_access and profile.role != 'Admin':
+                if not (profile.processing_unit and str(profile.processing_unit.id) == str(requested_unit_id)):
+                    return Response({'error': 'Unauthorized to access this processing unit.'}, status=403)
+            user_processing_units = [requested_unit_id]
+        else:
+            # Default to all associated units
+            user_processing_units = ProcessingUnitUser.objects.filter(
+                user=user,
+                is_active=True,
+                is_suspended=False
+            ).values_list('processing_unit_id', flat=True)
+
+            if not user_processing_units and profile.processing_unit:
+                user_processing_units = [profile.processing_unit.id]
 
         if not user_processing_units:
             return Response(empty_pipeline)
@@ -2526,17 +2567,30 @@ def traceability_report_view(request):
     try:
         profile = user.profile
         
-        # Get processing units the user is associated with
-        user_units = ProcessingUnitUser.objects.filter(
-            user=user,
-            is_active=True,
-            is_suspended=False
-        ).values_list('processing_unit_id', flat=True)
-        
-        # If no units found via ProcessingUnitUser, fallback to profile field (for owners)
-        unit_ids = list(user_units)
-        if not unit_ids and hasattr(profile, 'processing_unit') and profile.processing_unit:
-            unit_ids = [profile.processing_unit.id]
+        # Support explicit unit_id filtering
+        requested_unit_id = request.query_params.get('unit_id')
+        if requested_unit_id:
+            # Validate access
+            has_access = ProcessingUnitUser.objects.filter(
+                user=user,
+                processing_unit_id=requested_unit_id,
+                is_active=True
+            ).exists()
+            if has_access or (profile.processing_unit and str(profile.processing_unit.id) == str(requested_unit_id)):
+                unit_ids = [requested_unit_id]
+            else:
+                return Response({'error': 'Unauthorized to access this processing unit.'}, status=403)
+        else:
+            # Default to all associated units
+            user_units = ProcessingUnitUser.objects.filter(
+                user=user,
+                is_active=True,
+                is_suspended=False
+            ).values_list('processing_unit_id', flat=True)
+            
+            unit_ids = list(user_units)
+            if not unit_ids and hasattr(profile, 'processing_unit') and profile.processing_unit:
+                unit_ids = [profile.processing_unit.id]
             
         if not unit_ids:
             return Response({
@@ -4189,11 +4243,36 @@ class ProductViewSet(viewsets.ModelViewSet):
             if profile.role == 'Admin':
                 return Product.objects.all().order_by('-created_at')
             
-            # Processor can see products from their processing unit
+            # Processor can see products from their processing unit(s)
             elif profile.role == 'Processor':
+                from .models import ProcessingUnitUser
+                
+                # Support explicit filtering by unit_id
+                requested_unit_id = self.request.query_params.get('unit_id')
+                if requested_unit_id:
+                    # Validate access
+                    has_access = ProcessingUnitUser.objects.filter(
+                        user=user,
+                        processing_unit_id=requested_unit_id,
+                        is_active=True
+                    ).exists()
+                    if has_access or profile.processing_unit_id == int(requested_unit_id):
+                        return Product.objects.filter(processing_unit_id=requested_unit_id).order_by('-created_at')
+                
+                # Default behavior: all associated units
+                user_units = ProcessingUnitUser.objects.filter(
+                    user=user,
+                    is_active=True,
+                    is_suspended=False
+                ).values_list('processing_unit_id', flat=True)
+                
+                unit_ids = list(user_units)
                 if profile.processing_unit:
+                    unit_ids.append(profile.processing_unit.id)
+                
+                if unit_ids:
                     return Product.objects.filter(
-                        processing_unit=profile.processing_unit
+                        processing_unit_id__in=unit_ids
                     ).order_by('-created_at')
                 return Product.objects.none()
             
