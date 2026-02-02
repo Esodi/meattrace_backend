@@ -1,4 +1,4 @@
-from django.shortcuts import render
+﻿from django.shortcuts import render
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -24,7 +24,7 @@ from .models import Animal, Product, Receipt, UserProfile, ProductCategory, Proc
 from .abbatoir_dashboard_serializer import AbbatoirDashboardSerializer
 from .serializers import AnimalSerializer, ProductSerializer, OrderSerializer, ShopSerializer, SlaughterPartSerializer, ActivitySerializer, ProcessingUnitSerializer, JoinRequestSerializer, ProductCategorySerializer, CarcassMeasurementSerializer, SaleSerializer, SaleItemSerializer, NotificationSerializer, UserProfileSerializer
 from .utils.rejection_service import RejectionService
-from .utils.notification_service import NotificationService
+from .role_utils import normalize_role, ROLE_ABBATOIR, ROLE_PROCESSOR, ROLE_SHOPOWNER, ROLE_ADMIN
 
 
 class AnimalViewSet(viewsets.ModelViewSet):
@@ -32,44 +32,25 @@ class AnimalViewSet(viewsets.ModelViewSet):
     serializer_class = AnimalSerializer
     permission_classes = [IsAuthenticated]
 
-    def create(self, request, *args, **kwargs):
-        """Override create to add detailed logging"""
-        print(f"[ANIMAL_CREATE] Creating animal...")
-        print(f"[ANIMAL_CREATE] Request data: {request.data}")
-        print(f"[ANIMAL_CREATE] Request FILES: {request.FILES}")
-        serializer = self.get_serializer(data=request.data)
-        if not serializer.is_valid():
-            print(f"[ANIMAL_CREATE] ❌ Validation errors: {serializer.errors}")
-            return Response(serializer.errors, status=status_module.HTTP_400_BAD_REQUEST)
-        
-        print(f"[ANIMAL_CREATE] ✅ Data validated successfully")
-        self.perform_create(serializer)
-        headers = self.get_success_headers(serializer.data)
-        return Response(serializer.data, status=status_module.HTTP_201_CREATED, headers=headers)
-
     def get_queryset(self):
         """
         Return animals for the current user with optional filtering.
         Supports filtering by species, slaughtered status, search, and ordering.
         
         Filtering logic:
-        - Abbatoirs: see their own animals
+        - Farmers: see their own animals
         - Processors: see animals transferred to ANY processing unit they belong to
         - Admins: see all animals
         """
         user = self.request.user
-        # FIX: Add prefetch_related for carcass_measurement and slaughter_parts
-        # This ensures split carcass animals load their measurement and parts data
-        queryset = Animal.objects.all().select_related(
-            'abbatoir', 'transferred_to', 'received_by', 'carcass_measurement'
-        ).prefetch_related('slaughter_parts')
+        queryset = Animal.objects.all().select_related('abbatoir', 'transferred_to', 'received_by')
 
-        # Abbatoirs see their own animals
-        if hasattr(user, 'profile') and user.profile.role == 'Abbatoir':
+        # Farmers see their own animals
+        if hasattr(user, 'profile') and normalize_role(user.profile.role) == ROLE_ABBATOIR:
             queryset = queryset.filter(abbatoir=user)
 
         # ProcessingUnit users see animals transferred to ANY processing unit they belong to
-        elif hasattr(user, 'profile') and user.profile.role == 'Processor':
+        elif hasattr(user, 'profile') and normalize_role(user.profile.role) == ROLE_PROCESSOR:
             # Get all processing units the user is a member of
             from .models import ProcessingUnitUser
             user_processing_units = ProcessingUnitUser.objects.filter(
@@ -117,17 +98,7 @@ class AnimalViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         """Set the abbatoir to the current user when creating an animal"""
-        try:
-            print(f"[ANIMAL_CREATE] Request data: {self.request.data}")
-            print(f"[ANIMAL_CREATE] User: {self.request.user.username}")
-            serializer.save(abbatoir=self.request.user)
-            print(f"[ANIMAL_CREATE] ✅ Animal created successfully")
-        except Exception as e:
-            print(f"[ANIMAL_CREATE] ❌ Error: {e}")
-            print(f"[ANIMAL_CREATE] Error type: {type(e)}")
-            import traceback
-            traceback.print_exc()
-            raise
+        serializer.save(abbatoir=self.request.user)
 
     def destroy(self, request, *args, **kwargs):
         """Prevent deletion of slaughtered animals"""
@@ -231,8 +202,7 @@ class AnimalViewSet(viewsets.ModelViewSet):
             with transaction.atomic():
                 # Transfer whole animals
                 if animal_ids:
-                    # Use select_for_update to prevent race conditions
-                    animals = Animal.objects.select_for_update().filter(
+                    animals = Animal.objects.filter(
                         id__in=animal_ids,
                         abbatoir=request.user,
                         transferred_to__isnull=True  # Not already transferred
@@ -250,8 +220,7 @@ class AnimalViewSet(viewsets.ModelViewSet):
                     
                     for part_transfer in part_transfers:
                         part_ids = part_transfer.get('part_ids', [])
-                        # Use select_for_update to prevent race conditions
-                        parts = SlaughterPart.objects.select_for_update().filter(
+                        parts = SlaughterPart.objects.filter(
                             id__in=part_ids,
                             animal__abbatoir=request.user,
                             transferred_to__isnull=True  # Not already transferred
@@ -574,7 +543,7 @@ class SlaughterPartViewSet(viewsets.ModelViewSet):
         Return slaughter parts for the current user with optional filtering.
         
         Filtering logic:
-        - Abbatoirs: see parts from their animals
+        - Farmers: see parts from their animals
         - Processors: see parts transferred to or received by them
         - Admins: see all parts
         """
@@ -582,13 +551,11 @@ class SlaughterPartViewSet(viewsets.ModelViewSet):
         queryset = SlaughterPart.objects.all().select_related('animal', 'transferred_to', 'received_by')
 
         # Abbatoirs see parts from their own animals
-        if hasattr(user, 'profile') and user.profile.role == 'Abbatoir':
-            queryset = queryset.filter(animal__abbatoir=user)
-        if hasattr(user, 'profile') and user.profile.role == 'Abbatoir':
+        if hasattr(user, 'profile') and normalize_role(user.profile.role) == ROLE_ABBATOIR:
             queryset = queryset.filter(animal__abbatoir=user)
 
         # ProcessingUnit users see parts transferred to or received by them
-        elif hasattr(user, 'profile') and user.profile.role == 'Processor':
+        elif hasattr(user, 'profile') and user.profile.role == 'processing_unit':
             # Get all processing units the user is a member of
             from .models import ProcessingUnitUser
             user_processing_units = ProcessingUnitUser.objects.filter(
@@ -726,29 +693,6 @@ class NotificationViewSet(viewsets.ModelViewSet):
                 status=status_module.HTTP_404_NOT_FOUND
             )
 
-    @action(detail=False, methods=['get'], url_path='unread-count')
-    def unread_count(self, request):
-        """Get count of unread notifications for the current user"""
-        count = Notification.objects.filter(
-            user=request.user,
-            is_read=False,
-            is_dismissed=False
-        ).count()
-        return Response({'count': count})
-
-    @action(detail=False, methods=['post'], url_path='mark-all-read')
-    def mark_all_read(self, request):
-        """Mark all notifications as read for the current user"""
-        updated_count = Notification.objects.filter(
-            user=request.user,
-            is_read=False
-        ).update(is_read=True, read_at=timezone.now())
-        
-        return Response({
-            'message': f'Marked {updated_count} notifications as read',
-            'updated_count': updated_count
-        })
-
     @action(detail=False, methods=['post'], url_path='mark-read')
     def mark_read(self, request):
         """Mark notifications as read"""
@@ -838,54 +782,6 @@ class NotificationViewSet(viewsets.ModelViewSet):
             'message': f'Unarchived {updated_count} notifications',
             'updated_count': updated_count
         })
-
-    @action(detail=False, methods=['post'], url_path='withdraw')
-    def withdraw_request(self, request):
-        """Withdraw join request and delete user account"""
-        user = request.user
-
-        try:
-            # Find the user's pending join request
-            join_request = JoinRequest.objects.filter(
-                user=user,
-                status='pending'
-            ).first()
-
-            if not join_request:
-                return Response(
-                    {'error': 'No pending join request found'},
-                    status=status_module.HTTP_404_NOT_FOUND
-                )
-
-            # Start transaction to ensure all related data is deleted
-            with transaction.atomic():
-                # Delete join request
-                join_request.delete()
-
-                # Delete user account and all associated data (handled by UserProfileViewSet.destroy)
-                # This will cascade delete all related data
-                profile_viewset = UserProfileViewSet()
-                profile_viewset.kwargs = {'pk': str(user.id)}
-                profile_viewset.request = request
-                delete_response = profile_viewset.destroy(request)
-                if delete_response.status_code != 204:
-                    raise Exception('Failed to delete user account')
-
-            return Response(
-                {'message': 'Join request withdrawn and account deleted successfully'},
-                status=status_module.HTTP_200_OK
-            )
-
-        except Exception as e:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.error(f"[JOIN_REQUEST_WITHDRAW] Error withdrawing request: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return Response(
-                {'error': 'Failed to withdraw request'},
-                status=status_module.HTTP_500_INTERNAL_SERVER_ERROR
-            )
 
     @action(detail=False, methods=['post'], url_path='batch-update')
     def batch_update(self, request):
@@ -1146,153 +1042,50 @@ def admin_performance_data(request):
 @permission_classes([AllowAny])
 def public_processing_units_list(request):
     try:
-        # Return all processing units for registration (no is_public field exists)
-        units = ProcessingUnit.objects.all()[:200]
-        serializer = ProcessingUnitSerializer(units, many=True)
-        data = serializer.data
-    except Exception as e:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.error(f"[PUBLIC_PROCESSING_UNITS] Error fetching units: {e}")
+        units = ProcessingUnit.objects.filter(is_public=True).values('id', 'name')[:200]
+        data = list(units)
+    except Exception:
         data = []
-    return Response({'results': data})
+    return Response({'processing_units': data})
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def public_processing_units_for_registration(request):
+    """Public endpoint to list processing units for user registration flow."""
+    try:
+        units = ProcessingUnit.objects.all().values('id', 'name')[:200]
+        data = list(units)
+    except Exception:
+        data = []
+    return Response({'processing_units': data})
 
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def public_shops_list(request):
     try:
-        shops = Shop.objects.filter(is_active=True).values('id', 'name')[:200]
+        shops = Shop.objects.filter(is_public=True).values('id', 'name')[:200]
         data = list(shops)
     except Exception:
         data = []
     return Response({'shops': data})
 
 
-@api_view(['GET'])
-@permission_classes([AllowAny])
-def public_processing_units_for_registration(request):
-    """
-    Public endpoint for browsing processing units during registration.
-    Returns all active processing units without authentication.
-    """
-    try:
-        units = ProcessingUnit.objects.filter(is_active=True).values(
-            'id', 'name', 'description', 'location'
-        )[:200]
-        data = list(units)
-    except Exception as e:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.error(f"[PUBLIC_PROCESSING_UNITS_REG] Error: {e}")
-        data = []
-    return Response({'results': data})
-
-
 class JoinRequestCreateView(APIView):
-    """
-    API endpoint for creating join requests.
-    Requires authentication - users must be logged in to request to join.
-    """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
 
-    def post(self, request):
-        """
-        Create a new join request.
-        
-        Expected payload:
-        {
-            "request_type": "processing_unit" or "shop",
-            "processing_unit_id": 1,  # if request_type is processing_unit
-            "shop_id": 1,  # if request_type is shop
-            "requested_role": "worker",
-            "message": "Optional message",
-            "qualifications": "Optional qualifications"
-        }
-        """
-        request_type = request.data.get('request_type')
-        processing_unit_id = request.data.get('processing_unit_id')
-        shop_id = request.data.get('shop_id')
-        requested_role = request.data.get('requested_role', 'worker')
-        message = request.data.get('message', '')
-        qualifications = request.data.get('qualifications', '')
-        
-        # Validate request_type
-        if request_type not in ['processing_unit', 'shop']:
-            return Response(
-                {'error': 'request_type must be either "processing_unit" or "shop"'},
-                status=status_module.HTTP_400_BAD_REQUEST
-            )
-        
-        # Validate target entity
-        processing_unit = None
-        shop = None
-        
-        if request_type == 'processing_unit':
-            if not processing_unit_id:
-                return Response(
-                    {'error': 'processing_unit_id is required for processing_unit requests'},
-                    status=status_module.HTTP_400_BAD_REQUEST
-                )
-            try:
-                processing_unit = ProcessingUnit.objects.get(id=processing_unit_id)
-            except ProcessingUnit.DoesNotExist:
-                return Response(
-                    {'error': 'Processing unit not found'},
-                    status=status_module.HTTP_404_NOT_FOUND
-                )
-        else:  # shop
-            if not shop_id:
-                return Response(
-                    {'error': 'shop_id is required for shop requests'},
-                    status=status_module.HTTP_400_BAD_REQUEST
-                )
-            try:
-                shop = Shop.objects.get(id=shop_id)
-            except Shop.DoesNotExist:
-                return Response(
-                    {'error': 'Shop not found'},
-                    status=status_module.HTTP_404_NOT_FOUND
-                )
-        
-        # Check for existing pending request
-        existing_request = JoinRequest.objects.filter(
-            user=request.user,
-            processing_unit=processing_unit,
-            shop=shop,
-            status='pending'
-        ).first()
-        
-        if existing_request:
-            return Response(
-                {'error': 'You already have a pending join request for this entity'},
-                status=status_module.HTTP_400_BAD_REQUEST
-            )
-        
-        # Create the join request
-        try:
-            join_request = JoinRequest.objects.create(
-                user=request.user,
-                request_type=request_type,
-                processing_unit=processing_unit,
-                shop=shop,
-                requested_role=requested_role,
-                message=message,
-                qualifications=qualifications,
-                expires_at=timezone.now() + timezone.timedelta(days=30)  # 30-day expiry
-            )
-            
-            serializer = JoinRequestSerializer(join_request)
+    def post(self, request, entity_id, request_type):
+        # Minimal creation flow; full validation should be added later.
+        serializer = JoinRequestSerializer(data={
+            'entity_id': entity_id,
+            'request_type': request_type,
+            'requester': getattr(request.user, 'id', None)
+        })
+        if serializer.is_valid():
+            serializer.save()
             return Response(serializer.data, status=status_module.HTTP_201_CREATED)
-            
-        except Exception as e:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.error(f"[JOIN_REQUEST_CREATE] Error: {e}")
-            return Response(
-                {'error': 'Failed to create join request'},
-                status=status_module.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        return Response(serializer.errors, status=status_module.HTTP_400_BAD_REQUEST)
 
 
 class JoinRequestReviewView(APIView):
@@ -1312,25 +1105,6 @@ class JoinRequestReviewView(APIView):
 def user_profile_view(request):
     try:
         profile = UserProfile.objects.get(user=request.user)
-        
-        # Check for pending join requests
-        pending_join_request = JoinRequest.objects.filter(
-            user=request.user,
-            status='pending'
-        ).select_related('processing_unit', 'shop').first()
-        
-        has_pending_join_request = pending_join_request is not None
-        pending_join_request_data = None
-        
-        if has_pending_join_request:
-            pending_join_request_data = {
-                'processing_unit_name': pending_join_request.processing_unit.name if pending_join_request.processing_unit else None,
-                'shop_name': pending_join_request.shop.name if pending_join_request.shop else None,
-                'requested_role': pending_join_request.requested_role,
-                'created_at': pending_join_request.created_at.isoformat() if pending_join_request.created_at else None,
-                'request_type': pending_join_request.request_type,
-            }
-        
         # Return complete user and profile data for Flutter app compatibility
         data = {
             'id': request.user.id,
@@ -1350,29 +1124,9 @@ def user_profile_view(request):
                 'id': profile.shop.id,
                 'name': profile.shop.name,
             } if profile.shop else None,
-            'processing_unit_memberships': [],  # Add memberships if needed
-            'has_pending_join_request': has_pending_join_request,
-            'pending_join_request': pending_join_request_data,
+            'processing_unit_memberships': []  # Add memberships if needed
         }
     except UserProfile.DoesNotExist:
-        # Check for pending join requests even without profile
-        pending_join_request = JoinRequest.objects.filter(
-            user=request.user,
-            status='pending'
-        ).select_related('processing_unit', 'shop').first()
-        
-        has_pending_join_request = pending_join_request is not None
-        pending_join_request_data = None
-        
-        if has_pending_join_request:
-            pending_join_request_data = {
-                'processing_unit_name': pending_join_request.processing_unit.name if pending_join_request.processing_unit else None,
-                'shop_name': pending_join_request.shop.name if pending_join_request.shop else None,
-                'requested_role': pending_join_request.requested_role,
-                'created_at': pending_join_request.created_at.isoformat() if pending_join_request.created_at else None,
-                'request_type': pending_join_request.request_type,
-            }
-        
         # Fallback for users without profile
         data = {
             'id': request.user.id,
@@ -1383,84 +1137,30 @@ def user_profile_view(request):
             'is_active': request.user.is_active,
             'date_joined': request.user.date_joined.isoformat() if request.user.date_joined else None,
             'last_login': request.user.last_login.isoformat() if request.user.last_login else None,
-            'role': 'Abbatoir',  # Default role
+            'role': 'Farmer',  # Default role
             'processing_unit': None,
             'shop': None,
-            'processing_unit_memberships': [],
-            'has_pending_join_request': has_pending_join_request,
-            'pending_join_request': pending_join_request_data,
+            'processing_unit_memberships': []
         }
     except Exception as e:
         # Handle any other errors gracefully
         data = {'username': getattr(request.user, 'username', None), 'error': str(e)}
-    return Response(data)
+    return Response({'profile': data})
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def dashboard_view(request):
-    """Generic dashboard endpoint that returns role-specific data"""
-    try:
-        user = request.user
-        print(f"[DASHBOARD] User: {user.username}")
-        
-        # Safely get role
-        role = 'Abbatoir'  # Default
-        if hasattr(user, 'profile') and user.profile:
-            role = user.profile.role
-        print(f"[DASHBOARD] Role: {role}")
-        
-        dashboard_data = {
-            'user': {
-                'id': user.id,
-                'username': user.username,
-                'role': role,
-            },
-            'stats': {},
-            'recent_activities': [],
-        }
-        
-        # Add role-specific data
-        if role.lower() == 'abbatoir':
-            try:
-                animals_count = Animal.objects.filter(abbatoir=user).count()
-                active_animals = Animal.objects.filter(abbatoir=user, slaughtered=False).count()
-                dashboard_data['stats'] = {
-                    'total_animals': animals_count,
-                    'active_animals': active_animals,
-                    'slaughtered_animals': animals_count - active_animals,
-                }
-            except Exception as e:
-                print(f"[DASHBOARD] Error getting animal stats: {e}")
-        
-        # Get recent activities
-        try:
-            recent_activities = Activity.objects.filter(user=user).order_by('-created_at')[:10]
-            # Serialize activities
-            activity_list = []
-            for activity in recent_activities:
-                activity_list.append({
-                    'id': activity.id,
-                    'title': activity.title,
-                    'description': activity.description,
-                    'activity_type': activity.activity_type,
-                    'created_at': activity.created_at.isoformat() if activity.created_at else None,
-                })
-            dashboard_data['recent_activities'] = activity_list
-        except Exception as e:
-            print(f"[DASHBOARD] Error getting activities: {e}")
-        
-        print(f"[DASHBOARD] ✅ Returning dashboard data")
-        return Response(dashboard_data)
-        
-    except Exception as e:
-        print(f"[DASHBOARD] ❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
-        return Response(
-            {'error': str(e), 'detail': 'Dashboard error'}, 
-            status=status_module.HTTP_500_INTERNAL_SERVER_ERROR
-        )
+    """General dashboard endpoint returning basic system info and welcome message."""
+    user = request.user
+    role = getattr(user.profile, 'role', 'User')
+    
+    return Response({
+        'message': f'Welcome to MeatTrace, {user.first_name or user.username}!',
+        'role': role,
+        'system': 'MeatTrace Traceability Platform',
+        'timestamp': timezone.now().isoformat()
+    })
 
 
 @api_view(['GET'])
@@ -1474,12 +1174,11 @@ def health_check(request):
     })
 
 
-@api_view(['GET', 'POST'])
+@api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def activities_view(request):
     try:
-        # Only show activities for the current user
-        acts = Activity.objects.filter(user=request.user).order_by('-created_at')[:50]
+        acts = Activity.objects.order_by('-created_at')[:50]
         data = ActivitySerializer(acts, many=True).data
     except Exception:
         data = []
@@ -1513,12 +1212,12 @@ def product_info_view(request, product_id):
         # Build comprehensive timeline
         timeline = []
         
-        # 1. Animal Registration (Abbatoir Stage)
+        # 1. Animal Registration (Farmer Stage)
         if product.animal:
             animal = product.animal
             
             # Get abbatoir contact info
-            abbatoir_details = {
+            farmer_details = {
                 'Animal ID': animal.animal_id,
                 'Animal Name': animal.animal_name or 'Not named',
                 'Species': animal.get_species_display(),
@@ -1534,9 +1233,9 @@ def product_info_view(request, product_id):
             
             # Add abbatoir phone if available
             if hasattr(animal.abbatoir, 'profile') and hasattr(animal.abbatoir.profile, 'phone'):
-                abbatoir_details['Abbatoir Phone'] = animal.abbatoir.profile.phone or 'Not provided'
+                farmer_details['Abbatoir Phone'] = animal.abbatoir.profile.phone or 'Not provided'
             elif hasattr(animal.abbatoir, 'phone_number'):
-                abbatoir_details['Abbatoir Phone'] = animal.abbatoir.phone_number or 'Not provided'
+                farmer_details['Abbatoir Phone'] = animal.abbatoir.phone_number or 'Not provided'
             
             timeline.append({
                 'stage': 'Animal Registration',
@@ -1544,9 +1243,9 @@ def product_info_view(request, product_id):
                 'timestamp': animal.created_at,
                 'location': f'Abbatoir - {animal.abbatoir.username}',
                 'actor': animal.abbatoir.get_full_name() if animal.abbatoir.first_name else animal.abbatoir.username,
-                'action': f'Animal {animal.animal_id} registered at abbatoir',
+                'action': f'Animal {animal.animal_id} registered at farm',
                 'icon': 'fa-clipboard-list',
-                'details': abbatoir_details
+                'details': farmer_details
             })
             
             # 2. Animal Transfer to Processing Unit
@@ -1649,7 +1348,7 @@ def product_info_view(request, product_id):
                         
                         # Add destination if part was transferred
                         if hasattr(part, 'transferred_to') and part.transferred_to:
-                            part_value += f' → {part.transferred_to.name}'
+                            part_value += f' ΓåÆ {part.transferred_to.name}'
                         elif hasattr(part, 'processing_unit') and part.processing_unit:
                             part_value += f' (at {part.processing_unit.name})'
                         
@@ -2118,69 +1817,13 @@ def add_product_category(request):
     return render(request, 'product_info/add_category.html', {})
 
 
+@login_required
 def sale_info_view(request, sale_id):
-    """Public view for sale info - accessible via QR code scanning"""
     try:
         sale = Sale.objects.get(id=sale_id)
     except Exception:
         sale = None
     return render(request, 'sale_info/view.html', {'sale': sale})
-
-
-@api_view(['GET'])
-@permission_classes([])  # No authentication required - public endpoint
-def public_sale_receipt_api(request, receipt_uuid):
-    """
-    Public API endpoint for sale receipts - accessible via QR code scanning.
-    Returns sale details as JSON without requiring authentication.
-    """
-    try:
-        import uuid as uuid_module
-        # Validate and parse UUID
-        try:
-            uuid_obj = uuid_module.UUID(str(receipt_uuid))
-        except ValueError:
-            return Response(
-                {'error': 'Invalid receipt UUID format'},
-                status=status_module.HTTP_400_BAD_REQUEST
-            )
-        
-        sale = Sale.objects.select_related('shop', 'sold_by').prefetch_related('items__product').get(receipt_uuid=uuid_obj)
-        
-        # Build items list
-        items = []
-        for item in sale.items.all():
-            items.append({
-                'product_name': item.product.name if item.product else 'Unknown',
-                'batch_number': item.product.batch_number if item.product else '',
-                'quantity': float(item.quantity),
-                'weight': float(item.weight) if item.weight else None,
-                'weight_unit': item.weight_unit,
-                'unit_price': float(item.unit_price),
-                'subtotal': float(item.subtotal),
-            })
-        
-        return Response({
-            'receipt_id': str(sale.receipt_uuid),
-            'sale_id': sale.id,
-            'shop_name': sale.shop.name if sale.shop else 'Unknown',
-            'shop_address': sale.shop.address if sale.shop else '',
-            'shop_phone': sale.shop.phone if sale.shop else '',
-            'sold_by': sale.sold_by.get_full_name() or sale.sold_by.username if sale.sold_by else 'Unknown',
-            'customer_name': sale.customer_name,
-            'customer_phone': sale.customer_phone,
-            'payment_method': sale.payment_method,
-            'total_amount': float(sale.total_amount),
-            'created_at': sale.created_at.isoformat(),
-            'items': items,
-            'items_count': len(items),
-        })
-        
-    except Sale.DoesNotExist:
-        return Response(
-            {'error': 'Receipt not found'},
-            status=status_module.HTTP_404_NOT_FOUND
-        )
 
 
 @api_view(['GET'])
@@ -2217,50 +1860,28 @@ def production_stats_view(request):
 
         # Get user's processing units
         from .models import ProcessingUnitUser
-        
-        # Priority: use unit_id from query params if provided and user has access
-        requested_unit_id = request.query_params.get('unit_id')
-        
-        if requested_unit_id:
-            # Check if user is a member of this specific unit
-            has_access = ProcessingUnitUser.objects.filter(
-                user=user,
-                processing_unit_id=requested_unit_id,
-                is_active=True
-            ).exists()
-            
-            if not has_access and profile.role != 'Admin':
-                # Fallback: check if they are the owner via profile (legacy)
-                if not (profile.processing_unit and str(profile.processing_unit.id) == str(requested_unit_id)):
-                    return Response({'error': 'Unauthorized to access this processing unit.'}, status=403)
-            
-            user_processing_units = [requested_unit_id]
-        else:
-            # Default to all units user is a member of
-            user_processing_units = ProcessingUnitUser.objects.filter(
-                user=user,
-                is_active=True,
-                is_suspended=False
-            ).values_list('processing_unit_id', flat=True)
-
-            if not user_processing_units and profile.processing_unit:
-                user_processing_units = [profile.processing_unit.id]
+        user_processing_units = ProcessingUnitUser.objects.filter(
+            user=user,
+            is_active=True,
+            is_suspended=False
+        ).values_list('processing_unit_id', flat=True)
 
         if not user_processing_units:
             return Response({'production': {}})
 
         from datetime import datetime, timedelta
 
-        # RECEIVED: Count whole animals + slaughter parts received by these units
+        # RECEIVED: Count whole animals + slaughter parts received by this unit
+        # (Animals/parts where transferred_to matches user's unit and received_by is NOT NULL)
         received_whole_animals = Animal.objects.filter(
-            Q(transferred_to_id__in=user_processing_units) | Q(received_by=user),
-            received_at__isnull=False
-        ).distinct().count()
+            transferred_to_id__in=user_processing_units,
+            received_by__isnull=False
+        ).count()
         
         received_slaughter_parts = SlaughterPart.objects.filter(
-            Q(transferred_to_id__in=user_processing_units) | Q(received_by=user),
+            transferred_to_id__in=user_processing_units,
             received_by__isnull=False
-        ).distinct().count()
+        ).count()
         
         total_animals_received = received_whole_animals + received_slaughter_parts
 
@@ -2404,6 +2025,165 @@ def production_stats_view(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+def traceability_report_view(request):
+    """Return traceability report for processing unit.
+    
+    Aggregates data from:
+    1. Animals received (whole carcasses)
+    2. SlaughterParts received (partial carcasses)
+    
+    Calculates yield based on products created from these inputs.
+    """
+    user = request.user
+    
+    # Get filters
+    species_filter = request.query_params.get('species')
+    search_query = request.query_params.get('search')
+    date_from = request.query_params.get('date_from')
+    date_to = request.query_params.get('date_to')
+    
+    # 1. Fetch Animals received by this user
+    animals_query = Q(received_by=user)
+    if species_filter:
+        animals_query &= Q(species__iexact=species_filter)
+    if search_query:
+        animals_query &= (Q(animal_id__icontains=search_query) | Q(animal_name__icontains=search_query))
+    if date_from:
+        animals_query &= Q(received_at__gte=date_from)
+    if date_to:
+        animals_query &= Q(received_at__lte=date_to)
+        
+    received_animals = Animal.objects.filter(animals_query).select_related('abbatoir')
+    
+    # 2. Fetch SlaughterParts received by this user
+    parts_query = Q(received_by=user)
+    # SlaughterPart doesn't have species directly, we access via animal
+    if species_filter:
+        parts_query &= Q(animal__species__iexact=species_filter)
+    if search_query:
+        parts_query &= (Q(part_id__icontains=search_query) | Q(animal__animal_id__icontains=search_query))
+    if date_from:
+        parts_query &= Q(received_at__gte=date_from)
+    if date_to:
+        parts_query &= Q(received_at__lte=date_to)
+        
+    received_parts = SlaughterPart.objects.filter(parts_query).select_related('animal', 'animal__abbatoir')
+
+    items = []
+    
+    # Process Animals
+    for animal in received_animals:
+        # Calculate derived products
+        products = Product.objects.filter(animal=animal)
+        processed_weight = sum(p.weight for p in products if p.weight)
+        
+        initial_weight = animal.live_weight if animal.live_weight else 0.0
+        # Use simple default if weights are missing to avoid division by zero
+        if initial_weight <= 0:
+            initial_weight = 1.0 
+            
+        remaining_weight = animal.remaining_weight if animal.remaining_weight is not None else 0.0
+        
+        utilization_rate = 0.0
+        if initial_weight > 0:
+            utilization_rate = (processed_weight / initial_weight) * 100
+            
+        # Utilization history (products created)
+        history = []
+        for p in products:
+            history.append({
+                'name': p.name,
+                'batch_number': p.batch_number,
+                'weight': float(p.weight) if p.weight else 0.0,
+                'weight_unit': p.weight_unit or 'kg',
+                'formatted_date': p.created_at.strftime("%b %d, %Y") if p.created_at else "",
+                'transferred_to': p.transferred_to.name if p.transferred_to else None
+            })
+            
+        items.append({
+            'item_id': animal.animal_id,
+            'name': f"{animal.species} (Whole)",
+            'species': animal.species or 'Unknown',
+            'origin': animal.abbatoir.username if animal.abbatoir else "Unknown Source",
+            'initial_weight': float(initial_weight),
+            'remaining_weight': float(remaining_weight),
+            'processed_weight': float(processed_weight),
+            'utilization_rate': float(utilization_rate),
+            'received_at': animal.received_at.isoformat() if animal.received_at else timezone.now().isoformat(),
+            'formatted_received_date': animal.received_at.strftime("%b %d, %Y") if animal.received_at else "Unknown",
+            'utilization_history': history
+        })
+
+    # Process Parts
+    for part in received_parts:
+        # Calculate derived products
+        products = Product.objects.filter(slaughter_part=part)
+        processed_weight = sum(p.weight for p in products if p.weight)
+        
+        initial_weight = part.weight if part.weight else 1.0
+        remaining_weight = part.remaining_weight if part.remaining_weight is not None else 0.0
+        
+        utilization_rate = 0.0
+        if initial_weight > 0:
+            utilization_rate = (processed_weight / initial_weight) * 100
+            
+         # Utilization history
+        history = []
+        for p in products:
+            history.append({
+                'name': p.name,
+                'batch_number': p.batch_number,
+                'weight': float(p.weight) if p.weight else 0.0,
+                'weight_unit': p.weight_unit or 'kg',
+                'formatted_date': p.created_at.strftime("%b %d, %Y") if p.created_at else "",
+                'transferred_to': p.transferred_to.name if p.transferred_to else None
+            })
+
+        items.append({
+            'item_id': f"{part.animal.animal_id}-{part.part_type}",
+            'name': f"{part.part_type} (Part)",
+            'species': part.animal.species if part.animal else 'Unknown',
+            'origin': part.animal.abbatoir.username if part.animal and part.animal.abbatoir else "Unknown Source",
+            'initial_weight': float(initial_weight),
+            'remaining_weight': float(remaining_weight),
+            'processed_weight': float(processed_weight),
+            'utilization_rate': float(utilization_rate),
+            'received_at': part.received_at.isoformat() if part.received_at else timezone.now().isoformat(),
+            'formatted_received_date': part.received_at.strftime("%b %d, %Y") if part.received_at else "Unknown",
+            'utilization_history': history
+        })
+
+    return Response({
+        'traceability': {
+            'items': items,
+            'total': len(items),
+            'message': 'Report generated successfully'
+        }
+    })
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def public_sale_receipt_api(request, receipt_uuid):
+    """Public endpoint to view sale receipt by UUID."""
+    from .models import Sale
+    try:
+        sale = Sale.objects.get(receipt_uuid=receipt_uuid)
+        return Response({
+            'sale_id': sale.id,
+            'receipt_uuid': str(sale.receipt_uuid),
+            'total': str(sale.total_amount) if hasattr(sale, 'total_amount') else '0',
+            'created_at': sale.created_at.isoformat() if sale.created_at else None,
+            'items': []
+        })
+    except Sale.DoesNotExist:
+        return Response({'error': 'Receipt not found'}, status=404)
+    except Exception as e:
+        return Response({'error': str(e)}, status=500)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def processing_pipeline_view(request):
     """Return dynamic processing pipeline data for the current user's processing unit"""
     # Default empty pipeline structure
@@ -2428,29 +2208,13 @@ def processing_pipeline_view(request):
             logger.info(f"[PROCESSING_PIPELINE] User {user.username} has role '{getattr(profile, 'role', None)}' which is not a processing unit role - returning empty pipeline")
             return Response(empty_pipeline)
 
-        # Priority: use unit_id from query params if provided and user has access
-        requested_unit_id = request.query_params.get('unit_id')
-        if requested_unit_id:
-            # Check access
-            has_access = ProcessingUnitUser.objects.filter(
-                user=user,
-                processing_unit_id=requested_unit_id,
-                is_active=True
-            ).exists()
-            if not has_access and profile.role != 'Admin':
-                if not (profile.processing_unit and str(profile.processing_unit.id) == str(requested_unit_id)):
-                    return Response({'error': 'Unauthorized to access this processing unit.'}, status=403)
-            user_processing_units = [requested_unit_id]
-        else:
-            # Default to all associated units
-            user_processing_units = ProcessingUnitUser.objects.filter(
-                user=user,
-                is_active=True,
-                is_suspended=False
-            ).values_list('processing_unit_id', flat=True)
-
-            if not user_processing_units and profile.processing_unit:
-                user_processing_units = [profile.processing_unit.id]
+        # Get user's processing units
+        from .models import ProcessingUnitUser
+        user_processing_units = ProcessingUnitUser.objects.filter(
+            user=user,
+            is_active=True,
+            is_suspended=False
+        ).values_list('processing_unit_id', flat=True)
 
         if not user_processing_units:
             return Response(empty_pipeline)
@@ -2552,160 +2316,6 @@ def processing_pipeline_view(request):
         })
 
 
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def traceability_report_view(request):
-    """
-    Detailed traceability report for a processing unit.
-    Returns a list of raw materials (animals/parts) and their utilization history.
-    """
-    user = request.user
-    from .models import UserProfile, Animal, SlaughterPart, Product, ProcessingUnitUser
-    from django.utils import timezone
-    from decimal import Decimal
-    
-    try:
-        profile = user.profile
-        
-        # Support explicit unit_id filtering
-        requested_unit_id = request.query_params.get('unit_id')
-        if requested_unit_id:
-            # Validate access
-            has_access = ProcessingUnitUser.objects.filter(
-                user=user,
-                processing_unit_id=requested_unit_id,
-                is_active=True
-            ).exists()
-            if has_access or (profile.processing_unit and str(profile.processing_unit.id) == str(requested_unit_id)):
-                unit_ids = [requested_unit_id]
-            else:
-                return Response({'error': 'Unauthorized to access this processing unit.'}, status=403)
-        else:
-            # Default to all associated units
-            user_units = ProcessingUnitUser.objects.filter(
-                user=user,
-                is_active=True,
-                is_suspended=False
-            ).values_list('processing_unit_id', flat=True)
-            
-            unit_ids = list(user_units)
-            if not unit_ids and hasattr(profile, 'processing_unit') and profile.processing_unit:
-                unit_ids = [profile.processing_unit.id]
-            
-        if not unit_ids:
-            return Response({
-                'error': 'User is not associated with any active processing unit.',
-                'role': profile.role
-            }, status=403)
-                
-    except UserProfile.DoesNotExist:
-        return Response({'error': 'User profile not found.'}, status=404)
-
-    # Filtering parameters
-    species_filter = request.query_params.get('species')
-    date_from = request.query_params.get('date_from')
-    date_to = request.query_params.get('date_to')
-    search_query = request.query_params.get('search')
-    
-    # 1. Base query for Animals
-    animals_qs = Animal.objects.filter(
-        transferred_to_id__in=unit_ids, 
-        received_at__isnull=False
-    ).select_related('abbatoir').prefetch_related('products__transferred_to')
-    
-    # 2. Base query for SlaughterParts
-    parts_qs = SlaughterPart.objects.filter(
-        transferred_to_id__in=unit_ids, 
-        received_by__isnull=False
-    ).select_related('animal', 'received_by').prefetch_related('products__transferred_to')
-
-    # Apply filters
-    if species_filter:
-        animals_qs = animals_qs.filter(species=species_filter)
-        parts_qs = parts_qs.filter(animal__species=species_filter)
-        
-    if date_from:
-        animals_qs = animals_qs.filter(received_at__gte=date_from)
-        parts_qs = parts_qs.filter(received_at__gte=date_from)
-        
-    if date_to:
-        animals_qs = animals_qs.filter(received_at__lte=date_to)
-        parts_qs = parts_qs.filter(received_at__lte=date_to)
-        
-    if search_query:
-        from django.db.models import Q
-        animals_qs = animals_qs.filter(Q(animal_id__icontains=search_query) | Q(animal_name__icontains=search_query))
-        parts_qs = parts_qs.filter(Q(animal__animal_id__icontains=search_query) | Q(part_id__icontains=search_query))
-
-    report_data = []
-
-    # Helper function to enrich products with transfer details
-    def get_utilization_data(obj):
-        products = obj.products.all()
-        util_list = []
-        for p in products:
-            util_list.append({
-                'id': p.id,
-                'name': p.name,
-                'batch_number': p.batch_number,
-                'weight': float(p.weight),
-                'weight_unit': p.weight_unit,
-                'quantity': float(p.quantity),
-                'created_at': p.created_at,
-                'transferred_to': p.transferred_to.name if p.transferred_to else None,
-                'transferred_at': p.transferred_at if p.transferred_at else None,
-                'qr_code': p.qr_code,
-            })
-        return util_list
-
-    # Process Animals
-    for a in animals_qs.order_by('-received_at')[:50]:
-        initial_weight = float(a.live_weight) if a.live_weight else 0.0
-        remaining_weight = float(a.remaining_weight) if a.remaining_weight is not None else initial_weight
-        
-        report_data.append({
-            'type': 'animal',
-            'id': a.id,
-            'item_id': a.animal_id,
-            'name': a.animal_name or f"{a.species.title()} ({a.animal_id})",
-            'species': a.species,
-            'received_at': a.received_at,
-            'initial_weight': initial_weight,
-            'remaining_weight': remaining_weight,
-            'processed_weight': max(0, initial_weight - remaining_weight),
-            'utilization_rate': ((initial_weight - remaining_weight) / initial_weight * 100) if initial_weight > 0 else 0,
-            'utilization_history': get_utilization_data(a),
-            'origin': a.abbatoir_name or (a.abbatoir.username if a.abbatoir else "Unknown"),
-        })
-
-    # Process SlaughterParts
-    for p in parts_qs.order_by('-received_at')[:50]:
-        initial_weight = float(p.weight)
-        remaining_weight = float(p.remaining_weight) if p.remaining_weight is not None else initial_weight
-        
-        report_data.append({
-            'type': 'slaughter_part',
-            'id': p.id,
-            'item_id': p.part_id or f"PART-{p.id}",
-            'animal_id': p.animal.animal_id if p.animal else "Unknown",
-            'name': f"{p.get_part_type_display()} from {p.animal.animal_id if p.animal else 'Unknown'}",
-            'part_type': p.part_type,
-            'species': p.animal.species if p.animal else "Unknown",
-            'received_at': p.received_at,
-            'initial_weight': initial_weight,
-            'remaining_weight': remaining_weight,
-            'processed_weight': max(0, initial_weight - remaining_weight),
-            'utilization_rate': ((initial_weight - remaining_weight) / initial_weight * 100) if initial_weight > 0 else 0,
-            'utilization_history': get_utilization_data(p),
-            'origin': p.animal.abbatoir_name if p.animal else "Unknown",
-        })
-
-    # Sort everything by received_at descending
-    report_data.sort(key=lambda x: x['received_at'] if x['received_at'] else timezone.now(), reverse=True)
-
-    return Response(report_data)
-
-
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def appeal_rejection_view(request):
@@ -2723,37 +2333,9 @@ class ProcessingUnitViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
 
     def list(self, request):
-        """List processing units based on user permissions"""
+        """List all processing units"""
         try:
-            import logging
-            logger = logging.getLogger(__name__)
-            
-            user = request.user
-            
-            # Log query parameters for debugging
-            logger.info(f"[PROCESSING_UNIT_VIEWSET] Query params: {request.query_params}")
-            
-            # Check if requesting all processing units (for abbatoirs transferring animals)
-            show_all = request.query_params.get('all', 'false').lower() == 'true'
-            logger.info(f"[PROCESSING_UNIT_VIEWSET] show_all: {show_all}")
-            
-            if show_all:
-                # Return all processing units (for transfer selection)
-                queryset = ProcessingUnit.objects.all()
-            else:
-                # Return only processing units the user is a member of (default behavior)
-                user_processing_units = ProcessingUnitUser.objects.filter(
-                    user=user,
-                    is_active=True,
-                    is_suspended=False
-                ).values_list('processing_unit_id', flat=True)
-                
-                if user_processing_units:
-                    queryset = ProcessingUnit.objects.filter(id__in=user_processing_units)
-                else:
-                    # Users not in any processing unit see none
-                    queryset = ProcessingUnit.objects.none()
-            
+            queryset = ProcessingUnit.objects.all()
             serializer = ProcessingUnitSerializer(queryset, many=True)
             # Return paginated-style response for Flutter app compatibility
             return Response({
@@ -2765,31 +2347,6 @@ class ProcessingUnitViewSet(viewsets.ViewSet):
             logger = logging.getLogger(__name__)
             logger.error(f"[PROCESSING_UNIT_VIEWSET] Error listing processing units: {e}")
             return Response({'error': str(e)}, status=500)
-
-    def retrieve(self, request, pk=None):
-        """Retrieve a single processing unit"""
-        try:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.info(f"[PROCESSING_UNIT_VIEWSET] Retrieving processing unit {pk}")
-
-            # Get the processing unit
-            processing_unit = ProcessingUnit.objects.get(pk=pk)
-            serializer = ProcessingUnitSerializer(processing_unit)
-            return Response(serializer.data)
-        except ProcessingUnit.DoesNotExist:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.warning(f"[PROCESSING_UNIT_VIEWSET] Processing unit {pk} not found")
-            return Response(
-                {'error': 'Processing unit not found'},
-                status=status_module.HTTP_404_NOT_FOUND
-            )
-        except Exception as e:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.error(f"[PROCESSING_UNIT_VIEWSET] Error retrieving processing unit {pk}: {e}")
-            return Response({'error': str(e)}, status=status_module.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=True, methods=['get'], url_path='join-requests')
     def join_requests(self, request, pk=None):
@@ -2804,22 +2361,17 @@ class ProcessingUnitViewSet(viewsets.ViewSet):
                 processing_unit = ProcessingUnit.objects.get(pk=pk)
             except ProcessingUnit.DoesNotExist:
                 return Response(
-                    {'error': 'Processing unit not found'},
+                    {'error': 'Processing unit not found'}, 
                     status=status_module.HTTP_404_NOT_FOUND
                 )
             
-            # Filter join requests for this processing unit with user data
+            # Filter join requests for this processing unit
             join_requests = JoinRequest.objects.filter(
                 processing_unit=processing_unit
-            ).select_related('user').order_by('-created_at')
+            ).order_by('-created_at')
             
             serializer = JoinRequestSerializer(join_requests, many=True)
             logger.info(f"[PROCESSING_UNIT_VIEWSET] Found {len(join_requests)} join requests")
-            
-            # DEBUG: Log serialized data to verify username and email are included
-            if join_requests.exists():
-                logger.info(f"[PROCESSING_UNIT_VIEWSET] Sample join request data: {serializer.data[0]}")
-                logger.info(f"[PROCESSING_UNIT_VIEWSET] Fields in response: {serializer.data[0].keys()}")
             
             return Response(serializer.data)
         except Exception as e:
@@ -2832,161 +2384,14 @@ class ProcessingUnitViewSet(viewsets.ViewSet):
                 {'error': str(e)}, 
                 status=status_module.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    @action(detail=True, methods=['post'], url_path='join-request', permission_classes=[IsAuthenticated])
-    def create_join_request(self, request, pk=None):
-        """Create a join request for a specific processing unit"""
-        try:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.info(f"[PROCESSING_UNIT_VIEWSET] Creating join request for processing unit {pk}")
-            logger.info(f"[PROCESSING_UNIT_VIEWSET] User: {request.user.username}")
-            logger.info(f"[PROCESSING_UNIT_VIEWSET] Request data: {request.data}")
-            
-            # Check if processing unit exists
-            try:
-                processing_unit = ProcessingUnit.objects.get(pk=pk)
-            except ProcessingUnit.DoesNotExist:
-                return Response(
-                    {'error': 'Processing unit not found'}, 
-                    status=status_module.HTTP_404_NOT_FOUND
-                )
-            
-            # Check if user already has a pending request for this unit
-            existing_request = JoinRequest.objects.filter(
-                user=request.user,
-                processing_unit=processing_unit,
-                status='pending'
-            ).first()
-            
-            if existing_request:
-                logger.info(f"[PROCESSING_UNIT_VIEWSET] User already has pending request")
-                return Response(
-                    {'error': 'You already have a pending join request for this processing unit'},
-                    status=status_module.HTTP_400_BAD_REQUEST
-                )
-            
-            # Check if user is already a member
-            existing_membership = ProcessingUnitUser.objects.filter(
-                user=request.user,
-                processing_unit=processing_unit,
-                is_active=True
-            ).first()
-            
-            if existing_membership:
-                logger.info(f"[PROCESSING_UNIT_VIEWSET] User is already a member")
-                return Response(
-                    {'error': 'You are already a member of this processing unit'},
-                    status=status_module.HTTP_400_BAD_REQUEST
-                )
-            
-            # Create the join request
-            from datetime import timedelta
-            join_request = JoinRequest.objects.create(
-                user=request.user,
-                processing_unit=processing_unit,
-                request_type='processing_unit',
-                requested_role=request.data.get('requested_role', 'worker'),
-                message=request.data.get('message', ''),
-                qualifications=request.data.get('qualifications', ''),
-                status='pending',
-                expires_at=timezone.now() + timedelta(days=30)  # Request expires in 30 days
-            )
-            
-            logger.info(f"[PROCESSING_UNIT_VIEWSET] Join request created with ID: {join_request.id}")
-            
-            # Send notification to processing unit owner/managers
-            try:
-                # Get all owners and managers of the processing unit
-                owners_and_managers = ProcessingUnitUser.objects.filter(
-                    processing_unit=processing_unit,
-                    role__in=['owner', 'manager'],
-                    is_active=True,
-                    is_suspended=False
-                ).select_related('user')
-                
-                for member in owners_and_managers:
-                    Notification.objects.create(
-                        user=member.user,
-                        notification_type='join_request',
-                        title=f'New Join Request for {processing_unit.name}',
-                        message=f'{request.user.username} has requested to join as {join_request.requested_role}',
-                        priority='high',
-                        action_type='approve',
-                        data={
-                            'join_request_id': join_request.id,
-                            'requester_username': request.user.username,
-                            'requested_role': join_request.requested_role,
-                            'processing_unit_id': processing_unit.id,
-                            'processing_unit_name': processing_unit.name,
-                        }
-                    )
-                logger.info(f"[PROCESSING_UNIT_VIEWSET] Sent notifications to {owners_and_managers.count()} owners/managers")
-            except Exception as notif_error:
-                logger.error(f"[PROCESSING_UNIT_VIEWSET] Error sending notifications: {notif_error}")
-            
-            serializer = JoinRequestSerializer(join_request)
-            return Response(serializer.data, status=status_module.HTTP_201_CREATED)
-            
-        except Exception as e:
-            import logging
-            import traceback
-            logger = logging.getLogger(__name__)
-            logger.error(f"[PROCESSING_UNIT_VIEWSET] Error creating join request: {e}")
-            logger.error(traceback.format_exc())
-            return Response(
-                {'error': str(e)}, 
-                status=status_module.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
 
     @action(detail=True, methods=['get'])
     def users(self, request, pk=None):
-        """Get all members of a processing unit with full details"""
         try:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.info(f"[PROCESSING_UNIT_USERS] Fetching users for processing unit {pk}")
-            
-            # Get all ProcessingUnitUser memberships for this unit
-            members = ProcessingUnitUser.objects.filter(
-                processing_unit_id=pk
-            ).select_related('user', 'invited_by').order_by('-joined_at', '-invited_at')
-            
-            logger.info(f"[PROCESSING_UNIT_USERS] Found {members.count()} members")
-            
-            # Serialize member data with all necessary fields
-            members_data = []
-            for member in members:
-                member_dict = {
-                    'id': member.id,
-                    'user_id': member.user.id,
-                    'username': member.user.username,
-                    'email': member.user.email,
-                    'processing_unit_id': pk,
-                    'processing_unit_name': member.processing_unit.name if member.processing_unit else None,
-                    'role': member.role,
-                    'permissions': member.permissions,
-                    'is_active': member.is_active,
-                    'is_suspended': member.is_suspended,
-                    'suspension_reason': member.suspension_reason,
-                    'invited_by_id': member.invited_by.id if member.invited_by else None,
-                    'invited_by_username': member.invited_by.username if member.invited_by else None,
-                    'invited_at': member.invited_at.isoformat() if member.invited_at else None,
-                    'joined_at': member.joined_at.isoformat() if member.joined_at else None,
-                    'last_active': member.last_active.isoformat() if member.last_active else None,
-                }
-                members_data.append(member_dict)
-                logger.info(f"[PROCESSING_UNIT_USERS] Member: {member.user.username} (role={member.role}, userId={member.user.id})")
-            
-            logger.info(f"[PROCESSING_UNIT_USERS] Returning {len(members_data)} members")
-            return Response(members_data)
-        except Exception as e:
-            import logging
-            import traceback
-            logger = logging.getLogger(__name__)
-            logger.error(f"[PROCESSING_UNIT_USERS] Error fetching users: {e}")
-            logger.error(traceback.format_exc())
-            return Response({'error': str(e)}, status=status_module.HTTP_500_INTERNAL_SERVER_ERROR)
+            users = ProcessingUnitUser.objects.filter(processing_unit_id=pk).values('id', 'user__username')
+            return Response({'users': list(users)})
+        except Exception:
+            return Response({'users': []})
 
 
 class CarcassMeasurementViewSet(viewsets.ModelViewSet):
@@ -3065,13 +2470,14 @@ class CarcassMeasurementViewSet(viewsets.ModelViewSet):
         
         try:
             profile = user.profile
+            role = normalize_role(profile.role)
             
             # Admin can see all measurements
-            if profile.role == 'Admin':
+            if role == ROLE_ADMIN:
                 return CarcassMeasurement.objects.all()
             
             # Processor can see measurements for animals in their processing unit
-            elif profile.role == 'Processor':
+            elif role == ROLE_PROCESSOR:
                 if profile.processing_unit:
                     # Get animals that belong to the processor's unit
                     from .models import Product
@@ -3082,11 +2488,11 @@ class CarcassMeasurementViewSet(viewsets.ModelViewSet):
                 return CarcassMeasurement.objects.none()
             
             # Abbatoir can see measurements for their own animals
-            elif profile.role == 'Abbatoir':
+            elif role == ROLE_ABBATOIR:
                 return CarcassMeasurement.objects.filter(animal__abbatoir=user)
             
             # Shop owners can see measurements for animals they've purchased
-            elif profile.role == 'ShopOwner':
+            elif role == ROLE_SHOPOWNER:
                 if profile.shop:
                     # Get products bought by this shop
                     from .models import Product
@@ -3212,18 +2618,18 @@ class UserProfileViewSet(viewsets.ModelViewSet):
     """ViewSet for managing user profiles"""
     serializer_class = UserProfileSerializer
     permission_classes = [IsAuthenticated]
-
+    
     def get_queryset(self):
         """Filter profiles based on user permissions"""
         user = self.request.user
-
+        
         try:
             profile = user.profile
-
+            
             # Admin can see all profiles
             if profile.role == 'Admin':
                 return UserProfile.objects.all()
-
+            
             # Processor can see profiles in their processing unit
             elif profile.role == 'Processor':
                 if profile.processing_unit:
@@ -3232,7 +2638,7 @@ class UserProfileViewSet(viewsets.ModelViewSet):
                     ).values_list('user_id', flat=True)
                     return UserProfile.objects.filter(user_id__in=unit_user_ids)
                 return UserProfile.objects.filter(user=user)
-
+            
             # Shop owners can see profiles in their shop
             elif profile.role == 'ShopOwner':
                 if profile.shop:
@@ -3241,132 +2647,12 @@ class UserProfileViewSet(viewsets.ModelViewSet):
                     ).values_list('user_id', flat=True)
                     return UserProfile.objects.filter(user_id__in=shop_user_ids)
                 return UserProfile.objects.filter(user=user)
-
+            
             # Others can only see their own profile
             return UserProfile.objects.filter(user=user)
-
+            
         except UserProfile.DoesNotExist:
             return UserProfile.objects.filter(user=user)
-
-    def list(self, request, *args, **kwargs):
-        """Return the current user's profile as a single object (not wrapped in array)"""
-        import logging
-        logger = logging.getLogger(__name__)
-
-        logger.info("=" * 80)
-        logger.info(f"[PROFILE_LIST] User: {request.user.username} (ID: {request.user.id})")
-
-        try:
-            # Get the user's profile directly
-            profile = UserProfile.objects.select_related('processing_unit', 'shop').get(user=request.user)
-            logger.info(f"[PROFILE_LIST] Found profile ID: {profile.id}")
-            logger.info(f"[PROFILE_LIST] Profile role: {profile.role}")
-
-            # Serialize the profile data manually to ensure it's returned as a single object
-            serializer = self.get_serializer(profile)
-            logger.info(f"[PROFILE_LIST] Serializer data type: {type(serializer.data)}")
-            logger.info(f"[PROFILE_LIST] Serializer data: {serializer.data}")
-
-            # CRITICAL: Return the data directly without any list wrapping
-            # The frontend expects: {id: 9, user_username: "aaa", ...}
-            # NOT: [{id: 9, user_username: "aaa", ...}]
-            response_data = serializer.data
-            logger.info(f"[PROFILE_LIST] Response data type: {type(response_data)}")
-            logger.info(f"[PROFILE_LIST] Response data: {response_data}")
-            logger.info("=" * 80)
-
-            return Response(response_data, status=status_module.HTTP_200_OK)
-
-        except UserProfile.DoesNotExist:
-            logger.error(f"[PROFILE_LIST] Profile not found for user {request.user.username}")
-            logger.info("=" * 80)
-            return Response(
-                {'error': 'User profile not found'},
-                status=status_module.HTTP_404_NOT_FOUND
-            )
-        except Exception as e:
-            logger.error(f"[PROFILE_LIST] Unexpected error: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            logger.info("=" * 80)
-            raise
-
-    def destroy(self, request, *args, **kwargs):
-        """Delete the current user's account and all associated data"""
-        import logging
-        logger = logging.getLogger(__name__)
-
-        logger.info("=" * 80)
-        logger.info(f"[PROFILE_DELETE] User: {request.user.username} (ID: {request.user.id})")
-
-        try:
-            # Only allow users to delete their own account
-            if request.user.id != int(kwargs.get('pk')):
-                logger.warning(f"[PROFILE_DELETE] User {request.user.username} tried to delete user {kwargs.get('pk')}")
-                return Response(
-                    {'error': 'You can only delete your own account'},
-                    status=status_module.HTTP_403_FORBIDDEN
-                )
-
-            user = request.user
-            profile = user.profile
-
-            # Start transaction to ensure all related data is deleted
-            with transaction.atomic():
-                # Delete related data in proper order
-
-                # 1. Delete join requests
-                join_requests_deleted = JoinRequest.objects.filter(user=user).delete()[0]
-                logger.info(f"[PROFILE_DELETE] Deleted {join_requests_deleted} join requests")
-
-                # 2. Delete processing unit memberships
-                pu_memberships_deleted = ProcessingUnitUser.objects.filter(user=user).delete()[0]
-                logger.info(f"[PROFILE_DELETE] Deleted {pu_memberships_deleted} processing unit memberships")
-
-                # 3. Delete shop memberships
-                shop_memberships_deleted = ShopUser.objects.filter(user=user).delete()[0]
-                logger.info(f"[PROFILE_DELETE] Deleted {shop_memberships_deleted} shop memberships")
-
-                # 4. Delete notifications
-                notifications_deleted = Notification.objects.filter(user=user).delete()[0]
-                logger.info(f"[PROFILE_DELETE] Deleted {notifications_deleted} notifications")
-
-                # 5. Delete activities
-                activities_deleted = Activity.objects.filter(user=user).delete()[0]
-                logger.info(f"[PROFILE_DELETE] Deleted {activities_deleted} activities")
-
-                # 6. Delete user audit logs
-                audit_logs_deleted = UserAuditLog.objects.filter(user=user).delete()[0]
-                logger.info(f"[PROFILE_DELETE] Deleted {audit_logs_deleted} audit logs")
-
-                # 7. Delete profile (this will cascade to related data)
-                profile.delete()
-                logger.info(f"[PROFILE_DELETE] Deleted user profile")
-
-                # 8. Finally delete the user account
-                user.delete()
-                logger.info(f"[PROFILE_DELETE] Deleted user account {user.username}")
-
-            logger.info("=" * 80)
-            return Response(
-                {'message': 'Account successfully deleted'},
-                status=status_module.HTTP_204_NO_CONTENT
-            )
-
-        except UserProfile.DoesNotExist:
-            logger.error(f"[PROFILE_DELETE] Profile not found for user {request.user.username}")
-            return Response(
-                {'error': 'User profile not found'},
-                status=status_module.HTTP_404_NOT_FOUND
-            )
-        except Exception as e:
-            logger.error(f"[PROFILE_DELETE] Error deleting account: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return Response(
-                {'error': 'Failed to delete account'},
-                status=status_module.HTTP_500_INTERNAL_SERVER_ERROR
-            )
 
 
 class JoinRequestViewSet(viewsets.ModelViewSet):
@@ -3385,42 +2671,19 @@ class JoinRequestViewSet(viewsets.ModelViewSet):
             if profile.role == 'Admin':
                 return JoinRequest.objects.all().order_by('-created_at')
             
-            # Processor can see requests for all processing units they manage
+            # Processor can see requests for their processing unit
             elif profile.role == 'Processor':
-                # Get all processing units where user is owner/manager
-                user_pu_ids = ProcessingUnitUser.objects.filter(
-                    user=user,
-                    is_active=True,
-                    is_suspended=False,
-                    role__in=['owner', 'manager']
-                ).values_list('processing_unit_id', flat=True)
-                
-                # Also include the profile's processing_unit if set
                 if profile.processing_unit:
-                    user_pu_ids = list(user_pu_ids) + [profile.processing_unit.id]
-                
-                if user_pu_ids:
                     return JoinRequest.objects.filter(
-                        processing_unit_id__in=user_pu_ids
+                        processing_unit=profile.processing_unit
                     ).order_by('-created_at')
                 return JoinRequest.objects.filter(user=user).order_by('-created_at')
             
-            # Shop owners can see requests for all shops they manage
+            # Shop owners can see requests for their shop
             elif profile.role == 'ShopOwner':
-                # Get all shops where user is owner/manager
-                user_shop_ids = ShopUser.objects.filter(
-                    user=user,
-                    is_active=True,
-                    role__in=['owner', 'manager']
-                ).values_list('shop_id', flat=True)
-                
-                # Also include the profile's shop if set
                 if profile.shop:
-                    user_shop_ids = list(user_shop_ids) + [profile.shop.id]
-                
-                if user_shop_ids:
                     return JoinRequest.objects.filter(
-                        shop_id__in=user_shop_ids
+                        shop=profile.shop
                     ).order_by('-created_at')
                 return JoinRequest.objects.filter(user=user).order_by('-created_at')
             
@@ -3429,315 +2692,73 @@ class JoinRequestViewSet(viewsets.ModelViewSet):
             
         except UserProfile.DoesNotExist:
             return JoinRequest.objects.filter(user=user).order_by('-created_at')
-    
-    def partial_update(self, request, *args, **kwargs):
-        """Handle join request approval/rejection with proper membership creation"""
-        import logging
-        logger = logging.getLogger(__name__)
 
-        logger.info("=" * 80)
-        logger.info(f"[JOIN_REQUEST_UPDATE] STARTING partial_update")
-        logger.info(f"[JOIN_REQUEST_UPDATE] Request user: {request.user.username} (ID: {request.user.id})")
-        logger.info(f"[JOIN_REQUEST_UPDATE] Request method: {request.method}")
-        logger.info(f"[JOIN_REQUEST_UPDATE] Request data: {request.data}")
-        logger.info(f"[JOIN_REQUEST_UPDATE] URL kwargs: {kwargs}")
+    def perform_update(self, serializer):
+        """Handle request status changes, especially approvals"""
+        instance = serializer.instance
+        old_status = instance.status
+        new_instance = serializer.save()
+        new_status = new_instance.status
+        
+        # Check if the status changed to approved
+        if old_status != 'approved' and new_status == 'approved':
+            self._handle_approval(new_instance)
 
-        try:
-            join_request = self.get_object()
-            new_status = request.data.get('status')
-            response_message = request.data.get('response_message', '')
-
-            logger.info(f"[JOIN_REQUEST_UPDATE] Processing join request {join_request.id}")
-            logger.info(f"[JOIN_REQUEST_UPDATE] Current status: {join_request.status}")
-            logger.info(f"[JOIN_REQUEST_UPDATE] New status: {new_status}")
-            logger.info(f"[JOIN_REQUEST_UPDATE] Join request user: {join_request.user.username}")
-            logger.info(f"[JOIN_REQUEST_UPDATE] Join request type: {join_request.request_type}")
-            logger.info(f"[JOIN_REQUEST_UPDATE] Processing unit: {join_request.processing_unit}")
-            logger.info(f"[JOIN_REQUEST_UPDATE] Shop: {join_request.shop}")
-
-            # Check if request is already processed
-            if join_request.status != 'pending':
-                logger.warning(f"[JOIN_REQUEST_UPDATE] Join request {join_request.id} is already {join_request.status}, not pending")
-                return Response(
-                    {'error': f'Join request is already {join_request.status}'},
-                    status=status_module.HTTP_400_BAD_REQUEST
-                )
-            
-            # Check if request has expired
-            if join_request.expires_at and join_request.expires_at < timezone.now():
-                # Auto-update status to expired
-                join_request.status = 'expired'
-                join_request.save()
-                logger.warning(f"[JOIN_REQUEST_UPDATE] Join request {join_request.id} has expired")
-                return Response(
-                    {'error': 'Join request has expired and cannot be approved or rejected'},
-                    status=status_module.HTTP_400_BAD_REQUEST
-                )
-            
-            # Validate status change
-            if new_status not in ['approved', 'rejected']:
-                return Response(
-                    {'error': 'Status must be either "approved" or "rejected"'},
-                    status=status_module.HTTP_400_BAD_REQUEST
-                )
-            
-            # Check permissions - only owners/managers can approve/reject
-            user = request.user
-            can_manage = False
-
-            logger.info(f"[JOIN_REQUEST_UPDATE] Checking permissions for user {user.username} (ID: {user.id})")
-
-            if join_request.processing_unit:
-                # Check if user is owner/manager of the processing unit
-                logger.info(f"[JOIN_REQUEST_UPDATE] Checking processing unit membership for unit {join_request.processing_unit.name}")
-                pu_membership = ProcessingUnitUser.objects.filter(
-                    user=user,
-                    processing_unit=join_request.processing_unit,
-                    is_active=True,
-                    is_suspended=False
-                ).first()
-
-                if pu_membership:
-                    logger.info(f"[JOIN_REQUEST_UPDATE] Found PU membership: role={pu_membership.role}, permissions={pu_membership.permissions}")
-                    can_manage = pu_membership.role in ['owner', 'manager']
-                    logger.info(f"[JOIN_REQUEST_UPDATE] can_manage={can_manage} (role check: {pu_membership.role} in ['owner', 'manager'])")
-                else:
-                    logger.warning(f"[JOIN_REQUEST_UPDATE] No active PU membership found for user {user.username}")
-                    # List all memberships for debugging
-                    all_memberships = ProcessingUnitUser.objects.filter(user=user)
-                    logger.info(f"[JOIN_REQUEST_UPDATE] All PU memberships for user: {[(m.processing_unit.name, m.role, m.is_active, m.is_suspended) for m in all_memberships]}")
-                    can_manage = False
-            elif join_request.shop:
-                # Check if user is owner/manager of the shop
-                logger.info(f"[JOIN_REQUEST_UPDATE] Checking shop membership for shop {join_request.shop.name}")
-                shop_membership = ShopUser.objects.filter(
-                    user=user,
-                    shop=join_request.shop,
-                    is_active=True
-                ).first()
-
-                if shop_membership:
-                    logger.info(f"[JOIN_REQUEST_UPDATE] Found shop membership: role={shop_membership.role}, permissions={shop_membership.permissions}")
-                    can_manage = shop_membership.role in ['owner', 'manager']
-                    logger.info(f"[JOIN_REQUEST_UPDATE] can_manage={can_manage} (role check: {shop_membership.role} in ['owner', 'manager'])")
-                else:
-                    logger.warning(f"[JOIN_REQUEST_UPDATE] No active shop membership found for user {user.username}")
-                    can_manage = False
-
-            logger.info(f"[JOIN_REQUEST_UPDATE] Final can_manage result: {can_manage}, user.is_staff: {user.is_staff}")
-
-            if not can_manage and not user.is_staff:
-                logger.warning(f"[JOIN_REQUEST_UPDATE] User {user.username} lacks permission to review request")
-                return Response(
-                    {'error': 'You do not have permission to review this join request'},
-                    status=status_module.HTTP_403_FORBIDDEN
-                )
-            
-            # Update join request
-            join_request.status = new_status
-            join_request.reviewed_by = user
-            join_request.reviewed_at = timezone.now()
-            join_request.response_message = response_message
-            join_request.save()
-            
-            logger.info(f"[JOIN_REQUEST_UPDATE] Join request updated to status: {new_status}")
-            
-            # If approved, create membership
-            if new_status == 'approved':
-                if join_request.processing_unit:
-                    # Deactivate previous processing unit memberships for this user
-                    # (User should only be active in one processing unit at a time based on profile)
-                    previous_memberships = ProcessingUnitUser.objects.filter(
-                        user=join_request.user,
-                        is_active=True
-                    ).exclude(processing_unit=join_request.processing_unit)
-                    
-                    deactivated_count = previous_memberships.update(is_active=False)
-                    if deactivated_count > 0:
-                        logger.info(f"[JOIN_REQUEST_UPDATE] Deactivated {deactivated_count} previous ProcessingUnitUser memberships")
-                    
-                    # Create ProcessingUnitUser membership
-                    membership, created = ProcessingUnitUser.objects.get_or_create(
-                        user=join_request.user,
-                        processing_unit=join_request.processing_unit,
-                        defaults={
-                            'role': join_request.requested_role,
-                            'permissions': 'write',  # Default permission
-                            'is_active': True,
-                            'is_suspended': False,
-                            'invited_by': user,
-                            'invited_at': join_request.created_at,
-                            'joined_at': timezone.now()
-                        }
-                    )
-                    
-                    if created:
-                        logger.info(f"[JOIN_REQUEST_UPDATE] Created ProcessingUnitUser membership ID {membership.id}")
-                        
-                        # Update user profile
-                        try:
-                            profile = join_request.user.profile
-                            # Always update profile's processing_unit to the new one
-                            profile.processing_unit = join_request.processing_unit
-                            profile.save()
-                            logger.info(f"[JOIN_REQUEST_UPDATE] Updated user profile with processing unit")
-                        except UserProfile.DoesNotExist:
-                            logger.warning(f"[JOIN_REQUEST_UPDATE] User profile not found")
-                    else:
-                        logger.info(f"[JOIN_REQUEST_UPDATE] Membership already exists, reactivating")
-                        membership.is_active = True
-                        membership.is_suspended = False
-                        membership.joined_at = timezone.now()
-                        membership.save()
-                
-                elif join_request.shop:
-                    # Deactivate previous shop memberships for this user
-                    # (User should only be active in one shop at a time based on profile)
-                    previous_memberships = ShopUser.objects.filter(
-                        user=join_request.user,
-                        is_active=True
-                    ).exclude(shop=join_request.shop)
-                    
-                    deactivated_count = previous_memberships.update(is_active=False)
-                    if deactivated_count > 0:
-                        logger.info(f"[JOIN_REQUEST_UPDATE] Deactivated {deactivated_count} previous ShopUser memberships")
-                    
-                    # Create ShopUser membership
-                    membership, created = ShopUser.objects.get_or_create(
-                        user=join_request.user,
-                        shop=join_request.shop,
-                        defaults={
-                            'role': join_request.requested_role,
-                            'permissions': 'write',  # Default permission
-                            'is_active': True,
-                            'invited_by': user,
-                            'invited_at': join_request.created_at,
-                            'joined_at': timezone.now()
-                        }
-                    )
-                    
-                    if created:
-                        logger.info(f"[JOIN_REQUEST_UPDATE] Created ShopUser membership ID {membership.id}")
-                        
-                        # Update user profile
-                        try:
-                            profile = join_request.user.profile
-                            # Always update profile's shop to the new one
-                            profile.shop = join_request.shop
-                            profile.save()
-                            logger.info(f"[JOIN_REQUEST_UPDATE] Updated user profile with shop")
-                        except UserProfile.DoesNotExist:
-                            logger.warning(f"[JOIN_REQUEST_UPDATE] User profile not found")
-                    else:
-                        logger.info(f"[JOIN_REQUEST_UPDATE] Membership already exists, reactivating")
-                        membership.is_active = True
-                        membership.joined_at = timezone.now()
-                        membership.save()
-                
-                # Send approval notification to requester
-                try:
-                    entity_name = join_request.processing_unit.name if join_request.processing_unit else join_request.shop.name
-                    Notification.objects.create(
-                        user=join_request.user,
-                        notification_type='join_approved',
-                        title=f'Join Request Approved',
-                        message=f'Your request to join {entity_name} has been approved!',
-                        priority='high',
-                        data={
-                            'join_request_id': join_request.id,
-                            'entity_name': entity_name,
-                            'role': join_request.requested_role,
-                            'response_message': response_message
-                        }
-                    )
-                    logger.info(f"[JOIN_REQUEST_UPDATE] Sent approval notification to {join_request.user.username}")
-                except Exception as notif_error:
-                    logger.error(f"[JOIN_REQUEST_UPDATE] Error sending notification: {notif_error}")
-            
-            elif new_status == 'rejected':
-                # Send rejection notification to requester
-                try:
-                    entity_name = join_request.processing_unit.name if join_request.processing_unit else join_request.shop.name
-                    Notification.objects.create(
-                        user=join_request.user,
-                        notification_type='join_rejected',
-                        title=f'Join Request Rejected',
-                        message=f'Your request to join {entity_name} has been rejected.',
-                        priority='medium',
-                        data={
-                            'join_request_id': join_request.id,
-                            'entity_name': entity_name,
-                            'response_message': response_message
-                        }
-                    )
-                    logger.info(f"[JOIN_REQUEST_UPDATE] Sent rejection notification to {join_request.user.username}")
-                except Exception as notif_error:
-                    logger.error(f"[JOIN_REQUEST_UPDATE] Error sending notification: {notif_error}")
-            
-            # Return updated join request
-            serializer = self.get_serializer(join_request)
-            return Response(serializer.data)
-            
-        except Exception as e:
-            logger.error(f"[JOIN_REQUEST_UPDATE] Error updating join request: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return Response(
-                {'error': str(e)},
-                status=status_module.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
-    def destroy(self, request, *args, **kwargs):
-        """Allow users to cancel their own pending or rejected join requests"""
+    def _handle_approval(self, join_request):
+        """Handle the side effects of approving a join request"""
+        from .models import ProcessingUnitUser, ShopUser, UserProfile
+        from django.utils import timezone
         import logging
         logger = logging.getLogger(__name__)
         
-        logger.info("=" * 80)
-        logger.info(f"[JOIN_REQUEST_DELETE] User: {request.user.username} (ID: {request.user.id})")
-        logger.info(f"[JOIN_REQUEST_DELETE] Request ID: {kwargs.get('pk')}")
+        user = join_request.user
         
-        try:
-            join_request = self.get_object()
-            
-            # Only allow deletion of own requests
-            if join_request.user != request.user:
-                logger.warning(f"[JOIN_REQUEST_DELETE] User {request.user.username} tried to delete request of {join_request.user.username}")
-                return Response(
-                    {'error': 'You can only cancel your own join requests'},
-                    status=status_module.HTTP_403_FORBIDDEN
-                )
-            
-            # Only allow deletion of pending or rejected requests
-            if join_request.status not in ['pending', 'rejected']:
-                logger.warning(f"[JOIN_REQUEST_DELETE] Attempted to delete {join_request.status} request")
-                return Response(
-                    {'error': f'Cannot cancel {join_request.status} requests. Only pending or rejected requests can be cancelled.'},
-                    status=status_module.HTTP_400_BAD_REQUEST
-                )
-            
-            # Log the deletion details
-            entity_name = join_request.processing_unit.name if join_request.processing_unit else join_request.shop.name
-            logger.info(f"[JOIN_REQUEST_DELETE] Deleting {join_request.status} request to {entity_name}")
-            
-            # Delete the join request
-            join_request.delete()
-            logger.info(f"[JOIN_REQUEST_DELETE] Successfully deleted join request")
-            logger.info("=" * 80)
-            
-            return Response(
-                {'message': 'Join request cancelled successfully'},
-                status=status_module.HTTP_204_NO_CONTENT
+        # 1. Update/Create UserProfile
+        profile, created = UserProfile.objects.get_or_create(user=user)
+        
+        if join_request.request_type == 'processing_unit':
+            # Create ProcessingUnitUser membership
+            requested_role = join_request.requested_role.lower()
+            # Valid roles: ['owner', 'manager', 'supervisor', 'worker', 'quality_control']
+            if requested_role not in ['owner', 'manager', 'supervisor', 'worker', 'quality_control']:
+                requested_role = 'worker'
+                
+            ProcessingUnitUser.objects.get_or_create(
+                user=user,
+                processing_unit=join_request.processing_unit,
+                defaults={
+                    'role': requested_role,
+                    'permissions': 'write',
+                    'joined_at': timezone.now()
+                }
             )
+            # Update profile
+            profile.processing_unit = join_request.processing_unit
+            profile.role = 'Processor'
+            profile.save()
+            logger.info(f"Γ£à Approved JoinRequest: User {user.username} joined ProcessingUnit {join_request.processing_unit.name}")
             
-        except Exception as e:
-            logger.error(f"[JOIN_REQUEST_DELETE] Error deleting join request: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            logger.info("=" * 80)
-            return Response(
-                {'error': str(e)},
-                status=status_module.HTTP_500_INTERNAL_SERVER_ERROR
+        elif join_request.request_type == 'shop':
+            # Create ShopUser membership
+            requested_role = join_request.requested_role.lower()
+            # Valid roles: ['owner', 'manager', 'salesperson', 'cashier', 'inventory_clerk']
+            if requested_role not in ['owner', 'manager', 'salesperson', 'cashier', 'inventory_clerk']:
+                requested_role = 'salesperson'
+                
+            ShopUser.objects.get_or_create(
+                user=user,
+                shop=join_request.shop,
+                defaults={
+                    'role': requested_role,
+                    'permissions': 'write',
+                    'joined_at': timezone.now()
+                }
             )
+            # Update profile
+            profile.shop = join_request.shop
+            profile.role = 'ShopOwner'
+            profile.save()
+            logger.info(f"Γ£à Approved JoinRequest: User {user.username} joined Shop {join_request.shop.name}")
 
 
 class ShopViewSet(viewsets.ModelViewSet):
@@ -3814,6 +2835,7 @@ class ShopViewSet(viewsets.ModelViewSet):
                 is_active=True
             )
             logger.info(f"[SHOP_VIEWSET] Created Shop ID {shop.id}")
+            
             # Create ShopUser membership for owner
             shop_user = ShopUser.objects.create(
                 user=user,
@@ -3832,17 +2854,13 @@ class ShopViewSet(viewsets.ModelViewSet):
             profile.role = 'ShopOwner'
             profile.save()
             logger.info(f"[SHOP_VIEWSET] Updated user profile with Shop ID {shop.id}")
-
-            # Grant staff status to shop owner
-            user.is_staff = True
-            user.save()
-            logger.info(f"[SHOP_VIEWSET] Granted staff status to user {user.username}")
             
             # Return shop data
             serializer = self.get_serializer(shop)
             return Response(serializer.data, status=status_module.HTTP_201_CREATED)
             
         except Exception as e:
+            import logging
             import traceback
             logger = logging.getLogger(__name__)
             logger.error(f"[SHOP_VIEWSET] Error creating shop: {e}")
@@ -3859,46 +2877,32 @@ class ShopViewSet(viewsets.ModelViewSet):
             import logging
             logger = logging.getLogger(__name__)
             logger.info(f"[SHOP_VIEWSET] Fetching join requests for shop {pk}")
-
+            
             # Check if shop exists
             try:
                 shop = Shop.objects.get(pk=pk)
             except Shop.DoesNotExist:
                 return Response(
-                    {'error': 'Shop not found'},
+                    {'error': 'Shop not found'}, 
                     status=status_module.HTTP_404_NOT_FOUND
                 )
-
+            
             # Only allow shop owners/managers to view join requests
             user = request.user
-            logger.info(f"[SHOP_VIEWSET] User: {user.username if user.is_authenticated else 'Anonymous'}")
-            logger.info(f"[SHOP_VIEWSET] User authenticated: {user.is_authenticated}")
-
             if user.is_authenticated:
                 try:
                     # Check if user is owner or member of this shop
                     from .models import ShopUser
-                    shop_membership = ShopUser.objects.filter(
+                    is_shop_member = ShopUser.objects.filter(
                         user=user,
                         shop=shop,
                         is_active=True
-                    ).first()
-
-                    is_shop_member = shop_membership is not None
-                    logger.info(f"[SHOP_VIEWSET] ShopUser membership exists: {is_shop_member}")
-                    if shop_membership:
-                        logger.info(f"[SHOP_VIEWSET] ShopUser role: {shop_membership.role}, permissions: {shop_membership.permissions}")
-
+                    ).exists()
+                    
                     # Or check if user's profile is linked to this shop
                     is_shop_owner = hasattr(user, 'profile') and user.profile.shop_id == shop.id
-                    logger.info(f"[SHOP_VIEWSET] Profile shop owner check: {is_shop_owner}")
-                    if hasattr(user, 'profile'):
-                        logger.info(f"[SHOP_VIEWSET] User profile role: {user.profile.role}")
-
-                    logger.info(f"[SHOP_VIEWSET] User is staff: {user.is_staff}")
-
+                    
                     if not (is_shop_member or is_shop_owner or user.is_staff):
-                        logger.warning(f"[SHOP_VIEWSET] Access denied for user {user.username} to shop {shop.name} join requests")
                         return Response(
                             {'error': 'You do not have permission to view join requests for this shop'},
                             status=status_module.HTTP_403_FORBIDDEN
@@ -3933,46 +2937,32 @@ class ShopViewSet(viewsets.ModelViewSet):
             import logging
             logger = logging.getLogger(__name__)
             logger.info(f"[SHOP_VIEWSET] Fetching members for shop {pk}")
-
+            
             # Check if shop exists
             try:
                 shop = Shop.objects.get(pk=pk)
             except Shop.DoesNotExist:
                 return Response(
-                    {'error': 'Shop not found'},
+                    {'error': 'Shop not found'}, 
                     status=status_module.HTTP_404_NOT_FOUND
                 )
-
+            
             # Only allow shop owners/managers to view members
             user = request.user
-            logger.info(f"[SHOP_VIEWSET] User: {user.username if user.is_authenticated else 'Anonymous'}")
-            logger.info(f"[SHOP_VIEWSET] User authenticated: {user.is_authenticated}")
-
             if user.is_authenticated:
                 try:
                     # Check if user is owner or member of this shop
                     from .models import ShopUser
-                    shop_membership = ShopUser.objects.filter(
+                    is_shop_member = ShopUser.objects.filter(
                         user=user,
                         shop=shop,
                         is_active=True
-                    ).first()
-
-                    is_shop_member = shop_membership is not None
-                    logger.info(f"[SHOP_VIEWSET] ShopUser membership exists: {is_shop_member}")
-                    if shop_membership:
-                        logger.info(f"[SHOP_VIEWSET] ShopUser role: {shop_membership.role}, permissions: {shop_membership.permissions}")
-
+                    ).exists()
+                    
                     # Or check if user's profile is linked to this shop
                     is_shop_owner = hasattr(user, 'profile') and user.profile.shop_id == shop.id
-                    logger.info(f"[SHOP_VIEWSET] Profile shop owner check: {is_shop_owner}")
-                    if hasattr(user, 'profile'):
-                        logger.info(f"[SHOP_VIEWSET] User profile role: {user.profile.role}")
-
-                    logger.info(f"[SHOP_VIEWSET] User is staff: {user.is_staff}")
-
+                    
                     if not (is_shop_member or is_shop_owner or user.is_staff):
-                        logger.warning(f"[SHOP_VIEWSET] Access denied for user {user.username} to shop {shop.name}")
                         return Response(
                             {'error': 'You do not have permission to view members of this shop'},
                             status=status_module.HTTP_403_FORBIDDEN
@@ -4121,116 +3111,52 @@ class ProductViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     
     def perform_create(self, serializer):
-        """Override to handle weight tracking when creating products with race condition protection"""
+        """Override to handle weight tracking when creating products"""
         from decimal import Decimal
         
         # Get the product weight and related animal/part from request data
-        product_weight_raw = self.request.data.get('weight', 0)
-        product_weight_unit = self.request.data.get('weight_unit', 'kg')
+        product_weight = Decimal(str(self.request.data.get('weight', 0)))
         animal_id = self.request.data.get('animal')
         slaughter_part_id = self.request.data.get('slaughter_part')
         
-        print(f"\n{'='*80}")
-        print(f"🔍 [PRODUCT_CREATE] Starting product creation weight tracking")
-        print(f"📊 [PRODUCT_CREATE] Raw product weight: {product_weight_raw} {product_weight_unit}")
-        print(f"🐄 [PRODUCT_CREATE] Animal ID: {animal_id}")
-        print(f"🥩 [PRODUCT_CREATE] Slaughter Part ID: {slaughter_part_id}")
+        # Save the product first
+        product = serializer.save()
         
-        # Convert product weight to kg for consistent deduction
-        product_weight = Decimal(str(product_weight_raw))
-        
-        # Convert to kg based on unit
-        if product_weight_unit.lower() == 'g':
-            product_weight_kg = product_weight / Decimal('1000')
-            print(f"🔄 [PRODUCT_CREATE] Converting {product_weight} g to {product_weight_kg} kg")
-        elif product_weight_unit.lower() == 'lbs':
-            product_weight_kg = product_weight * Decimal('0.453592')
-            print(f"🔄 [PRODUCT_CREATE] Converting {product_weight} lbs to {product_weight_kg} kg")
-        else:  # kg or unknown
-            product_weight_kg = product_weight
-            print(f"✅ [PRODUCT_CREATE] Weight already in kg: {product_weight_kg} kg")
-        
-        # Use transaction to ensure atomicity and select_for_update to prevent race conditions
-        with transaction.atomic():
-            # Save the product first
-            product = serializer.save()
-            print(f"✅ [PRODUCT_CREATE] Product saved with ID: {product.id}")
-            
-            # Update weight tracking
-            if slaughter_part_id:
-                # Product made from slaughter part - deduct from part's remaining weight
-                try:
-                    # Use select_for_update to lock the row and prevent race conditions
-                    slaughter_part = SlaughterPart.objects.select_for_update().get(id=slaughter_part_id)
-                    print(f"🥩 [PRODUCT_CREATE] Found slaughter part {slaughter_part.id}")
-                    print(f"   - Part type: {slaughter_part.part_type}")
-                    print(f"   - Total weight: {slaughter_part.weight} {slaughter_part.weight_unit}")
-                    print(f"   - Remaining weight BEFORE: {slaughter_part.remaining_weight}")
-                    print(f"   - used_in_product flag BEFORE: {slaughter_part.used_in_product}")
-                    
-                    if slaughter_part.remaining_weight is None:
-                        slaughter_part.remaining_weight = slaughter_part.weight
-                        print(f"   - Initialized remaining_weight to {slaughter_part.remaining_weight}")
-                    
-                    # Validate sufficient weight remains
-                    if slaughter_part.remaining_weight < product_weight_kg:
-                        raise ValidationError(f"Insufficient weight remaining. Available: {slaughter_part.remaining_weight} kg, Requested: {product_weight_kg} kg")
-                    
-                    old_remaining = slaughter_part.remaining_weight
-                    slaughter_part.remaining_weight = max(Decimal('0'), slaughter_part.remaining_weight - product_weight_kg)
-                    
-                    print(f"   - Deducting {product_weight_kg} kg from {old_remaining} kg")
-                    print(f"   - Remaining weight AFTER: {slaughter_part.remaining_weight}")
-                    
-                    # Mark as used if weight is depleted
-                    if slaughter_part.remaining_weight <= 0:
-                        slaughter_part.used_in_product = True
-                        print(f"   - ⚠️ Weight depleted! Setting used_in_product = True")
-                    else:
-                        print(f"   - ✅ Still has {slaughter_part.remaining_weight} kg remaining")
-                    
-                    slaughter_part.save()
-                    print(f"✅ [PRODUCT_CREATE] Updated slaughter part {slaughter_part.id}: remaining_weight = {slaughter_part.remaining_weight}, used_in_product = {slaughter_part.used_in_product}")
-                except SlaughterPart.DoesNotExist:
-                    print(f"❌ [PRODUCT_CREATE] Slaughter part {slaughter_part_id} not found")
-            elif animal_id:
-                # Product made from whole animal - deduct from animal's remaining weight
-                try:
-                    # Use select_for_update to lock the row and prevent race conditions
-                    animal = Animal.objects.select_for_update().get(id=animal_id)
-                    print(f"🐄 [PRODUCT_CREATE] Found animal {animal.id} ({animal.animal_id})")
-                    print(f"   - Species: {animal.species}")
-                    print(f"   - Live weight: {animal.live_weight} kg")
-                    print(f"   - Remaining weight BEFORE: {animal.remaining_weight}")
-                    print(f"   - processed flag BEFORE: {animal.processed}")
-                    
-                    if animal.remaining_weight is None:
-                        animal.remaining_weight = animal.live_weight or Decimal('0')
-                        print(f"   - Initialized remaining_weight to {animal.remaining_weight}")
-                    
-                    # Validate sufficient weight remains
-                    if animal.remaining_weight < product_weight_kg:
-                        raise ValidationError(f"Insufficient weight remaining. Available: {animal.remaining_weight} kg, Requested: {product_weight_kg} kg")
-                    
-                    old_remaining = animal.remaining_weight
-                    animal.remaining_weight = max(Decimal('0'), animal.remaining_weight - product_weight_kg)
-                    
-                    print(f"   - Deducting {product_weight_kg} kg from {old_remaining} kg")
-                    print(f"   - Remaining weight AFTER: {animal.remaining_weight}")
-                    
-                    # Mark as processed if weight is depleted
-                    if animal.remaining_weight <= 0:
-                        animal.processed = True
-                        print(f"   - ⚠️ Weight depleted! Setting processed = True")
-                    else:
-                        print(f"   - ✅ Still has {animal.remaining_weight} kg remaining")
-                    
-                    animal.save()
-                    print(f"✅ [PRODUCT_CREATE] Updated animal {animal.id}: remaining_weight = {animal.remaining_weight}, processed = {animal.processed}")
-                except Animal.DoesNotExist:
-                    print(f"❌ [PRODUCT_CREATE] Animal {animal_id} not found")
-        
-        print(f"{'='*80}\n")
+        # Update weight tracking
+        if slaughter_part_id:
+            # Product made from slaughter part - deduct from part's remaining weight
+            try:
+                slaughter_part = SlaughterPart.objects.get(id=slaughter_part_id)
+                if slaughter_part.remaining_weight is None:
+                    slaughter_part.remaining_weight = slaughter_part.weight
+                
+                slaughter_part.remaining_weight = max(Decimal('0'), slaughter_part.remaining_weight - product_weight)
+                
+                # Mark as used if weight is depleted
+                if slaughter_part.remaining_weight <= 0:
+                    slaughter_part.used_in_product = True
+                
+                slaughter_part.save()
+                print(f"Γ£à Updated slaughter part {slaughter_part.id}: remaining_weight = {slaughter_part.remaining_weight}")
+            except SlaughterPart.DoesNotExist:
+                print(f"ΓÜá∩╕Å Slaughter part {slaughter_part_id} not found")
+        elif animal_id:
+            # Product made from whole animal - deduct from animal's remaining weight
+            try:
+                animal = Animal.objects.get(id=animal_id)
+                if animal.remaining_weight is None:
+                    animal.remaining_weight = animal.live_weight or Decimal('0')
+                
+                animal.remaining_weight = max(Decimal('0'), animal.remaining_weight - product_weight)
+                
+                # Mark as processed if weight is depleted
+                if animal.remaining_weight <= 0:
+                    animal.processed = True
+                
+                animal.save()
+                print(f"Γ£à Updated animal {animal.id}: remaining_weight = {animal.remaining_weight}")
+            except Animal.DoesNotExist:
+                print(f"ΓÜá∩╕Å Animal {animal_id} not found")
     
     def get_queryset(self):
         """Filter products based on user permissions"""
@@ -4238,46 +3164,43 @@ class ProductViewSet(viewsets.ModelViewSet):
         
         try:
             profile = user.profile
+            role = normalize_role(profile.role)
+            print(f"[DEBUG] User: {user.username}, Role: {profile.role} -> Normalized: {role}")
             
             # Admin can see all products
-            if profile.role == 'Admin':
+            if role == ROLE_ADMIN:
                 return Product.objects.all().order_by('-created_at')
             
-            # Processor can see products from their processing unit(s)
-            elif profile.role == 'Processor':
+            # Processor can see products from their processing unit
+            elif role == ROLE_PROCESSOR:
+                # Get all processing units the user is a member of
                 from .models import ProcessingUnitUser
-                
-                # Support explicit filtering by unit_id
-                requested_unit_id = self.request.query_params.get('unit_id')
-                if requested_unit_id:
-                    # Validate access
-                    has_access = ProcessingUnitUser.objects.filter(
-                        user=user,
-                        processing_unit_id=requested_unit_id,
-                        is_active=True
-                    ).exists()
-                    if has_access or profile.processing_unit_id == int(requested_unit_id):
-                        return Product.objects.filter(processing_unit_id=requested_unit_id).order_by('-created_at')
-                
-                # Default behavior: all associated units
-                user_units = ProcessingUnitUser.objects.filter(
+                user_processing_units = ProcessingUnitUser.objects.filter(
                     user=user,
                     is_active=True,
                     is_suspended=False
                 ).values_list('processing_unit_id', flat=True)
                 
-                unit_ids = list(user_units)
-                if profile.processing_unit:
-                    unit_ids.append(profile.processing_unit.id)
-                
-                if unit_ids:
-                    return Product.objects.filter(
-                        processing_unit_id__in=unit_ids
+                print(f"[DEBUG] Processor Units: {list(user_processing_units)}")
+                print(f"[DEBUG] Profile Unit: {profile.processing_unit}")
+
+                if user_processing_units:
+                    qs = Product.objects.filter(
+                        processing_unit_id__in=user_processing_units
                     ).order_by('-created_at')
+                    print(f"[DEBUG] QuerySet Count (via membership): {qs.count()}")
+                    return qs
+                elif profile.processing_unit:
+                    qs = Product.objects.filter(
+                        processing_unit=profile.processing_unit
+                    ).order_by('-created_at')
+                    print(f"[DEBUG] QuerySet Count (via profile): {qs.count()}")
+                    return qs
+                print("[DEBUG] No units found.")
                 return Product.objects.none()
             
             # Shop owners can see products transferred to OR received by their shop(s)
-            elif profile.role == 'ShopOwner':
+            elif role == ROLE_SHOPOWNER:
                 # Get all shops where user is an active member via ShopUser
                 user_shop_ids = ShopUser.objects.filter(
                     user=user,
@@ -4293,19 +3216,13 @@ class ProductViewSet(viewsets.ModelViewSet):
                     # If pending_receipt parameter is provided, filter further
                     pending_receipt = self.request.query_params.get('pending_receipt')
                     if pending_receipt and pending_receipt.lower() == 'true':
-                        # Only show products transferred to shop but not fully processed yet
-                        # Exclude products where received + rejected >= total quantity
-                        from django.db.models import ExpressionWrapper, DecimalField
+                        # Only show products transferred to shop but not fully received yet
                         queryset = queryset.filter(
                             transferred_to__id__in=user_shop_ids,
                             rejection_status__isnull=True  # Not fully rejected
-                        ).annotate(
-                            total_processed=ExpressionWrapper(
-                                models.F('quantity_received') + models.F('quantity_rejected'),
-                                output_field=DecimalField()
-                            )
                         ).exclude(
-                            total_processed__gte=models.F('quantity')
+                            Q(quantity_received__gte=models.F('quantity')) |  # Not fully received
+                            Q(quantity_rejected__gte=models.F('quantity'))   # Not fully rejected
                         )
                     
                     return queryset
@@ -4321,31 +3238,27 @@ class ProductViewSet(viewsets.ModelViewSet):
                     # If pending_receipt parameter is provided, filter further
                     pending_receipt = self.request.query_params.get('pending_receipt')
                     if pending_receipt and pending_receipt.lower() == 'true':
-                        # Only show products transferred to shop but not fully processed yet
-                        # Exclude products where received + rejected >= total quantity
-                        from django.db.models import ExpressionWrapper, DecimalField
+                        # Only show products transferred to shop but not fully received yet
                         queryset = queryset.filter(
                             transferred_to=profile.shop,
                             rejection_status__isnull=True  # Not fully rejected
-                        ).annotate(
-                            total_processed=ExpressionWrapper(
-                                models.F('quantity_received') + models.F('quantity_rejected'),
-                                output_field=DecimalField()
-                            )
                         ).exclude(
-                            total_processed__gte=models.F('quantity')
+                            Q(quantity_received__gte=models.F('quantity')) |  # Not fully received
+                            Q(quantity_rejected__gte=models.F('quantity'))   # Not fully rejected
                         )
                     
                     return queryset
                 
                 return Product.objects.none()
             
-            # Default: no access to products for unknown roles
-            return Product.objects.none()
+            # Abbatoir can see products from their animals
+            elif role == ROLE_ABBATOIR:
+                return Product.objects.filter(animal__abbatoir=user).order_by('-created_at')
+            
+            return Product.objects.all().order_by('-created_at')
             
         except UserProfile.DoesNotExist:
-            # Users without profiles should not see any products
-            return Product.objects.none()
+            return Product.objects.all().order_by('-created_at')
 
     @action(detail=False, methods=['post'], url_path='receive_products')
     def receive_products(self, request):
@@ -4407,301 +3320,153 @@ class ProductViewSet(viewsets.ModelViewSet):
                 status=status_module.HTTP_404_NOT_FOUND
             )
         
+        received_products = []
+        rejected_products = []
+        errors = []
+        
         try:
-            received_products = []
-            rejected_products = []
-            errors = []
-
-
-            # Process receives
-            for receive in receives:
-                product_id = receive.get('product_id')
-                quantity_received = Decimal(str(receive.get('quantity_received', 0)))
-                weight_received = receive.get('weight_received')
-                if weight_received is not None:
-                    weight_received = Decimal(str(weight_received))
-
-                if quantity_received <= 0 and (weight_received is None or weight_received <= 0):
-                    errors.append(f"Product {product_id}: quantity_received or weight_received must be greater than 0")
-                    continue
-
-                try:
-                    product = Product.objects.get(
-                        id=product_id,
-                        transferred_to=user_shop
-                    )
-
-                    # Validate quantity and weight
-                    total_accounted_qty = product.quantity_received + product.quantity_rejected
-                    remaining_qty = product.quantity - total_accounted_qty
+            with transaction.atomic():
+                # Process receives
+                for receive in receives:
+                    product_id = receive.get('product_id')
+                    quantity_received = Decimal(str(receive.get('quantity_received', 0)))
                     
-                    if quantity_received > remaining_qty:
-                        errors.append(f"Product {product_id}: Cannot receive {quantity_received}. Only {remaining_qty} remaining")
+                    if quantity_received <= 0:
+                        errors.append(f"Product {product_id}: quantity_received must be greater than 0")
                         continue
-
-                    if weight_received is not None:
-                        total_accounted_wt = product.weight_received + product.weight_rejected
-                        remaining_wt = product.weight - total_accounted_wt
-                        if weight_received > remaining_wt:
-                            errors.append(f"Product {product_id}: Cannot receive {weight_received} weight. Only {remaining_wt} remaining")
-                            continue
-
-                    # Update product received fields
-                    product.quantity_received += quantity_received
-                    if weight_received is not None:
-                        product.weight_received += weight_received
                     
-                    product.received_by_shop = user_shop
-                    product.received_at = timezone.now()
-                    product.save()
-                    
-                    # Create or update Inventory record for the shop
-                    inventory, created = Inventory.objects.get_or_create(
-                        shop=user_shop,
-                        product=product,
-                        defaults={
-                            'quantity': quantity_received,
-                            'weight': weight_received or 0,
-                            'weight_unit': product.weight_unit,
-                            'last_updated': timezone.now()
-                        }
-                    )
-                    if not created:
-                        inventory.quantity += quantity_received
-                        if weight_received is not None:
-                            inventory.weight += weight_received
-                        inventory.last_updated = timezone.now()
-                        inventory.save()
-
-                    received_products.append({
-                        'product_id': product.id,
-                        'product_name': product.name,
-                        'quantity_received': float(quantity_received),
-                        'weight_received': float(weight_received) if weight_received else 0,
-                        'total_received_qty': float(product.quantity_received),
-                        'total_received_wt': float(product.weight_received),
-                        'inventory_quantity': float(inventory.quantity),
-                        'inventory_weight': float(inventory.weight)
-                    })
-
-                except Product.DoesNotExist:
-                    errors.append(f"Product {product_id} not found")
-                    continue
-
-            # Process rejections
-            for rejection in rejections:
-                product_id = rejection.get('product_id')
-                quantity_rejected = Decimal(str(rejection.get('quantity_rejected', 0)))
-                weight_rejected = rejection.get('weight_rejected')
-                if weight_rejected is not None:
-                    weight_rejected = Decimal(str(weight_rejected))
-                
-                rejection_reason = rejection.get('rejection_reason', 'Not specified')
-
-                if quantity_rejected <= 0 and (weight_rejected is None or weight_rejected <= 0):
-                    errors.append(f"Product {product_id}: quantity_rejected or weight_rejected must be greater than 0")
-                    continue
-
-                try:
-                    product = Product.objects.get(
-                        id=product_id,
-                        transferred_to=user_shop
-                    )
-
-                    # Validate quantity and weight
-                    total_accounted_qty = product.quantity_received + product.quantity_rejected
-                    remaining_qty = product.quantity - total_accounted_qty
-
-                    if quantity_rejected > remaining_qty:
-                        errors.append(f"Product {product_id}: Cannot reject {quantity_rejected}. Only {remaining_qty} remaining")
-                        continue
-
-                    if weight_rejected is not None:
-                        total_accounted_wt = product.weight_received + product.weight_rejected
-                        remaining_wt = product.weight - total_accounted_wt
-                        if weight_rejected > remaining_wt:
-                            errors.append(f"Product {product_id}: Cannot reject {weight_rejected} weight. Only {remaining_wt} remaining")
+                    try:
+                        product = Product.objects.get(
+                            id=product_id,
+                            transferred_to=user_shop,
+                            rejection_status__isnull=True  # Not rejected
+                        )
+                        
+                        # Validate quantity
+                        total_accounted = product.quantity_received + product.quantity_rejected
+                        remaining = product.quantity - total_accounted
+                        
+                        if quantity_received > remaining:
+                            errors.append(
+                                f"Product {product_id}: Cannot receive {quantity_received}. "
+                                f"Only {remaining} remaining (Total: {product.quantity}, "
+                                f"Already received: {product.quantity_received}, "
+                                f"Already rejected: {product.quantity_rejected})"
+                            )
                             continue
-
-                    # Determine if this is a full or partial rejection
-                    is_full_rejection = (quantity_rejected >= remaining_qty) if remaining_qty > 0 else (weight_rejected >= remaining_wt if weight_rejected else True)
-
-                    if is_full_rejection:
-                        # FULL REJECTION: Reset transfer fields to return product to processor
-                        product.quantity_rejected += quantity_rejected
-                        if weight_rejected:
-                            product.weight_rejected += weight_rejected
                         
-                        product.rejection_reason = rejection_reason
-                        product.rejected_by = request.user
-                        product.rejected_at = timezone.now()
-                        product.rejection_status = 'rejected'
-
-                        # Return product to processor by clearing transfer fields
-                        product.transferred_to = None
-                        product.transferred_at = None
-                        product.save()
-
-                        rejection_info = {
-                            'product_id': product.id,
-                            'product_name': product.name,
-                            'quantity_rejected': float(quantity_rejected),
-                            'weight_rejected': float(weight_rejected) if weight_rejected else 0,
-                            'rejection_reason': rejection_reason,
-                            'rejection_status': product.rejection_status,
-                            'rejection_type': 'full'
-                        }
-                    else:
-                        # PARTIAL REJECTION: Create new product for rejected portion
-                        # Update original product (reduce quantity by rejected amount)
-                        original_quantity = product.quantity
-                        product.quantity -= quantity_rejected
+                        # Update product
+                        product.quantity_received += quantity_received
                         
-                        original_weight = product.weight
-                        actual_weight_to_reject = weight_rejected if weight_rejected is not None else (original_weight * (quantity_rejected / original_quantity) if original_quantity > 0 else 0)
+                        # If fully received, mark as received
+                        if product.quantity_received + product.quantity_rejected >= product.quantity:
+                            product.received_by_shop = user_shop
+                            product.received_at = timezone.now()
                         
-                        if product.weight:
-                            product.weight -= actual_weight_to_reject
-                        
-                        # Automatically receive the remaining quantity to mark it as fully processed
-                        product.quantity_received = product.quantity
-                        product.weight_received = product.weight
-                        product.received_by_shop = user_shop
-                        product.received_at = timezone.now()
                         product.save()
                         
-                        # Update inventory for the received portion
+                        # Update inventory
                         inventory, created = Inventory.objects.get_or_create(
                             shop=user_shop,
                             product=product,
-                            defaults={
-                                'quantity': product.quantity,
-                                'weight': product.weight,
-                                'weight_unit': product.weight_unit,
-                                'last_updated': timezone.now()
-                            }
+                            defaults={'quantity': Decimal('0')}
                         )
-                        if not created:
-                            inventory.quantity = product.quantity_received
-                            inventory.weight = product.weight_received
-                            inventory.last_updated = timezone.now()
-                            inventory.save()
-
-                        # Create new product for rejected portion (returns to processor)
-                        rejected_product = Product.objects.create(
-                            name=product.name,
-                            batch_number=f"{product.batch_number}-REJ",
-                            product_type=product.product_type,
-                            quantity=quantity_rejected,
-                            weight=actual_weight_to_reject,
-                            weight_unit=product.weight_unit,
-                            price=product.price,
-                            description=product.description,
-                            processing_unit=product.processing_unit,
-                            animal=product.animal,
-                            slaughter_part=product.slaughter_part,
-                            category=product.category,
-                            rejection_status='rejected',
-                            rejection_reason=rejection_reason,
-                            rejected_by=request.user,
-                            rejected_at=timezone.now(),
-                            quantity_rejected=quantity_rejected,
-                            weight_rejected=actual_weight_to_reject,
-                            transferred_to=None,
-                            transferred_at=None
+                        inventory.quantity += quantity_received
+                        inventory.last_updated = timezone.now()
+                        inventory.save()
+                        
+                        received_products.append({
+                            'product_id': product.id,
+                            'product_name': product.name,
+                            'quantity_received': float(quantity_received),
+                            'total_received': float(product.quantity_received),
+                            'total_quantity': float(product.quantity)
+                        })
+                        
+                    except Product.DoesNotExist:
+                        errors.append(f"Product {product_id} not found or not available for receipt")
+                        continue
+                
+                # Process rejections
+                for rejection in rejections:
+                    product_id = rejection.get('product_id')
+                    quantity_rejected = Decimal(str(rejection.get('quantity_rejected', 0)))
+                    rejection_reason = rejection.get('rejection_reason', 'Not specified')
+                    
+                    if quantity_rejected <= 0:
+                        errors.append(f"Product {product_id}: quantity_rejected must be greater than 0")
+                        continue
+                    
+                    try:
+                        product = Product.objects.get(
+                            id=product_id,
+                            transferred_to=user_shop
                         )
-
-                        rejection_info = {
+                        
+                        # Validate quantity
+                        total_accounted = product.quantity_received + product.quantity_rejected
+                        remaining = product.quantity - total_accounted
+                        
+                        if quantity_rejected > remaining:
+                            errors.append(
+                                f"Product {product_id}: Cannot reject {quantity_rejected}. "
+                                f"Only {remaining} remaining (Total: {product.quantity}, "
+                                f"Already received: {product.quantity_received}, "
+                                f"Already rejected: {product.quantity_rejected})"
+                            )
+                            continue
+                        
+                        # Update product
+                        product.quantity_rejected += quantity_rejected
+                        product.rejection_reason = rejection_reason
+                        product.rejected_by = request.user
+                        product.rejected_at = timezone.now()
+                        
+                        # If entire product is rejected, mark status as rejected
+                        if product.quantity_rejected >= product.quantity:
+                            product.rejection_status = 'rejected'
+                        
+                        product.save()
+                        
+                        rejected_products.append({
                             'product_id': product.id,
                             'product_name': product.name,
                             'quantity_rejected': float(quantity_rejected),
-                            'weight_rejected': float(actual_weight_to_reject),
+                            'total_rejected': float(product.quantity_rejected),
                             'rejection_reason': rejection_reason,
-                            'rejection_status': 'rejected',
-                            'rejection_type': 'partial',
-                            'rejected_product_id': rejected_product.id,
-                            'remaining_quantity': float(product.quantity),
-                            'remaining_weight': float(product.weight),
-                            'remaining_auto_received': True
+                            'rejection_status': product.rejection_status
+                        })
+                        
+                    except Product.DoesNotExist:
+                        errors.append(f"Product {product_id} not found")
+                        continue
+                
+                # Create activity log
+                if received_products or rejected_products:
+                    Activity.objects.create(
+                        user=request.user,
+                        activity_type='receive',
+                        title=f'Received/Rejected products at {user_shop.name}',
+                        description=f'Received {len(received_products)} products, Rejected {len(rejected_products)} products',
+                        entity_type='product_receipt',
+                        metadata={
+                            'shop': user_shop.name,
+                            'received_count': len(received_products),
+                            'rejected_count': len(rejected_products)
                         }
-                    
-                    # (Notification logic remains same)
-                    rejected_products.append(rejection_info)
-
-                    # Send notification to all active processors in the processing unit
-                    try:
-                        # Get users from ProcessingUnitUser (new system)
-                        processor_users = ProcessingUnitUser.objects.filter(
-                            processing_unit=product.processing_unit,
-                            is_active=True
-                        ).select_related('user')
-
-                        # Also get users from UserProfile (legacy system)
-                        profile_users = UserProfile.objects.filter(
-                            processing_unit=product.processing_unit,
-                            role='Processor'
-                        ).select_related('user')
-
-                        # Combine both sets of users (remove duplicates using set)
-                        all_users = set()
-                        for pu_user in processor_users:
-                            all_users.add(pu_user.user)
-                        for profile in profile_users:
-                            all_users.add(profile.user)
-
-                        # Send notifications to all users
-                        for user in all_users:
-                            try:
-                                NotificationService.notify_product_rejected(
-                                    processor_user=user,
-                                    product=product,
-                                    shop=user_shop,
-                                    quantity_rejected=quantity_rejected,
-                                    rejection_reason=rejection_reason
-                                )
-                            except Exception as notif_error:
-                                # Log error but don't fail the rejection process
-                                import logging
-                                logger = logging.getLogger(__name__)
-                                logger.error(f"Failed to send product rejection notification to {user.username}: {str(notif_error)}")
-                    except Exception as e:
-                        # Log error but don't fail the rejection process
-                        import logging
-                        logger = logging.getLogger(__name__)
-                        logger.error(f"Failed to get processor users for notification: {str(e)}")
-
-                    rejected_products.append(rejection_info)
-
-                except Product.DoesNotExist:
-                    errors.append(f"Product {product_id} not found")
-                    continue
-
-            # Create activity log
-            if received_products or rejected_products:
-                Activity.objects.create(
-                    user=request.user,
-                    activity_type='receive',
-                    title=f'Received/Rejected products at {user_shop.name}',
-                    description=f'Received {len(received_products)} products, Rejected {len(rejected_products)} products',
-                    entity_type='product_receipt',
-                    metadata={
-                        'shop': user_shop.name,
-                        'received_count': len(received_products),
-                        'rejected_count': len(rejected_products)
-                    }
-                )
-
-            response_data = {
-                'message': 'Product receipt processed successfully',
-                'received_products': received_products,
-                'rejected_products': rejected_products
-            }
-
-            if errors:
-                response_data['errors'] = errors
-
-            return Response(response_data)
-
+                    )
+                
+                response_data = {
+                    'message': 'Product receipt processed successfully',
+                    'received_products': received_products,
+                    'rejected_products': rejected_products
+                }
+                
+                if errors:
+                    response_data['errors'] = errors
+                
+                return Response(response_data)
+        
         except Exception as e:
             return Response(
                 {'error': f'Failed to process receipt: {str(e)}'},
@@ -4784,13 +3549,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                 for transfer in transfers:
                     product_id = transfer.get('product_id')
                     quantity_to_transfer = transfer.get('quantity')
-                    weight_to_transfer = transfer.get('weight')
                     
-                    if quantity_to_transfer is not None:
-                        quantity_to_transfer = Decimal(str(quantity_to_transfer))
-                    if weight_to_transfer is not None:
-                        weight_to_transfer = Decimal(str(weight_to_transfer))
-
                     try:
                         product = Product.objects.get(
                             id=product_id,
@@ -4804,68 +3563,92 @@ class ProductViewSet(viewsets.ModelViewSet):
                         errors.append(f'Product {product.name} has already been transferred')
                         continue
                     
-                    # If quantity or weight specified, split product
-                    is_partial = False
-                    if quantity_to_transfer is not None and quantity_to_transfer < product.quantity:
-                        is_partial = True
-                    elif weight_to_transfer is not None and product.weight and weight_to_transfer < product.weight:
-                        is_partial = True
-
-                    if is_partial:
-                        # Use provided quantities or calculate if missing
-                        q_trans = quantity_to_transfer if quantity_to_transfer is not None else product.quantity
-                        w_trans = weight_to_transfer if weight_to_transfer is not None else (product.weight * (q_trans / product.quantity) if product.quantity > 0 else 0)
+                    # If quantity specified, validate it
+                    if quantity_to_transfer is not None:
+                        quantity_to_transfer = Decimal(str(quantity_to_transfer))
                         
-                        # Reduce original product quantity/weight
-                        original_quantity = product.quantity
-                        product.quantity -= q_trans
-                        if product.weight:
-                            product.weight -= w_trans
-                        product.save()
+                        if quantity_to_transfer <= 0:
+                            errors.append(f'Product {product.name}: quantity must be greater than 0')
+                            continue
                         
-                        # Create new product for transfer
-                        transferred_product = Product.objects.create(
-                            name=product.name,
-                            batch_number=f"{product.batch_number}-T",
-                            product_type=product.product_type,
-                            quantity=q_trans,
-                            weight=w_trans,
-                            weight_unit=product.weight_unit,
-                            price=product.price,
-                            description=product.description,
-                            processing_unit=processing_unit,
-                            animal=product.animal,
-                            slaughter_part=product.slaughter_part,
-                            category=product.category,
-                            transferred_to=shop,
-                            transferred_at=timezone.now()
-                        )
+                        if quantity_to_transfer > product.quantity:
+                            errors.append(
+                                f'Product {product.name}: cannot transfer {quantity_to_transfer}. '
+                                f'Only {product.quantity} available'
+                            )
+                            continue
+                        
+                        # If transferring partial quantity, create a new product for the transfer
+                        if quantity_to_transfer < product.quantity:
+                            # Reduce original product quantity
+                            original_quantity = product.quantity
+                            product.quantity -= quantity_to_transfer
+                            product.save()
                             
-                        # Create activity for split and transfer
-                        Activity.objects.create(
-                            user=user,
-                            activity_type='transfer',
-                            title=f'Product {product.name} split and transferred',
-                            description=f'Split {product.name}: kept {product.quantity}, transferred {quantity_to_transfer} to {shop.name}',
-                            entity_id=str(transferred_product.id),
-                            entity_type='product',
-                            metadata={
-                                'original_product_id': product.id,
-                                'transferred_product_id': transferred_product.id,
-                                'original_batch': product.batch_number,
-                                'transferred_batch': transferred_product.batch_number,
-                                'quantity_kept': float(product.quantity),
-                                'quantity_transferred': float(quantity_to_transfer),
-                                'shop_name': shop.name
-                            }
-                        )
+                            # Create new product for transfer
+                            transferred_product = Product.objects.create(
+                                name=product.name,
+                                batch_number=f"{product.batch_number}-T",
+                                product_type=product.product_type,
+                                quantity=quantity_to_transfer,
+                                weight=product.weight * (quantity_to_transfer / original_quantity) if product.weight else None,
+                                weight_unit=product.weight_unit,
+                                price=product.price,
+                                description=product.description,
+                                processing_unit=processing_unit,
+                                animal=product.animal,
+                                slaughter_part=product.slaughter_part,
+                                category=product.category,
+                                transferred_to=shop,
+                                transferred_at=timezone.now()
+                            )
+                            
+                            # Create activity for split and transfer
+                            Activity.objects.create(
+                                user=user,
+                                activity_type='transfer',
+                                title=f'Product {product.name} split and transferred',
+                                description=f'Split {product.name}: kept {product.quantity}, transferred {quantity_to_transfer} to {shop.name}',
+                                entity_id=str(transferred_product.id),
+                                entity_type='product',
+                                metadata={
+                                    'original_product_id': product.id,
+                                    'transferred_product_id': transferred_product.id,
+                                    'original_batch': product.batch_number,
+                                    'transferred_batch': transferred_product.batch_number,
+                                    'quantity_kept': float(product.quantity),
+                                    'quantity_transferred': float(quantity_to_transfer),
+                                    'shop_name': shop.name
+                                }
+                            )
+                        else:
+                            # Transfer full product
+                            product.transferred_to = shop
+                            product.transferred_at = timezone.now()
+                            product.save()
+                            
+                            # Create activity for full transfer
+                            Activity.objects.create(
+                                user=user,
+                                activity_type='transfer',
+                                title=f'Product {product.name} transferred',
+                                description=f'Transferred {product.name} (Batch: {product.batch_number}) to {shop.name}',
+                                entity_id=str(product.id),
+                                entity_type='product',
+                                metadata={
+                                    'product_id': product.id,
+                                    'batch_number': product.batch_number,
+                                    'shop_name': shop.name,
+                                    'quantity': float(product.quantity)
+                                }
+                            )
                     else:
-                        # Transfer full product
+                        # No quantity specified - transfer full product (legacy behavior)
                         product.transferred_to = shop
                         product.transferred_at = timezone.now()
                         product.save()
                         
-                        # Create activity for full transfer
+                        # Create activity
                         Activity.objects.create(
                             user=user,
                             activity_type='transfer',
@@ -4876,10 +3659,10 @@ class ProductViewSet(viewsets.ModelViewSet):
                             metadata={
                                 'product_id': product.id,
                                 'batch_number': product.batch_number,
-                                'shop_name': shop.name,
-                                'quantity': float(product.quantity)
+                                'shop_name': shop.name
                             }
                         )
+                    
                     transferred_count += 1
                 
                 # Check if there were any errors
@@ -4907,129 +3690,13 @@ class ProductViewSet(viewsets.ModelViewSet):
 
 
 class ProductCategoryViewSet(viewsets.ModelViewSet):
-    """ViewSet for managing product categories - scoped to processing unit"""
+    """ViewSet for managing product categories"""
     serializer_class = ProductCategorySerializer
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
-        """Filter product categories by user's processing unit"""
-        user = self.request.user
-        
-        # Get user's processing units
-        try:
-            from .models import ProcessingUnitUser
-            user_processing_units = ProcessingUnitUser.objects.filter(
-                user=user,
-                is_active=True,
-                is_suspended=False
-            ).values_list('processing_unit_id', flat=True)
-            
-            if user_processing_units:
-                # Show categories belonging to user's processing units
-                # Also include legacy global categories (processing_unit=None) for compatibility
-                return ProductCategory.objects.filter(
-                    models.Q(processing_unit_id__in=user_processing_units) |
-                    models.Q(processing_unit__isnull=True)
-                ).order_by('name')
-        except Exception as e:
-            print(f"Error filtering product categories: {e}")
-        
-        # Fallback: show only global categories (legacy)
-        return ProductCategory.objects.filter(processing_unit__isnull=True).order_by('name')
-    
-    def perform_create(self, serializer):
-        """Auto-set processing_unit to user's processing unit on create"""
-        user = self.request.user
-        processing_unit = None
-        
-        try:
-            from .models import ProcessingUnitUser
-            pu_user = ProcessingUnitUser.objects.filter(
-                user=user,
-                is_active=True,
-                is_suspended=False
-            ).first()
-            if pu_user:
-                processing_unit = pu_user.processing_unit
-        except Exception as e:
-            print(f"Error getting processing unit for category creation: {e}")
-        
-        serializer.save(processing_unit=processing_unit)
-
-
-class InventoryViewSet(viewsets.ModelViewSet):
-    """ViewSet for managing shop inventory"""
-    permission_classes = [IsAuthenticated]
-    
-    def get_serializer_class(self):
-        from .viewsets import InventorySerializer
-        return InventorySerializer
-    
-    def get_queryset(self):
-        """Filter inventory based on user's shop membership"""
-        user = self.request.user
-        try:
-            profile = user.profile
-            if profile.shop:
-                return Inventory.objects.filter(shop=profile.shop)
-            # Check if user is a ShopUser
-            shop_memberships = user.shop_memberships.filter(is_active=True)
-            if shop_memberships.exists():
-                shop_ids = shop_memberships.values_list('shop_id', flat=True)
-                return Inventory.objects.filter(shop_id__in=shop_ids)
-        except Exception:
-            pass
-        return Inventory.objects.none()
-    
-    @action(detail=False, methods=['get'])
-    def low_stock(self, request):
-        """Get inventory items that are below minimum stock level"""
-        queryset = self.get_queryset()
-        low_stock_items = [item for item in queryset if item.is_low_stock]
-        serializer = self.get_serializer(low_stock_items, many=True)
-        return Response(serializer.data)
-    
-    @action(detail=True, methods=['post'])
-    def adjust_stock(self, request, pk=None):
-        """Adjust stock quantity for an inventory item"""
-        inventory = self.get_object()
-        adjustment = request.data.get('adjustment', 0)
-        try:
-            adjustment = Decimal(str(adjustment))
-            inventory.quantity += adjustment
-            if inventory.quantity < 0:
-                inventory.quantity = 0
-            inventory.last_updated = timezone.now()
-            inventory.save()
-            serializer = self.get_serializer(inventory)
-            return Response(serializer.data)
-        except Exception as e:
-            return Response({'error': str(e)}, status=400)
-
-
-class ReceiptViewSet(viewsets.ModelViewSet):
-    """ViewSet for managing product receipts"""
-    permission_classes = [IsAuthenticated]
-    
-    def get_serializer_class(self):
-        from .serializers import ReceiptSerializer
-        return ReceiptSerializer
-    
-    def get_queryset(self):
-        """Filter receipts based on user's shop membership"""
-        user = self.request.user
-        try:
-            profile = user.profile
-            if profile.shop:
-                return Receipt.objects.filter(shop=profile.shop).order_by('-received_at')
-            # Check if user is a ShopUser
-            shop_memberships = user.shop_memberships.filter(is_active=True)
-            if shop_memberships.exists():
-                shop_ids = shop_memberships.values_list('shop_id', flat=True)
-                return Receipt.objects.filter(shop_id__in=shop_ids).order_by('-received_at')
-        except Exception:
-            pass
-        return Receipt.objects.none()
+        """All authenticated users can see all product categories"""
+        return ProductCategory.objects.all().order_by('name')
 
 
 class SaleViewSet(viewsets.ModelViewSet):
@@ -5047,201 +3714,52 @@ class SaleViewSet(viewsets.ModelViewSet):
         
         try:
             response = super().create(request, *args, **kwargs)
-            print(f"[SALE_CREATE] ✅ Success - Status: {response.status_code}")
+            print(f"[SALE_CREATE] Γ£à Success - Status: {response.status_code}")
             print(f"[SALE_CREATE] Response data: {response.data}")
             return response
         except Exception as e:
-            print(f"[SALE_CREATE] ❌ Exception occurred: {type(e).__name__}")
+            print(f"[SALE_CREATE] Γ¥î Exception occurred: {type(e).__name__}")
             print(f"[SALE_CREATE] Error message: {str(e)}")
             import traceback
             print(f"[SALE_CREATE] Traceback:\n{traceback.format_exc()}")
             raise
     
     def get_queryset(self):
-        """Filter sales based on user permissions and query parameters"""
+        """Filter sales based on user permissions"""
         user = self.request.user
-        queryset = Sale.objects.none()
         
         # First check ShopUser memberships (new system)
         shop_membership = user.shop_memberships.filter(is_active=True).first()
         if shop_membership:
             # ShopUser can see sales from their shop
-            queryset = Sale.objects.filter(shop=shop_membership.shop)
-        else:
-            # Fall back to UserProfile (old system)
-            try:
-                profile = user.profile
-                
-                # Admin can see all sales
-                if profile.role == 'Admin':
-                    queryset = Sale.objects.all()
-                
-                # Shop owners can see sales from their shop
-                elif profile.role == 'ShopOwner':
-                    if profile.shop:
-                        queryset = Sale.objects.filter(shop=profile.shop)
-                
-                # Processor can see sales of products from their processing unit
-                elif profile.role == 'Processor':
-                    if profile.processing_unit:
-                        queryset = Sale.objects.filter(
-                            items__product__processing_unit=profile.processing_unit
-                        ).distinct()
-                        
-            except UserProfile.DoesNotExist:
-                pass
+            return Sale.objects.filter(shop=shop_membership.shop).order_by('-created_at')
         
-        # Apply date filters from query params
-        date_from = self.request.query_params.get('date_from')
-        date_to = self.request.query_params.get('date_to')
-        product_name = self.request.query_params.get('product_name')
-        product_id = self.request.query_params.get('product_id')
-        
-        if date_from:
-            try:
-                from datetime import datetime
-                date_from_parsed = datetime.strptime(date_from, '%Y-%m-%d')
-                queryset = queryset.filter(created_at__date__gte=date_from_parsed.date())
-            except ValueError:
-                pass
-        
-        if date_to:
-            try:
-                from datetime import datetime
-                date_to_parsed = datetime.strptime(date_to, '%Y-%m-%d')
-                queryset = queryset.filter(created_at__date__lte=date_to_parsed.date())
-            except ValueError:
-                pass
-        
-        # Filter by product name (searches in sale items)
-        if product_name:
-            queryset = queryset.filter(
-                items__product__name__icontains=product_name
-            ).distinct()
-        
-        # Filter by specific product ID
-        if product_id:
-            queryset = queryset.filter(items__product_id=product_id).distinct()
-        
-        return queryset.order_by('-created_at')
-    
-    @action(detail=False, methods=['get'], url_path='category-summary/(?P<product_name>[^/.]+)')
-    def category_summary(self, request, product_name=None):
-        """
-        Get aggregated sales summary for a product name/category across all batches.
-        Returns total quantity sold, weight sold, remaining stock, revenue, and transactions.
-        """
-        from django.db.models import Sum, Count
-        from urllib.parse import unquote
-        
-        # Decode URL-encoded product name
-        product_name = unquote(product_name)
-        
-        # Get user's shop
-        shop = None
-        shop_membership = request.user.shop_memberships.filter(is_active=True).first()
-        if shop_membership:
-            shop = shop_membership.shop
-        else:
-            try:
-                profile = request.user.profile
-                shop = profile.shop
-            except UserProfile.DoesNotExist:
-                pass
-        
-        if not shop:
-            return Response(
-                {'error': 'User is not associated with any shop'},
-                status=status_module.HTTP_400_BAD_REQUEST
-            )
-        
-        # Get all products with this name in the shop's inventory
-        from .models import Inventory
-        inventory_items = Inventory.objects.filter(
-            shop=shop,
-            product__name__iexact=product_name
-        ).select_related('product')
-        
-        # Aggregate totals across all batches
-        total_initial_quantity = 0
-        total_initial_weight = 0
-        total_remaining_quantity = 0
-        total_remaining_weight = 0
-        first_received_at = None
-        stock_additions = []
-        
-        for inv in inventory_items:
-            product = inv.product
-            total_initial_quantity += float(product.quantity_received or product.quantity)
-            total_initial_weight += float(product.weight_received or product.weight or 0)
-            total_remaining_quantity += float(inv.quantity)
-            total_remaining_weight += float(inv.weight or 0)
+        # Fall back to UserProfile (old system)
+        try:
+            profile = user.profile
             
-            # Track first received date
-            received_at = product.received_at
-            if received_at and (first_received_at is None or received_at < first_received_at):
-                first_received_at = received_at
+            # Admin can see all sales
+            if profile.role == 'Admin':
+                return Sale.objects.all().order_by('-created_at')
             
-            # Track stock additions
-            if product.received_at:
-                stock_additions.append({
-                    'batch_number': product.batch_number,
-                    'quantity': float(product.quantity_received or product.quantity),
-                    'weight': float(product.weight_received or product.weight or 0),
-                    'weight_unit': product.weight_unit,
-                    'received_at': product.received_at.isoformat() if product.received_at else None,
-                    'processing_unit': product.processing_unit.name if product.processing_unit else None
-                })
-        
-        # Get all sale items for this product name from this shop
-        sale_items = SaleItem.objects.filter(
-            sale__shop=shop,
-            product__name__iexact=product_name
-        ).select_related('sale', 'product')
-        
-        # Aggregate sales data
-        total_sold_quantity = 0
-        total_sold_weight = 0
-        total_revenue = 0
-        transactions = []
-        
-        # Group by sale to avoid duplicates
-        sales_seen = set()
-        for item in sale_items:
-            total_sold_quantity += float(item.quantity)
-            total_sold_weight += float(item.weight or 0)
-            total_revenue += float(item.subtotal)
+            # Shop owners can see sales from their shop
+            elif profile.role == 'ShopOwner':
+                if profile.shop:
+                    return Sale.objects.filter(shop=profile.shop).order_by('-created_at')
+                return Sale.objects.none()
             
-            if item.sale.id not in sales_seen:
-                sales_seen.add(item.sale.id)
-                transactions.append({
-                    'sale_id': item.sale.id,
-                    'created_at': item.sale.created_at.isoformat(),
-                    'customer_name': item.sale.customer_name,
-                    'total_amount': float(item.sale.total_amount),
-                    'payment_method': item.sale.payment_method,
-                    'quantity_sold': float(item.quantity),
-                    'weight_sold': float(item.weight or 0),
-                    'subtotal': float(item.subtotal)
-                })
-        
-        # Sort transactions by date (newest first)
-        transactions.sort(key=lambda x: x['created_at'], reverse=True)
-        
-        return Response({
-            'product_name': product_name,
-            'total_initial_quantity': total_initial_quantity,
-            'total_initial_weight': total_initial_weight,
-            'total_sold_quantity': total_sold_quantity,
-            'total_sold_weight': total_sold_weight,
-            'remaining_quantity': total_remaining_quantity,
-            'remaining_weight': total_remaining_weight,
-            'total_revenue': total_revenue,
-            'first_received_at': first_received_at.isoformat() if first_received_at else None,
-            'stock_additions': stock_additions,
-            'transactions': transactions,
-            'transaction_count': len(transactions)
-        })
+            # Processor can see sales of products from their processing unit
+            elif profile.role == 'Processor':
+                if profile.processing_unit:
+                    return Sale.objects.filter(
+                        items__product__processing_unit=profile.processing_unit
+                    ).distinct().order_by('-created_at')
+                return Sale.objects.none()
+            
+            return Sale.objects.none()
+            
+        except UserProfile.DoesNotExist:
+            return Sale.objects.none()
     
     def perform_create(self, serializer):
         """Automatically set shop and sold_by when creating a sale"""
@@ -5270,11 +3788,10 @@ class SaleViewSet(viewsets.ModelViewSet):
                 pass
         
         if shop:
-            print(f"[SALE_PERFORM_CREATE] ✅ Saving sale with shop: {shop.name}, sold_by: {user.username}")
+            print(f"[SALE_PERFORM_CREATE] Γ£à Saving sale with shop: {shop.name}, sold_by: {user.username}")
             print(f"[SALE_PERFORM_CREATE] Validated data before save: {serializer.validated_data}")
             serializer.save(shop=shop, sold_by=user)
-            print(f"[SALE_PERFORM_CREATE] ✅ Sale saved successfully")
+            print(f"[SALE_PERFORM_CREATE] Γ£à Sale saved successfully")
         else:
-            print(f"[SALE_PERFORM_CREATE] ❌ No shop found for user")
+            print(f"[SALE_PERFORM_CREATE] Γ¥î No shop found for user")
             raise ValidationError("User is not associated with any shop")
-

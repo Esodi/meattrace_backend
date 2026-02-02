@@ -278,7 +278,7 @@ class Animal(models.Model):
         ('goat', 'Goat'),
     ]
 
-    abbatoir = models.ForeignKey(User, on_delete=models.CASCADE, related_name='animals')
+    abbatoir = models.ForeignKey(User, on_delete=models.CASCADE, related_name='animals', db_column='abbatoir_id')
     species = models.CharField(max_length=20, choices=SPECIES_CHOICES, default='cow')
     age = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0)], help_text="Age in months")
 
@@ -317,7 +317,7 @@ class Animal(models.Model):
     received_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='received_animals')
     received_at = models.DateTimeField(null=True, blank=True)
     # Auto-generated unique identifier (primary key for internal use)
-    animal_id = models.CharField(max_length=50, unique=True, editable=False, default='', help_text="Auto-generated unique animal identifier")
+    animal_id = models.CharField(max_length=50, unique=True, default='', help_text="Auto-generated unique animal identifier")
     # User-friendly optional name/tag
     animal_name = models.CharField(max_length=100, blank=True, null=True, help_text="Optional custom animal name or tag")
     breed = models.CharField(max_length=100, blank=True, null=True, help_text="Animal breed")
@@ -732,7 +732,8 @@ class Product(models.Model):
     ]
 
     processing_unit = models.ForeignKey(ProcessingUnit, on_delete=models.CASCADE, related_name='products')
-    animal = models.ForeignKey(Animal, on_delete=models.CASCADE, related_name='products')
+    # Animal can be null for external products (opening stock)
+    animal = models.ForeignKey(Animal, on_delete=models.SET_NULL, null=True, blank=True, related_name='products')
     slaughter_part = models.ForeignKey(SlaughterPart, on_delete=models.SET_NULL, null=True, blank=True, related_name='products', help_text="The specific slaughter part this product was made from")
     product_type = models.CharField(max_length=20, choices=PRODUCT_TYPE_CHOICES, default='meat')
     quantity = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])

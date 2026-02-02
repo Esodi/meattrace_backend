@@ -10,10 +10,6 @@ This utility ensures both conventions work seamlessly.
 
 # Canonical role constants (match UserProfile.ROLE_CHOICES)
 ROLE_ABBATOIR = 'Abbatoir'
-<<<<<<< HEAD
-=======
-ROLE_FARMER = 'Abbatoir'
->>>>>>> 0e8401e (Fix syntax errors and remove conflict markers in backend)
 ROLE_PROCESSOR = 'Processor'
 ROLE_SHOPOWNER = 'ShopOwner'
 ROLE_ADMIN = 'Admin'
@@ -24,12 +20,9 @@ ROLE_MAPPING = {
     'abbatoir': ROLE_ABBATOIR,
     'Abbatoir': ROLE_ABBATOIR,
     'ABBATOIR': ROLE_ABBATOIR,
-<<<<<<< HEAD
-=======
-    'abbatoir': ROLE_FARMER,
-    'Abbatoir': ROLE_FARMER,
-    'ABBATOIR': ROLE_FARMER,
->>>>>>> 0e8401e (Fix syntax errors and remove conflict markers in backend)
+    'farmer': ROLE_ABBATOIR,
+    'Farmer': ROLE_ABBATOIR,
+
     
     # Processor variants
     'processor': ROLE_PROCESSOR,
@@ -94,10 +87,6 @@ def normalize_role(role):
 
 
 def is_abbatoir(user):
-<<<<<<< HEAD
-=======
-def is_farmer(user):
->>>>>>> 0e8401e (Fix syntax errors and remove conflict markers in backend)
     """Check if user has abbatoir role"""
     if not hasattr(user, 'profile') or not user.profile:
         return False

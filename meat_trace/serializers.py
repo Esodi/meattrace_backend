@@ -405,7 +405,7 @@ class AnimalSerializer(serializers.ModelSerializer):
     class Meta:
         model = Animal
         fields = '__all__'
-        read_only_fields = ['abbatoir', 'animal_id', 'created_at', 'slaughtered_at',
+        read_only_fields = ['abbatoir', 'created_at',
                            'transferred_at', 'received_at', 'rejected_at',
                            'appealed_at', 'appeal_resolved_at']
 
