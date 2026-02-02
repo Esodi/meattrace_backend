@@ -731,7 +731,7 @@ class Product(models.Model):
         ('g', 'Grams'),
     ]
 
-    processing_unit = models.ForeignKey(ProcessingUnit, on_delete=models.CASCADE, related_name='products')
+    processing_unit = models.ForeignKey(ProcessingUnit, on_delete=models.CASCADE, related_name='products', null=True, blank=True)
     # Animal can be null for external products (opening stock)
     animal = models.ForeignKey(Animal, on_delete=models.SET_NULL, null=True, blank=True, related_name='products')
     slaughter_part = models.ForeignKey(SlaughterPart, on_delete=models.SET_NULL, null=True, blank=True, related_name='products', help_text="The specific slaughter part this product was made from")
