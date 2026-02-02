@@ -20,9 +20,9 @@ from django.conf import settings
 from django.db import models
 from django.db import transaction
 
-from .models import Animal, Product, Receipt, UserProfile, ProductCategory, ProcessingStage, ProductTimelineEvent, Inventory, Order, OrderItem, CarcassMeasurement, SlaughterPart, ProcessingUnit, ProcessingUnitUser, Shop, ShopUser, UserAuditLog, JoinRequest, Notification, Activity, SystemAlert, PerformanceMetric, ComplianceAudit, Certification, SystemHealth, SecurityLog, TransferRequest, BackupSchedule, Sale, SaleItem, RejectionReason
+from .models import Animal, Product, Receipt, UserProfile, ProductCategory, ProcessingStage, ProductTimelineEvent, Inventory, Order, OrderItem, CarcassMeasurement, SlaughterPart, ProcessingUnit, ProcessingUnitUser, Shop, ShopUser, UserAuditLog, JoinRequest, Notification, Activity, SystemAlert, PerformanceMetric, ComplianceAudit, Certification, SystemHealth, SecurityLog, TransferRequest, BackupSchedule, Sale, SaleItem, RejectionReason, ShopSettings, Invoice, InvoiceItem, InvoicePayment
 from .abbatoir_dashboard_serializer import AbbatoirDashboardSerializer
-from .serializers import AnimalSerializer, ProductSerializer, OrderSerializer, ShopSerializer, SlaughterPartSerializer, ActivitySerializer, ProcessingUnitSerializer, JoinRequestSerializer, ProductCategorySerializer, CarcassMeasurementSerializer, SaleSerializer, SaleItemSerializer, NotificationSerializer, UserProfileSerializer
+from .serializers import AnimalSerializer, ProductSerializer, OrderSerializer, ShopSerializer, SlaughterPartSerializer, ActivitySerializer, ProcessingUnitSerializer, JoinRequestSerializer, ProductCategorySerializer, CarcassMeasurementSerializer, SaleSerializer, SaleItemSerializer, NotificationSerializer, UserProfileSerializer, ShopSettingsSerializer, InvoiceSerializer, InvoiceCreateSerializer, InvoiceItemSerializer, InvoicePaymentSerializer, ReceiptSerializer
 from .utils.rejection_service import RejectionService
 from .role_utils import normalize_role, ROLE_ABBATOIR, ROLE_PROCESSOR, ROLE_SHOPOWNER, ROLE_ADMIN
 
@@ -3795,3 +3795,288 @@ class SaleViewSet(viewsets.ModelViewSet):
         else:
             print(f"[SALE_PERFORM_CREATE] Γ¥î No shop found for user")
             raise ValidationError("User is not associated with any shop")
+
+
+# Shop Settings ViewSet
+class ShopSettingsViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing shop settings"""
+    queryset = ShopSettings.objects.all()
+    serializer_class = ShopSettingsSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        user = self.request.user
+        try:
+            profile = user.profile
+            if profile.shop:
+                return ShopSettings.objects.filter(shop=profile.shop)
+        except UserProfile.DoesNotExist:
+            pass
+        return ShopSettings.objects.none()
+    
+    @action(detail=False, methods=['get'])
+    def my_settings(self, request):
+        """Get settings for the current user's shop"""
+        user = request.user
+        try:
+            profile = user.profile
+            if profile.shop:
+                settings, created = ShopSettings.objects.get_or_create(shop=profile.shop)
+                serializer = self.get_serializer(settings)
+                return Response(serializer.data)
+        except UserProfile.DoesNotExist:
+            pass
+        return Response({"error": "No shop associated with user"}, status=status_module.status.HTTP_404_NOT_FOUND)
+
+
+# Invoice ViewSets
+class InvoiceViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing invoices (pre-sale quotes)"""
+    queryset = Invoice.objects.all()
+    permission_classes = [IsAuthenticated]
+    
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return InvoiceCreateSerializer
+        return InvoiceSerializer
+    
+    def get_queryset(self):
+        user = self.request.user
+        try:
+            profile = user.profile
+            if profile.shop:
+                return Invoice.objects.filter(shop=profile.shop).select_related(
+                    'shop', 'created_by'
+                ).prefetch_related('items', 'payments', 'sales')
+        except UserProfile.DoesNotExist:
+            pass
+        return Invoice.objects.none()
+    
+    def perform_create(self, serializer):
+        user = self.request.user
+        shop = None
+        try:
+            profile = user.profile
+            if profile.shop:
+                shop = profile.shop
+        except UserProfile.DoesNotExist:
+            pass
+        
+        if shop:
+            serializer.save(shop=shop, created_by=user)
+        else:
+            raise ValidationError("User is not associated with any shop")
+    
+    @action(detail=True, methods=['post'])
+    def record_payment(self, request, pk=None):
+        """Record a payment against an invoice"""
+        invoice = self.get_object()
+        amount = request.data.get('amount')
+        payment_method = request.data.get('payment_method', 'cash')
+        transaction_reference = request.data.get('transaction_reference', '')
+        notes = request.data.get('notes', '')
+        
+        if not amount:
+            return Response({"error": "Amount is required"}, status=status_module.status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            amount = Decimal(amount)
+            if amount <= 0:
+                return Response({"error": "Amount must be greater than 0"}, status=status_module.status.HTTP_400_BAD_REQUEST)
+            
+            # Check if payment exceeds balance
+            if amount > invoice.balance_due:
+                return Response(
+                    {"error": f"Payment amount ({amount}) exceeds balance due ({invoice.balance_due})"}, 
+                    status=status_module.status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Create payment
+            payment = InvoicePayment.objects.create(
+                invoice=invoice,
+                amount=amount,
+                payment_method=payment_method,
+                transaction_reference=transaction_reference,
+                notes=notes,
+                recorded_by=request.user
+            )
+            
+            serializer = InvoicePaymentSerializer(payment)
+            return Response(serializer.data, status=status_module.status.HTTP_201_CREATED)
+        
+        except (ValueError, Decimal.InvalidOperation):
+            return Response({"error": "Invalid amount"}, status=status_module.status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=True, methods=['post'])
+    def convert_to_sale(self, request, pk=None):
+        """Convert invoice to sale (complete transaction)"""
+        invoice = self.get_object()
+        
+        if invoice.status == 'cancelled':
+            return Response({"error": "Cannot convert cancelled invoice"}, status=status_module.status.HTTP_400_BAD_REQUEST)
+        
+        payment_method = request.data.get('payment_method', 'cash')
+        
+        with transaction.atomic():
+            # Create sale from invoice
+            sale = Sale.objects.create(
+                shop=invoice.shop,
+                customer=invoice.customer,
+                total_price=invoice.total_amount,
+                payment_method=payment_method,
+                sold_by=request.user,
+                invoice=invoice
+            )
+            
+            # Create sale items from invoice items
+            for invoice_item in invoice.items.all():
+                SaleItem.objects.create(
+                    sale=sale,
+                    product=invoice_item.product,
+                    quantity=invoice_item.quantity,
+                    unit_price=invoice_item.unit_price
+                )
+            
+            # Update invoice status
+            invoice.status = 'completed'
+            invoice.save()
+            
+            serializer = SaleSerializer(sale)
+            return Response(serializer.data, status=status_module.status.HTTP_201_CREATED)
+    
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        """Cancel an invoice"""
+        invoice = self.get_object()
+        
+        if invoice.status == 'completed':
+            return Response({"error": "Cannot cancel completed invoice"}, status=status_module.status.HTTP_400_BAD_REQUEST)
+        
+        invoice.status = 'cancelled'
+        invoice.save()
+        
+        serializer = self.get_serializer(invoice)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def stats(self, request):
+        """Get invoice statistics for the shop"""
+        user = request.user
+        try:
+            profile = user.profile
+            if profile.shop:
+                from django.db.models import Sum, Count
+                invoices = Invoice.objects.filter(shop=profile.shop)
+                
+                stats = {
+                    'total_invoices': invoices.count(),
+                    'pending': invoices.filter(status='pending').count(),
+                    'paid': invoices.filter(status='paid').count(),
+                    'partial': invoices.filter(status='partial').count(),
+                    'completed': invoices.filter(status='completed').count(),
+                    'cancelled': invoices.filter(status='cancelled').count(),
+                    'overdue': invoices.filter(status='overdue').count(),
+                    'total_value': invoices.aggregate(Sum('total_amount'))['total_amount__sum'] or 0,
+                    'total_paid': invoices.aggregate(Sum('amount_paid'))['amount_paid__sum'] or 0,
+                }
+                return Response(stats)
+        except UserProfile.DoesNotExist:
+            pass
+        return Response({"error": "No shop associated with user"}, status=status_module.status.HTTP_404_NOT_FOUND)
+
+
+class InvoiceItemViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing invoice items"""
+    queryset = InvoiceItem.objects.all()
+    serializer_class = InvoiceItemSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        user = self.request.user
+        try:
+            profile = user.profile
+            if profile.shop:
+                return InvoiceItem.objects.filter(invoice__shop=profile.shop).select_related('invoice', 'product')
+        except UserProfile.DoesNotExist:
+            pass
+        return InvoiceItem.objects.none()
+
+
+class InvoicePaymentViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing invoice payments"""
+    queryset = InvoicePayment.objects.all()
+    serializer_class = InvoicePaymentSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        user = self.request.user
+        try:
+            profile = user.profile
+            if profile.shop:
+                return InvoicePayment.objects.filter(invoice__shop=profile.shop).select_related('invoice', 'recorded_by')
+        except UserProfile.DoesNotExist:
+            pass
+        return InvoicePayment.objects.none()
+
+
+# Enhanced Receipt ViewSet
+class ReceiptViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing product receipts"""
+    queryset = Receipt.objects.all()
+    serializer_class = ReceiptSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        user = self.request.user
+        try:
+            profile = user.profile
+            if profile.shop:
+                return Receipt.objects.filter(shop=profile.shop).select_related('shop', 'product', 'recorded_by')
+        except UserProfile.DoesNotExist:
+            pass
+        return Receipt.objects.none()
+    
+    def perform_create(self, serializer):
+        user = self.request.user
+        shop = None
+        try:
+            profile = user.profile
+            if profile.shop:
+                shop = profile.shop
+        except UserProfile.DoesNotExist:
+            pass
+        
+        if shop:
+            serializer.save(shop=shop, recorded_by=user)
+        else:
+            raise ValidationError("User is not associated with any shop")
+    
+    @action(detail=False, methods=['get'])
+    def recent(self, request):
+        """Get recent receipts for the shop"""
+        limit = int(request.query_params.get('limit', 10))
+        receipts = self.get_queryset().order_by('-created_at')[:limit]
+        serializer = self.get_serializer(receipts, many=True)
+        return Response(serializer.data)
+
+
+# Shop Settings ViewSet
+class ShopSettingsViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing shop settings"""
+    serializer_class = ShopSettingsSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        user = self.request.user
+        if hasattr(user, 'profile') and user.profile.shop:
+            return ShopSettings.objects.filter(shop=user.profile.shop)
+        return ShopSettings.objects.none()
+    
+    def perform_create(self, serializer):
+        user = self.request.user
+        if hasattr(user, 'profile') and user.profile.shop:
+            serializer.save(shop=user.profile.shop)
+        else:
+            raise ValidationError("User is not associated with any shop")
+
+

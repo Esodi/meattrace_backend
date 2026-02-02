@@ -805,15 +805,51 @@ class Inventory(models.Model):
         return self.quantity <= self.min_stock_level
 
 class Receipt(models.Model):
+    """Product receipt when shop receives stock"""
     shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name='receipts')
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='receipts')
+    receipt_number = models.CharField(max_length=50, unique=True, blank=True)  # Auto-generated: SHP{shop_id}-RCP-{number}
     received_quantity = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
     received_weight = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)], default=0)
     weight_unit = models.CharField(max_length=10, choices=Product.WEIGHT_UNIT_CHOICES, default='kg')
     received_at = models.DateTimeField(default=timezone.now)
+    recorded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='recorded_receipts')
+    notes = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"Receipt {self.id} - {self.shop.name} - {self.product.product_type}"
+        return f"Receipt {self.receipt_number or self.id} - {self.shop.name} - {self.product.product_type}"
+    
+    def save(self, *args, **kwargs):
+        # Auto-generate receipt number if not exists
+        if not self.receipt_number:
+            shop_settings = ShopSettings.objects.filter(shop=self.shop).first()
+            if shop_settings:
+                next_number = shop_settings.next_receipt_number
+                shop_settings.next_receipt_number += 1
+                shop_settings.save(update_fields=['next_receipt_number'])
+            else:
+                # Fallback if no settings exist
+                last_receipt = Receipt.objects.filter(shop=self.shop).order_by('-id').first()
+                next_number = (last_receipt.id + 1) if last_receipt else 1
+            
+            self.receipt_number = f"SHP{self.shop.id:03d}-RCP-{next_number:04d}"
+        
+        super().save(*args, **kwargs)
+        # Update inventory when receipt is created
+        inventory, created = Inventory.objects.get_or_create(
+            shop=self.shop,
+            product=self.product,
+            defaults={'quantity': 0, 'weight': 0, 'weight_unit': self.weight_unit}
+        )
+        inventory.quantity += self.received_quantity
+        inventory.weight += self.received_weight
+        inventory.weight_unit = self.weight_unit
+        inventory.last_updated = timezone.now()
+        inventory.save()
+    
+    class Meta:
+        ordering = ['-created_at']
 
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
@@ -2340,6 +2376,7 @@ class Sale(models.Model):
 
     shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name='sales')
     sold_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='sales_made')
+    invoice = models.ForeignKey('Invoice', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales', help_text="Link to invoice if sale was created from invoice")
     customer_name = models.CharField(max_length=200, blank=True, null=True)
     customer_phone = models.CharField(max_length=20, blank=True, null=True)
     total_amount = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
@@ -2463,6 +2500,234 @@ class SaleItem(models.Model):
         # Auto-calculate subtotal
         self.subtotal = self.quantity * self.unit_price
         super().save(*args, **kwargs)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SHOP SETTINGS AND BRANDING
+# ══════════════════════════════════════════════════════════════════════════════
+
+class ShopSettings(models.Model):
+    """Model for shop-specific settings, branding, and configuration"""
+    shop = models.OneToOneField(Shop, on_delete=models.CASCADE, related_name='settings')
+    
+    # Tax Configuration
+    tax_enabled = models.BooleanField(default=True)
+    tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=18.00, help_text="Tax rate in percentage (e.g., 18.00 for 18%)")
+    tax_label = models.CharField(max_length=50, default="VAT", help_text="Tax label (e.g., VAT, GST, Sales Tax)")
+    
+    # Company Branding
+    company_name = models.CharField(max_length=200, blank=True, help_text="Company name for invoices/receipts")
+    company_logo = models.ImageField(upload_to='shop_logos/', blank=True, null=True)
+    company_logo_url = models.URLField(blank=True, help_text="External URL for company logo")
+    company_header = models.TextField(blank=True, help_text="Header text for invoices/receipts")
+    company_footer = models.TextField(blank=True, help_text="Footer text for invoices/receipts")
+    
+    # Invoice Configuration
+    invoice_prefix = models.CharField(max_length=20, default="INV", help_text="Prefix for invoice numbers")
+    next_invoice_number = models.IntegerField(default=1, help_text="Next invoice number to use")
+    
+    # Receipt Configuration
+    receipt_prefix = models.CharField(max_length=20, default="RCP", help_text="Prefix for receipt numbers")
+    next_receipt_number = models.IntegerField(default=1, help_text="Next receipt number to use")
+    
+    # Contact Information (for invoices/receipts)
+    business_email = models.EmailField(blank=True)
+    business_phone = models.CharField(max_length=20, blank=True)
+    business_address = models.TextField(blank=True)
+    website = models.URLField(blank=True)
+    
+    # Payment Information
+    bank_name = models.CharField(max_length=200, blank=True)
+    bank_account_name = models.CharField(max_length=200, blank=True)
+    bank_account_number = models.CharField(max_length=50, blank=True)
+    mobile_money_number = models.CharField(max_length=20, blank=True)
+    mobile_money_provider = models.CharField(max_length=50, blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = "Shop Settings"
+        verbose_name_plural = "Shop Settings"
+    
+    def __str__(self):
+        return f"Settings for {self.shop.name}"
+    
+    def get_next_invoice_number(self):
+        """Generate next invoice number in format: SHOP_PREFIX-INV-0001"""
+        shop_id = str(self.shop.id).zfill(3)
+        invoice_num = str(self.next_invoice_number).zfill(4)
+        number = f"SHP{shop_id}-{self.invoice_prefix}-{invoice_num}"
+        self.next_invoice_number += 1
+        self.save(update_fields=['next_invoice_number'])
+        return number
+    
+    def get_next_receipt_number(self):
+        """Generate next receipt number in format: SHOP_PREFIX-RCP-0001"""
+        shop_id = str(self.shop.id).zfill(3)
+        receipt_num = str(self.next_receipt_number).zfill(4)
+        number = f"SHP{shop_id}-{self.receipt_prefix}-{receipt_num}"
+        self.next_receipt_number += 1
+        self.save(update_fields=['next_receipt_number'])
+        return number
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# INVOICE MODELS
+# ══════════════════════════════════════════════════════════════════════════════
+
+class Invoice(models.Model):
+    """Model for pre-sale invoices/quotes"""
+    
+    STATUS_CHOICES = [
+        ('draft', 'Draft'),
+        ('sent', 'Sent'),
+        ('partially_paid', 'Partially Paid'),
+        ('paid', 'Paid'),
+        ('overdue', 'Overdue'),
+        ('cancelled', 'Cancelled'),
+    ]
+    
+    PAYMENT_TERM_CHOICES = [
+        ('immediate', 'Payment on Receipt'),
+        ('net_7', 'Net 7 Days'),
+        ('net_15', 'Net 15 Days'),
+        ('net_30', 'Net 30 Days'),
+        ('net_60', 'Net 60 Days'),
+        ('custom', 'Custom Terms'),
+    ]
+    
+    invoice_number = models.CharField(max_length=50, unique=True, db_index=True)
+    shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name='invoices')
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='invoices_created')
+    
+    # Customer Information
+    customer_name = models.CharField(max_length=200)
+    customer_phone = models.CharField(max_length=20, blank=True)
+    customer_email = models.EmailField(blank=True)
+    customer_address = models.TextField(blank=True)
+    
+    # Status and Payment Terms
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft', db_index=True)
+    payment_terms = models.CharField(max_length=20, choices=PAYMENT_TERM_CHOICES, default='immediate')
+    custom_payment_terms = models.TextField(blank=True)
+    
+    # Financial Details
+    subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=0, validators=[MinValueValidator(0)])
+    tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0, validators=[MinValueValidator(0)])
+    tax_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0, validators=[MinValueValidator(0)])
+    discount_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0, validators=[MinValueValidator(0)])
+    total_amount = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
+    amount_paid = models.DecimalField(max_digits=10, decimal_places=2, default=0, validators=[MinValueValidator(0)])
+    
+    # Dates
+    invoice_date = models.DateField(default=timezone.now)
+    due_date = models.DateField()
+    
+    # Additional Information
+    notes = models.TextField(blank=True)
+    terms_and_conditions = models.TextField(blank=True)
+    
+    # Timestamps
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    # PDF tracking
+    pdf_generated_at = models.DateTimeField(null=True, blank=True)
+    pdf_url = models.URLField(blank=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['shop', 'status']),
+            models.Index(fields=['created_at']),
+        ]
+    
+    def __str__(self):
+        return f"Invoice {self.invoice_number} - {self.customer_name} - TZS {self.total_amount}"
+    
+    def calculate_totals(self):
+        """Recalculate all totals from invoice items"""
+        items = self.items.all()
+        self.subtotal = sum(item.subtotal for item in items)
+        self.tax_amount = (self.subtotal - self.discount_amount) * (self.tax_rate / 100)
+        self.total_amount = self.subtotal - self.discount_amount + self.tax_amount
+    
+    def get_balance_due(self):
+        """Get remaining balance to be paid"""
+        return self.total_amount - self.amount_paid
+    
+    def update_status(self):
+        """Update invoice status based on payment and due date"""
+        if self.amount_paid >= self.total_amount:
+            self.status = 'paid'
+        elif self.amount_paid > 0:
+            self.status = 'partially_paid'
+        elif timezone.now().date() > self.due_date and self.status not in ['paid', 'cancelled']:
+            self.status = 'overdue'
+
+
+class InvoiceItem(models.Model):
+    """Model for individual items in an invoice"""
+    invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name='items')
+    product = models.ForeignKey(Product, on_delete=models.SET_NULL, null=True, blank=True)
+    
+    # Item Details (can be custom or from product)
+    description = models.CharField(max_length=500)
+    quantity = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
+    weight = models.DecimalField(max_digits=10, decimal_places=2, default=0, validators=[MinValueValidator(0)])
+    weight_unit = models.CharField(max_length=10, choices=Product.WEIGHT_UNIT_CHOICES, default='kg')
+    unit_price = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
+    subtotal = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
+    
+    # Additional item notes
+    notes = models.TextField(blank=True)
+    
+    class Meta:
+        ordering = ['id']
+    
+    def __str__(self):
+        return f"{self.description} x {self.quantity}"
+    
+    def save(self, *args, **kwargs):
+        # Auto-calculate subtotal
+        self.subtotal = self.quantity * self.unit_price
+        super().save(*args, **kwargs)
+
+
+class InvoicePayment(models.Model):
+    """Model for tracking payments made against invoices"""
+    
+    PAYMENT_METHOD_CHOICES = [
+        ('cash', 'Cash'),
+        ('card', 'Card'),
+        ('mobile_money', 'Mobile Money'),
+        ('bank_transfer', 'Bank Transfer'),
+        ('cheque', 'Cheque'),
+        ('other', 'Other'),
+    ]
+    
+    invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name='payments')
+    amount = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
+    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES)
+    payment_date = models.DateTimeField(default=timezone.now)
+    reference_number = models.CharField(max_length=100, blank=True, help_text="Transaction/Reference number")
+    notes = models.TextField(blank=True)
+    recorded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['-payment_date']
+    
+    def __str__(self):
+        return f"Payment TZS {self.amount} for Invoice {self.invoice.invoice_number}"
+    
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        # Update invoice amounts and status
+        self.invoice.amount_paid = sum(p.amount for p in self.invoice.payments.all())
+        self.invoice.update_status()
+        self.invoice.save()
 
 
 # ══════════════════════════════════════════════════════════════════════════════

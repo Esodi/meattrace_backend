@@ -12,7 +12,8 @@ from .models import (
     RejectionReason, ComplianceStatus, AuditTrail, ConfigurationHistory,
     FeatureFlag, Backup, DataExport, DataImport, GDPRRequest, DataValidation,
     ProductCategory, NotificationTemplate, NotificationChannel,
-    NotificationDelivery, NotificationSchedule
+    NotificationDelivery, NotificationSchedule, ShopSettings, Invoice, 
+    InvoiceItem, InvoicePayment, Receipt
 )
 
 User = get_user_model()
@@ -1324,4 +1325,212 @@ class AdminAbbatoirListSerializer(serializers.ModelSerializer):
 
     def get_animal_count(self, obj):
         return obj.animals.count()
+
+
+# Shop Settings Serializers
+class ShopSettingsSerializer(serializers.ModelSerializer):
+    """Serializer for shop settings including branding and numbering"""
+    class Meta:
+        model = ShopSettings
+        fields = [
+            'id', 'shop', 'tax_rate', 'currency', 'logo', 'header_text', 
+            'footer_text', 'payment_info', 'next_invoice_number', 
+            'next_receipt_number', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+# Invoice Serializers
+class InvoiceItemSerializer(serializers.ModelSerializer):
+    """Serializer for invoice line items"""
+    product_name = serializers.SerializerMethodField()
+    subtotal = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    
+    class Meta:
+        model = InvoiceItem
+        fields = [
+            'id', 'invoice', 'product', 'product_name', 'description', 
+            'quantity', 'unit_price', 'subtotal'
+        ]
+        read_only_fields = ['id', 'subtotal']
+
+    def get_product_name(self, obj):
+        if obj.product:
+            return obj.product.name or obj.product.product_type
+        return obj.description or "Generic Item"
+
+
+class InvoicePaymentSerializer(serializers.ModelSerializer):
+    """Serializer for invoice payments"""
+    recorded_by_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = InvoicePayment
+        fields = [
+            'id', 'invoice', 'amount', 'payment_method', 'payment_date', 
+            'transaction_reference', 'notes', 'recorded_by', 'recorded_by_name', 
+            'created_at'
+        ]
+        read_only_fields = ['id', 'created_at']
+    
+    def get_recorded_by_name(self, obj):
+        if obj.recorded_by:
+            return f"{obj.recorded_by.first_name} {obj.recorded_by.last_name}".strip() or obj.recorded_by.username
+        return None
+
+
+class InvoiceSerializer(serializers.ModelSerializer):
+    """Serializer for invoices (pre-sale quotes)"""
+    items = InvoiceItemSerializer(many=True, read_only=True)
+    payments = InvoicePaymentSerializer(many=True, read_only=True)
+    customer_name = serializers.SerializerMethodField()
+    customer_contact = serializers.SerializerMethodField()
+    created_by_name = serializers.SerializerMethodField()
+    subtotal = serializers.SerializerMethodField()
+    tax_amount = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    total_amount = serializers.SerializerMethodField()
+    amount_paid = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    balance_due = serializers.SerializerMethodField()
+    issue_date = serializers.SerializerMethodField()
+    due_date = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Invoice
+        fields = [
+            'id', 'invoice_number', 'shop', 'customer_name', 
+            'customer_contact', 'status', 'issue_date', 'due_date', 
+            'payment_terms', 'notes', 'subtotal', 'tax_amount', 'total_amount', 
+            'amount_paid', 'balance_due', 'created_by', 'created_by_name', 
+            'created_at', 'updated_at', 'items', 'payments'
+        ]
+        read_only_fields = [
+            'id', 'invoice_number', 'subtotal', 'tax_amount', 'total_amount', 
+            'amount_paid', 'balance_due', 'created_at', 'updated_at'
+        ]
+    
+    def get_customer_name(self, obj):
+        return obj.customer_name
+    
+    def get_customer_contact(self, obj):
+        return obj.customer_phone or obj.customer_email or ""
+    
+    def get_created_by_name(self, obj):
+        if obj.created_by:
+            return f"{obj.created_by.first_name} {obj.created_by.last_name}".strip() or obj.created_by.username
+        return None
+
+    def get_subtotal(self, obj):
+        return float(obj.subtotal)
+
+    def get_total_amount(self, obj):
+        return float(obj.total_amount)
+
+    def get_balance_due(self, obj):
+        return float(obj.get_balance_due())
+
+    def get_issue_date(self, obj):
+        # Handle cases where it might be a datetime
+        val = obj.invoice_date
+        return val.date() if hasattr(val, 'date') else val
+
+    def get_due_date(self, obj):
+        # Handle cases where it might be a datetime
+        val = obj.due_date
+        return val.date() if hasattr(val, 'date') else val
+
+
+class InvoiceCreateSerializer(serializers.ModelSerializer):
+    """Serializer for creating invoices with items"""
+    items = serializers.ListField(
+        child=serializers.DictField(), 
+        write_only=True
+    )
+    customer_contact = serializers.CharField(write_only=True)
+    
+    class Meta:
+        model = Invoice
+        fields = [
+            'shop', 'customer_contact', 'due_date', 
+            'payment_terms', 'notes', 'items'
+        ]
+    
+    def create(self, validated_data):
+        items_data = validated_data.pop('items')
+        customer_contact = validated_data.pop('customer_contact')
+        
+        # Map customer_contact to model fields
+        validated_data['customer_name'] = customer_contact
+        
+        if '@' in customer_contact:
+            validated_data['customer_email'] = customer_contact
+        else:
+            validated_data['customer_phone'] = customer_contact
+            
+        # Generate invoice number
+        import time
+        import random
+        validated_data['invoice_number'] = f"INV-{int(time.time())}-{random.randint(1000, 9999)}"
+        
+        # Calculate totals
+        subtotal = 0
+        from .models import Product
+        
+        # We need to process items to get descriptions and calculate totals
+        processed_items = []
+        for item_data in items_data:
+            # Get product to populate description
+            try:
+                product_id = item_data.get('product')
+                product = Product.objects.get(id=product_id)
+                item_data['description'] = product.name or product.product_type
+                # Ensure product instance is used if serializer expects it, 
+                # but here item_data is raw dict passed to create(), so ID is fine 
+                # IF the model field handles it. But InvoiceItem.product is ForeignKey.
+                # Standard create() handles ID if passed as 'product_id' or 'product' usually works if it's ModelSerializer 
+                # but we are doing manual create(). 
+                # Let's pass the instance to be safe and consistent.
+                item_data['product'] = product
+            except Product.DoesNotExist:
+                item_data['description'] = f"Product {item_data.get('product')}"
+            
+            qty = float(item_data.get('quantity', 0))
+            price = float(item_data.get('unit_price', 0))
+            subtotal += qty * price
+            processed_items.append(item_data)
+            
+        validated_data['subtotal'] = subtotal
+        validated_data['total_amount'] = subtotal # Assuming no tax/discount logic for now
+            
+        invoice = Invoice.objects.create(**validated_data)
+        
+        for item_data in processed_items:
+            InvoiceItem.objects.create(invoice=invoice, **item_data)
+        
+        return invoice
+
+    def to_representation(self, instance):
+        serializer = InvoiceSerializer(instance, context=self.context)
+        return serializer.data
+
+
+# Enhanced Receipt Serializer
+class ReceiptSerializer(serializers.ModelSerializer):
+    """Serializer for product receipts"""
+    product_name = serializers.CharField(source='product.product_type', read_only=True)
+    shop_name = serializers.CharField(source='shop.name', read_only=True)
+    recorded_by_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Receipt
+        fields = [
+            'id', 'receipt_number', 'shop', 'shop_name', 'product', 'product_name', 
+            'received_quantity', 'received_weight', 'weight_unit', 'received_at', 
+            'recorded_by', 'recorded_by_name', 'notes', 'created_at'
+        ]
+        read_only_fields = ['id', 'receipt_number', 'created_at']
+    
+    def get_recorded_by_name(self, obj):
+        if obj.recorded_by:
+            return f"{obj.recorded_by.first_name} {obj.recorded_by.last_name}".strip() or obj.recorded_by.username
+        return None
 

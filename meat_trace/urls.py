@@ -98,6 +98,30 @@ except Exception as e:
     logger.warning(f"[URL_REGISTRATION] Failed to register NotificationViewSet: {e}")
 
 try:
+    from .views import ShopSettingsViewSet
+    router.register(r'shop-settings', ShopSettingsViewSet, basename='shop-settings')
+except Exception as e:
+    logger.warning(f"[URL_REGISTRATION] Failed to register ShopSettingsViewSet: {e}")
+
+try:
+    from .views import InvoiceViewSet
+    router.register(r'invoices', InvoiceViewSet, basename='invoices')
+except Exception as e:
+    logger.warning(f"[URL_REGISTRATION] Failed to register InvoiceViewSet: {e}")
+
+try:
+    from .views import InvoiceItemViewSet
+    router.register(r'invoice-items', InvoiceItemViewSet, basename='invoice-items')
+except Exception as e:
+    logger.warning(f"[URL_REGISTRATION] Failed to register InvoiceItemViewSet: {e}")
+
+try:
+    from .views import InvoicePaymentViewSet
+    router.register(r'invoice-payments', InvoicePaymentViewSet, basename='invoice-payments')
+except Exception as e:
+    logger.warning(f"[URL_REGISTRATION] Failed to register InvoicePaymentViewSet: {e}")
+
+try:
     from .views import SlaughterPartViewSet
     router.register(r'slaughter-parts', SlaughterPartViewSet, basename='slaughter-parts')
 except Exception as e:
