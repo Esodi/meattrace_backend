@@ -572,6 +572,19 @@ class SaleItemWriteSerializer(serializers.ModelSerializer):
         model = SaleItem
         fields = ['product', 'quantity', 'weight', 'weight_unit', 'unit_price', 'subtotal']
 
+    def validate(self, attrs):
+        # Weight-first: accept legacy quantity payloads but normalize to weight.
+        weight = attrs.get('weight')
+        quantity = attrs.get('quantity')
+
+        if weight in (None, 0) and quantity not in (None, 0):
+            attrs['weight'] = quantity
+        elif weight in (None, 0):
+            attrs['weight'] = 0
+
+        attrs['quantity'] = attrs['weight']
+        return attrs
+
 
 
 class SaleSerializer(serializers.ModelSerializer):
@@ -613,7 +626,10 @@ class SaleSerializer(serializers.ModelSerializer):
             sale = Sale.objects.create(**validated_data)
 
             for item in items_data:
-                # item is a dict containing product (id or instance), quantity, unit_price, subtotal
+                # Weight-first normalization with quantity compatibility.
+                if item.get('weight') in (None, 0):
+                    item['weight'] = item.get('quantity', 0)
+                item['quantity'] = item.get('weight', 0)
                 SaleItem.objects.create(sale=sale, **item)
 
         return sale
@@ -1184,8 +1200,9 @@ class AdminProductCreateUpdateSerializer(serializers.ModelSerializer):
             validated_data['received_by_shop'] = shop
             validated_data['transferred_at'] = timezone.now()
             validated_data['received_at'] = timezone.now()
-            if 'quantity_received' not in validated_data or not validated_data['quantity_received']:
-                validated_data['quantity_received'] = validated_data.get('quantity', 0)
+            if 'weight_received' not in validated_data or not validated_data['weight_received']:
+                validated_data['weight_received'] = validated_data.get('weight', 0)
+            validated_data['quantity_received'] = validated_data.get('weight_received', 0)
         
         return super().create(validated_data)
 
@@ -1350,7 +1367,7 @@ class InvoiceItemSerializer(serializers.ModelSerializer):
         model = InvoiceItem
         fields = [
             'id', 'invoice', 'product', 'product_name', 'description', 
-            'quantity', 'unit_price', 'subtotal'
+            'quantity', 'weight', 'weight_unit', 'unit_price', 'subtotal'
         ]
         read_only_fields = ['id', 'subtotal']
 
@@ -1493,9 +1510,11 @@ class InvoiceCreateSerializer(serializers.ModelSerializer):
             except Product.DoesNotExist:
                 item_data['description'] = f"Product {item_data.get('product')}"
             
-            qty = float(item_data.get('quantity', 0))
+            weight = float(item_data.get('weight', item_data.get('quantity', 0)) or 0)
+            item_data['weight'] = weight
+            item_data['quantity'] = weight
             price = float(item_data.get('unit_price', 0))
-            subtotal += qty * price
+            subtotal += weight * price
             processed_items.append(item_data)
             
         validated_data['subtotal'] = subtotal
@@ -1533,4 +1552,3 @@ class ReceiptSerializer(serializers.ModelSerializer):
         if obj.recorded_by:
             return f"{obj.recorded_by.first_name} {obj.recorded_by.last_name}".strip() or obj.recorded_by.username
         return None
-

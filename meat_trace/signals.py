@@ -40,16 +40,20 @@ def update_inventory_on_order_status_change(sender, instance, created, **kwargs)
                 inventory, created = Inventory.objects.get_or_create(
                     shop=instance.shop,
                     product=order_item.product,
-                    defaults={'quantity': 0}
+                    defaults={'quantity': 0, 'weight': 0, 'weight_unit': getattr(order_item, 'weight_unit', 'kg')}
                 )
 
-                # Subtract ordered quantity from inventory
-                old_quantity = inventory.quantity
-                inventory.quantity = max(0, inventory.quantity - order_item.quantity)
+                # Subtract ordered weight from inventory (weight-first logic)
+                old_weight = inventory.weight
+                sold_weight = getattr(order_item, 'weight', 0) or 0
+                inventory.weight = max(0, inventory.weight - sold_weight)
                 inventory.last_updated = timezone.now()
                 inventory.save()
 
-                logger.info(f"Updated inventory for product {order_item.product.name}: {old_quantity} -> {inventory.quantity}")
+                logger.info(
+                    f"Updated inventory for product {order_item.product.name}: "
+                    f"{old_weight} -> {inventory.weight} ({inventory.weight_unit})"
+                )
 
             except Exception as e:
                 logger.error(f"Failed to update inventory for order item {order_item.id}: {str(e)}")

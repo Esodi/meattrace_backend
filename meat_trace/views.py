@@ -555,7 +555,7 @@ class SlaughterPartViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(animal__abbatoir=user)
 
         # ProcessingUnit users see parts transferred to or received by them
-        elif hasattr(user, 'profile') and user.profile.role == 'processing_unit':
+        elif hasattr(user, 'profile') and normalize_role(user.profile.role) == ROLE_PROCESSOR:
             # Get all processing units the user is a member of
             from .models import ProcessingUnitUser
             user_processing_units = ProcessingUnitUser.objects.filter(
@@ -1093,7 +1093,30 @@ class JoinRequestReviewView(APIView):
 
     def get(self, request, request_id):
         try:
-            jr = JoinRequest.objects.get(id=request_id)
+            jr = JoinRequest.objects.select_related('shop', 'processing_unit', 'user').get(id=request_id)
+            user = request.user
+
+            if not (user.is_superuser or user.is_staff):
+                can_view = jr.user_id == user.id
+
+                if not can_view and jr.shop_id:
+                    can_view = ShopUser.objects.filter(
+                        user=user,
+                        shop_id=jr.shop_id,
+                        is_active=True
+                    ).exists()
+
+                if not can_view and jr.processing_unit_id:
+                    can_view = ProcessingUnitUser.objects.filter(
+                        user=user,
+                        processing_unit_id=jr.processing_unit_id,
+                        is_active=True,
+                        is_suspended=False
+                    ).exists()
+
+                if not can_view:
+                    return Response({'error': 'forbidden'}, status=status_module.HTTP_403_FORBIDDEN)
+
             data = JoinRequestSerializer(jr).data
         except Exception:
             return Response({'error': 'not found'}, status=status_module.HTTP_404_NOT_FOUND)
@@ -1178,7 +1201,48 @@ def health_check(request):
 @permission_classes([IsAuthenticated])
 def activities_view(request):
     try:
-        acts = Activity.objects.order_by('-created_at')[:50]
+        user = request.user
+        acts = Activity.objects.select_related('user').order_by('-created_at')
+
+        if user.is_superuser or user.is_staff:
+            data = ActivitySerializer(acts[:50], many=True).data
+            return Response({'activities': data})
+
+        try:
+            role = normalize_role(user.profile.role)
+        except UserProfile.DoesNotExist:
+            role = None
+
+        if role == ROLE_ADMIN:
+            scoped = acts
+        elif role == ROLE_SHOPOWNER:
+            shop_ids = _get_user_shop_ids(user)
+            if shop_ids:
+                scoped = acts.filter(
+                    Q(user=user) |
+                    Q(user__shop_memberships__shop_id__in=shop_ids, user__shop_memberships__is_active=True) |
+                    Q(user__profile__shop_id__in=shop_ids)
+                ).distinct()
+            else:
+                scoped = acts.filter(user=user)
+        elif role == ROLE_PROCESSOR:
+            unit_ids = _get_user_processing_unit_ids(user)
+            if unit_ids:
+                scoped = acts.filter(
+                    Q(user=user) |
+                    Q(
+                        user__processing_unit_memberships__processing_unit_id__in=unit_ids,
+                        user__processing_unit_memberships__is_active=True,
+                        user__processing_unit_memberships__is_suspended=False
+                    ) |
+                    Q(user__profile__processing_unit_id__in=unit_ids)
+                ).distinct()
+            else:
+                scoped = acts.filter(user=user)
+        else:
+            scoped = acts.filter(user=user)
+
+        acts = scoped[:50]
         data = ActivitySerializer(acts, many=True).data
     except Exception:
         data = []
@@ -1197,6 +1261,114 @@ def abbatoir_dashboard(request):
     return Response(data)
 
 
+def _get_user_shop_ids(user):
+    """Resolve all active shop IDs associated with a user across old/new membership models."""
+    shop_ids = set()
+
+    # New model: ShopUser memberships
+    try:
+        shop_ids.update(
+            user.shop_memberships.filter(is_active=True).values_list('shop_id', flat=True)
+        )
+    except Exception:
+        pass
+
+    # Legacy model: UserProfile.shop
+    try:
+        if user.profile.shop_id:
+            shop_ids.add(user.profile.shop_id)
+    except UserProfile.DoesNotExist:
+        pass
+
+    return shop_ids
+
+
+def _get_user_processing_unit_ids(user):
+    """Resolve all active processing unit IDs associated with a user."""
+    unit_ids = set()
+
+    try:
+        unit_ids.update(
+            user.processing_unit_memberships.filter(
+                is_active=True,
+                is_suspended=False
+            ).values_list('processing_unit_id', flat=True)
+        )
+    except Exception:
+        pass
+
+    try:
+        if user.profile.processing_unit_id:
+            unit_ids.add(user.profile.processing_unit_id)
+    except UserProfile.DoesNotExist:
+        pass
+
+    return unit_ids
+
+
+def _can_access_sale_for_user(user, sale):
+    """Check whether the current user is allowed to access a sale detail page."""
+    if not user.is_authenticated:
+        return False
+
+    if user.is_superuser or user.is_staff:
+        return True
+
+    shop_ids = _get_user_shop_ids(user)
+    if shop_ids and sale.shop_id in shop_ids:
+        return True
+
+    try:
+        profile = user.profile
+        role = normalize_role(profile.role)
+
+        if role == ROLE_ADMIN:
+            return True
+
+        if role == ROLE_PROCESSOR and profile.processing_unit_id:
+            return sale.items.filter(
+                product__processing_unit_id=profile.processing_unit_id
+            ).exists()
+    except UserProfile.DoesNotExist:
+        pass
+
+    return False
+
+
+def _can_access_product_for_user(user, product):
+    """Check whether the current user is allowed to access a product traceability page."""
+    if not user.is_authenticated:
+        return False
+
+    if user.is_superuser or user.is_staff:
+        return True
+
+    shop_ids = _get_user_shop_ids(user)
+    if shop_ids:
+        if product.received_by_shop_id and product.received_by_shop_id in shop_ids:
+            return True
+        if product.transferred_to_id and product.transferred_to_id in shop_ids:
+            return True
+
+    try:
+        profile = user.profile
+        role = normalize_role(profile.role)
+
+        if role == ROLE_ADMIN:
+            return True
+
+        if role == ROLE_PROCESSOR and profile.processing_unit_id:
+            return product.processing_unit_id == profile.processing_unit_id
+
+        if role == ROLE_ABBATOIR and product.animal and product.animal.abbatoir_id == user.id:
+            return True
+    except UserProfile.DoesNotExist:
+        pass
+
+    return False
+
+
+@login_required
 def product_info_view(request, product_id):
     try:
         product = Product.objects.select_related(
@@ -1208,6 +1380,9 @@ def product_info_view(request, product_id):
             'ingredients__slaughter_part',
             'animal__slaughter_parts'
         ).get(id=product_id)
+
+        if not _can_access_product_for_user(request.user, product):
+            return render(request, 'meat_trace/product_info.html', {'error': 'Not found'}, status=404)
         
         # Build comprehensive timeline
         timeline = []
@@ -1394,7 +1569,6 @@ def product_info_view(request, product_id):
             'Product Name': product.name,
             'Batch Number': product.batch_number,
             'Product Type': product.get_product_type_display(),
-            'Quantity': f'{product.quantity} {product.weight_unit}',
             'Weight': f'{product.weight} {product.weight_unit}' if product.weight else 'Not recorded',
             'Category': product.category.name if product.category else 'Not categorized',
             'Processing Unit': product.processing_unit.name if product.processing_unit else 'Unknown',
@@ -1416,7 +1590,7 @@ def product_info_view(request, product_id):
             ingredients_list = []
             for ing in product.ingredients.all():
                 if ing.slaughter_part:
-                    ingredients_list.append(f'{ing.slaughter_part.get_part_type_display()} ({ing.quantity} {ing.weight_unit})')
+                    ingredients_list.append(f'{ing.slaughter_part.get_part_type_display()} ({ing.quantity_used} {ing.quantity_unit})')
             if ingredients_list:
                 creation_details['Ingredients'] = ', '.join(ingredients_list)
         
@@ -1439,7 +1613,7 @@ def product_info_view(request, product_id):
                 'Transfer Date': product.transferred_at.strftime('%Y-%m-%d %H:%M:%S'),
                 'Product': product.name,
                 'Batch Number': product.batch_number,
-                'Quantity Transferred': f'{product.quantity} {product.weight_unit}',
+                'Weight Transferred': f'{product.weight} {product.weight_unit}',
                 'Product Type': product.get_product_type_display(),
             }
             
@@ -1465,8 +1639,8 @@ def product_info_view(request, product_id):
             reception_details = {
                 'Shop Name': product.received_by_shop.name,
                 'Reception Date': product.received_at.strftime('%Y-%m-%d %H:%M:%S'),
-                'Quantity Ordered': f'{product.quantity} {product.weight_unit}',
-                'Quantity Received': f'{product.quantity_received} {product.weight_unit}' if hasattr(product, 'quantity_received') and product.quantity_received else 'Same as ordered',
+                'Weight Ordered': f'{product.weight} {product.weight_unit}',
+                'Weight Received': f'{product.weight_received} {product.weight_unit}' if hasattr(product, 'weight_received') and product.weight_received else 'Same as ordered',
                 'Batch Number': product.batch_number,
                 'Reception Status': 'Accepted and Added to Inventory',
             }
@@ -1497,7 +1671,7 @@ def product_info_view(request, product_id):
                 'Rejected By': product.rejected_by.get_full_name() if product.rejected_by and product.rejected_by.first_name else (product.rejected_by.username if product.rejected_by else 'Unknown'),
                 'Rejection Date': product.rejected_at.strftime('%Y-%m-%d %H:%M:%S'),
                 'Rejection Status': product.get_rejection_status_display() if hasattr(product, 'get_rejection_status_display') else product.rejection_status,
-                'Quantity Rejected': f'{product.quantity_rejected} {product.weight_unit}' if hasattr(product, 'quantity_rejected') and product.quantity_rejected else 'Full quantity',
+                'Weight Rejected': f'{product.weight_rejected} {product.weight_unit}' if hasattr(product, 'weight_rejected') and product.weight_rejected else f'Full weight ({product.weight} {product.weight_unit})',
                 'Reason': product.rejection_reason or 'Not specified',
                 'Location': product.received_by_shop.name if product.received_by_shop else 'Unknown',
             }
@@ -1520,9 +1694,9 @@ def product_info_view(request, product_id):
         sales = []
         
         # Calculate running inventory after each sale
-        total_quantity_sold = 0
+        total_weight_sold = 0
         remaining_after_sale = 0
-        initial_inventory = float(product.quantity) if product.quantity else 0
+        initial_inventory = float(product.weight) if product.weight else 0
         
         order_items = product.orderitem_set.select_related('order', 'order__customer', 'order__shop').order_by('order__created_at')
         
@@ -1533,9 +1707,11 @@ def product_info_view(request, product_id):
                 order = item.order
                 
                 # Calculate inventory after this sale
-                quantity_sold_in_this_order = float(item.quantity) if hasattr(item, 'quantity') and item.quantity else 0
-                total_quantity_sold += quantity_sold_in_this_order
-                remaining_after_sale = initial_inventory - total_quantity_sold
+                weight_sold_in_this_order = float(item.weight) if hasattr(item, 'weight') and item.weight else (
+                    float(item.quantity) if hasattr(item, 'quantity') and item.quantity else 0
+                )
+                total_weight_sold += weight_sold_in_this_order
+                remaining_after_sale = initial_inventory - total_weight_sold
                 
                 # Build comprehensive sale details
                 sale_details = {
@@ -1588,17 +1764,17 @@ def product_info_view(request, product_id):
                 
                 # Sale Details
                 sale_details['---Sale Details---'] = '---'
-                sale_details['Quantity Sold This Order'] = f'{item.quantity} {product.weight_unit}'
+                sale_details['Weight Sold This Order'] = f'{item.weight if hasattr(item, "weight") else item.quantity} {product.weight_unit}'
                 sale_details['Unit Price'] = f'${item.unit_price}' if hasattr(item, 'unit_price') and item.unit_price else 'N/A'
-                sale_details['Subtotal for This Item'] = f'${item.subtotal}' if hasattr(item, 'subtotal') and item.subtotal else f'${float(item.quantity) * float(item.unit_price) if hasattr(item, "unit_price") and item.unit_price else 0:.2f}'
+                sale_details['Subtotal for This Item'] = f'${item.subtotal}' if hasattr(item, 'subtotal') and item.subtotal else f'${float(item.weight if hasattr(item, "weight") and item.weight else item.quantity) * float(item.unit_price) if hasattr(item, "unit_price") and item.unit_price else 0:.2f}'
                 sale_details['Order Status'] = order.get_status_display() if hasattr(order, 'get_status_display') else order.status
                 
                 # Inventory Tracking
                 sale_details['---Inventory Status---'] = '---'
-                sale_details['Initial Product Quantity'] = f'{initial_inventory} {product.weight_unit}'
-                sale_details['Total Sold Up To Now'] = f'{total_quantity_sold} {product.weight_unit}'
+                sale_details['Initial Product Weight'] = f'{initial_inventory} {product.weight_unit}'
+                sale_details['Total Sold Up To Now'] = f'{total_weight_sold} {product.weight_unit}'
                 sale_details['Remaining After This Sale'] = f'{remaining_after_sale} {product.weight_unit}'
-                sale_details['Percentage Sold'] = f'{(total_quantity_sold / initial_inventory * 100):.1f}%' if initial_inventory > 0 else 'N/A'
+                sale_details['Percentage Sold'] = f'{(total_weight_sold / initial_inventory * 100):.1f}%' if initial_inventory > 0 else 'N/A'
                 
                 # Shop Information
                 sale_details['---Shop Information---'] = '---'
@@ -1640,7 +1816,7 @@ def product_info_view(request, product_id):
                     'timestamp': order.created_at,
                     'location': shop.name if shop else 'Retail Shop',
                     'actor': shop.name if shop else 'Retail Shop',
-                    'action': f'Sold {item.quantity} {product.weight_unit} to {customer.get_full_name() if customer and customer.first_name else (customer.username if customer else "walk-in customer")}',
+                    'action': f'Sold {item.weight if hasattr(item, "weight") and item.weight else item.quantity} {product.weight_unit} to {customer.get_full_name() if customer and customer.first_name else (customer.username if customer else "walk-in customer")}',
                     'icon': 'fa-shopping-cart',
                     'details': sale_details
                 })
@@ -1648,24 +1824,24 @@ def product_info_view(request, product_id):
         timeline.extend(sales)
         
         # 11. Current Inventory Status (if product still has remaining stock)
-        if remaining_after_sale > 0 or total_quantity_sold == 0:
+        if remaining_after_sale > 0 or total_weight_sold == 0:
             current_inventory_items = product.inventory.select_related('shop').all()
             
             if current_inventory_items.exists():
                 for inv_item in current_inventory_items:
                     inventory_details = {
                         'Shop Name': inv_item.shop.name if inv_item.shop else 'Unknown',
-                        'Current Stock': f'{inv_item.quantity} {product.weight_unit}' if hasattr(inv_item, 'quantity') else 'Unknown',
-                        'Stock Status': 'In Stock' if (hasattr(inv_item, 'quantity') and inv_item.quantity > 0) else 'Out of Stock',
+                        'Current Stock': f'{inv_item.weight} {product.weight_unit}' if hasattr(inv_item, 'weight') else 'Unknown',
+                        'Stock Status': 'In Stock' if (hasattr(inv_item, 'weight') and inv_item.weight > 0) else 'Out of Stock',
                         'Last Updated': inv_item.updated_at.strftime('%Y-%m-%d %H:%M:%S') if hasattr(inv_item, 'updated_at') and inv_item.updated_at else 'Not tracked',
                     }
                     
                     if hasattr(inv_item.shop, 'location'):
                         inventory_details['Shop Location'] = inv_item.shop.location
                     
-                    if total_quantity_sold > 0:
-                        inventory_details['Original Quantity'] = f'{initial_inventory} {product.weight_unit}'
-                        inventory_details['Total Sold'] = f'{total_quantity_sold} {product.weight_unit}'
+                    if total_weight_sold > 0:
+                        inventory_details['Original Weight'] = f'{initial_inventory} {product.weight_unit}'
+                        inventory_details['Total Sold'] = f'{total_weight_sold} {product.weight_unit}'
                         inventory_details['Sales Count'] = order_items.count()
                     
                     timeline.append({
@@ -1674,7 +1850,7 @@ def product_info_view(request, product_id):
                         'timestamp': inv_item.updated_at if hasattr(inv_item, 'updated_at') and inv_item.updated_at else product.created_at,
                         'location': inv_item.shop.name if inv_item.shop else 'Shop',
                         'actor': 'Inventory System',
-                        'action': f'Current stock level: {inv_item.quantity if hasattr(inv_item, "quantity") else "Unknown"} {product.weight_unit}',
+                        'action': f'Current stock level: {inv_item.weight if hasattr(inv_item, "weight") else "Unknown"} {product.weight_unit}',
                         'icon': 'fa-warehouse',
                         'details': inventory_details
                     })
@@ -1700,7 +1876,8 @@ def product_info_view(request, product_id):
             'product_name': product.name,
             'batch_number': product.batch_number,
             'product_type': product.product_type,
-            'quantity': product.quantity,
+            'quantity': product.weight,
+            'weight': product.weight,
             'weight_unit': product.weight_unit,
             'price': product.price if hasattr(product, 'price') and product.price else '0.00',
             'timeline_events': timeline,
@@ -1747,13 +1924,39 @@ def product_info_view(request, product_id):
 def product_info_list_view(request):
     try:
         from meat_trace.models import ProductInfo, Product
-        
-        # Get or create ProductInfo for all products
-        product_infos = ProductInfo.objects.select_related('product').all()[:50]
+
+        user = request.user
+        product_queryset = Product.objects.none()
+
+        if user.is_superuser or user.is_staff:
+            product_queryset = Product.objects.all()
+        else:
+            try:
+                role = normalize_role(user.profile.role)
+            except UserProfile.DoesNotExist:
+                role = None
+
+            if role == ROLE_ADMIN:
+                product_queryset = Product.objects.all()
+            elif role == ROLE_SHOPOWNER:
+                shop_ids = _get_user_shop_ids(user)
+                if shop_ids:
+                    product_queryset = Product.objects.filter(
+                        Q(transferred_to_id__in=shop_ids) | Q(received_by_shop_id__in=shop_ids)
+                    )
+            elif role == ROLE_PROCESSOR:
+                unit_ids = _get_user_processing_unit_ids(user)
+                if unit_ids:
+                    product_queryset = Product.objects.filter(processing_unit_id__in=unit_ids)
+            elif role == ROLE_ABBATOIR:
+                product_queryset = Product.objects.filter(animal__abbatoir=user)
+
+        # Get or create ProductInfo only for products visible to this user
+        product_infos = ProductInfo.objects.select_related('product').filter(product__in=product_queryset).distinct()[:50]
         
         # If no ProductInfo exists, create them
         if not product_infos.exists():
-            products = Product.objects.all()[:50]
+            products = product_queryset[:50]
             for product in products:
                 try:
                     # Check if ProductInfo exists
@@ -1764,7 +1967,7 @@ def product_info_list_view(request):
                             product_name=product.name or 'Unnamed Product',
                             product_type=product.product_type,
                             batch_number=product.batch_number or 'BATCH001',
-                            quantity=product.quantity or 0
+                            quantity=product.weight or 0
                         )
                         product_info.save()
                         # Now update with full details
@@ -1819,10 +2022,11 @@ def add_product_category(request):
 
 @login_required
 def sale_info_view(request, sale_id):
-    try:
-        sale = Sale.objects.get(id=sale_id)
-    except Exception:
-        sale = None
+    sale = get_object_or_404(Sale, id=sale_id)
+
+    if not _can_access_sale_for_user(request.user, sale):
+        return render(request, 'sale_info/view.html', {'sale': None}, status=404)
+
     return render(request, 'sale_info/view.html', {'sale': sale})
 
 
@@ -2335,7 +2539,23 @@ class ProcessingUnitViewSet(viewsets.ViewSet):
     def list(self, request):
         """List all processing units"""
         try:
-            queryset = ProcessingUnit.objects.all()
+            user = request.user
+
+            if user.is_superuser or user.is_staff:
+                queryset = ProcessingUnit.objects.all()
+            else:
+                role = None
+                try:
+                    role = normalize_role(user.profile.role)
+                except UserProfile.DoesNotExist:
+                    pass
+
+                if role == ROLE_ADMIN:
+                    queryset = ProcessingUnit.objects.all()
+                else:
+                    unit_ids = _get_user_processing_unit_ids(user)
+                    queryset = ProcessingUnit.objects.filter(id__in=unit_ids) if unit_ids else ProcessingUnit.objects.none()
+
             serializer = ProcessingUnitSerializer(queryset, many=True)
             # Return paginated-style response for Flutter app compatibility
             return Response({
@@ -2365,6 +2585,30 @@ class ProcessingUnitViewSet(viewsets.ViewSet):
                     status=status_module.HTTP_404_NOT_FOUND
                 )
             
+            user = request.user
+            if not (user.is_superuser or user.is_staff):
+                role = None
+                try:
+                    role = normalize_role(user.profile.role)
+                except UserProfile.DoesNotExist:
+                    pass
+
+                if role != ROLE_ADMIN:
+                    # Only processing unit owners/managers can view unit join requests
+                    can_view = ProcessingUnitUser.objects.filter(
+                        user=user,
+                        processing_unit=processing_unit,
+                        is_active=True,
+                        is_suspended=False,
+                        role__in=['owner', 'manager']
+                    ).exists()
+
+                    if not can_view:
+                        return Response(
+                            {'error': 'Only processing unit owners or managers can view join requests'},
+                            status=status_module.HTTP_403_FORBIDDEN
+                        )
+
             # Filter join requests for this processing unit
             join_requests = JoinRequest.objects.filter(
                 processing_unit=processing_unit
@@ -2388,6 +2632,22 @@ class ProcessingUnitViewSet(viewsets.ViewSet):
     @action(detail=True, methods=['get'])
     def users(self, request, pk=None):
         try:
+            user = request.user
+            if not (user.is_superuser or user.is_staff):
+                role = None
+                try:
+                    role = normalize_role(user.profile.role)
+                except UserProfile.DoesNotExist:
+                    pass
+
+                if role != ROLE_ADMIN:
+                    unit_ids = _get_user_processing_unit_ids(user)
+                    if int(pk) not in unit_ids:
+                        return Response(
+                            {'error': 'You do not have permission to view users for this processing unit'},
+                            status=status_module.HTTP_403_FORBIDDEN
+                        )
+
             users = ProcessingUnitUser.objects.filter(processing_unit_id=pk).values('id', 'user__username')
             return Response({'users': list(users)})
         except Exception:
@@ -2870,7 +3130,7 @@ class ShopViewSet(viewsets.ModelViewSet):
                 status=status_module.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-    @action(detail=True, methods=['get'], url_path='join-requests', permission_classes=[AllowAny])
+    @action(detail=True, methods=['get'], url_path='join-requests', permission_classes=[IsAuthenticated])
     def join_requests(self, request, pk=None):
         """List join requests for a specific shop"""
         try:
@@ -2930,7 +3190,7 @@ class ShopViewSet(viewsets.ModelViewSet):
                 status=status_module.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-    @action(detail=True, methods=['get'], url_path='members', permission_classes=[AllowAny])
+    @action(detail=True, methods=['get'], url_path='members', permission_classes=[IsAuthenticated])
     def members(self, request, pk=None):
         """List members of a specific shop"""
         try:
@@ -3075,34 +3335,40 @@ class OrderViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
-        """Filter orders based on user permissions"""
+        """Filter orders based on user permissions with optimizations"""
         user = self.request.user
+        
+        base_qs = Order.objects.all().select_related(
+            'shop', 'customer_profile'
+        ).prefetch_related('items', 'items__product').order_by('-created_at')
         
         try:
             profile = user.profile
             
             # Admin can see all orders
             if profile.role == 'Admin':
-                return Order.objects.all().order_by('-created_at')
+                return base_qs
             
             # Shop owners can see orders for their shop
             elif profile.role == 'ShopOwner':
                 if profile.shop:
-                    return Order.objects.filter(shop=profile.shop).order_by('-created_at')
+                    return base_qs.filter(shop=profile.shop)
                 return Order.objects.none()
             
             # Processor can see orders related to their processing unit
             elif profile.role == 'Processor':
                 if profile.processing_unit:
-                    return Order.objects.filter(
+                    return base_qs.filter(
                         items__product__processing_unit=profile.processing_unit
-                    ).distinct().order_by('-created_at')
+                    ).distinct()
                 return Order.objects.none()
             
             return Order.objects.none()
             
         except UserProfile.DoesNotExist:
             return Order.objects.none()
+
+
 
 
 class ProductViewSet(viewsets.ModelViewSet):
@@ -3162,6 +3428,11 @@ class ProductViewSet(viewsets.ModelViewSet):
         """Filter products based on user permissions"""
         user = self.request.user
         
+        # Base queryset with essential optimizations
+        base_qs = Product.objects.all().select_related(
+            'processing_unit', 'animal', 'slaughter_part', 'category', 'transferred_to', 'received_by_shop'
+        ).order_by('-created_at')
+        
         try:
             profile = user.profile
             role = normalize_role(profile.role)
@@ -3169,7 +3440,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             
             # Admin can see all products
             if role == ROLE_ADMIN:
-                return Product.objects.all().order_by('-created_at')
+                return base_qs
             
             # Processor can see products from their processing unit
             elif role == ROLE_PROCESSOR:
@@ -3185,15 +3456,11 @@ class ProductViewSet(viewsets.ModelViewSet):
                 print(f"[DEBUG] Profile Unit: {profile.processing_unit}")
 
                 if user_processing_units:
-                    qs = Product.objects.filter(
-                        processing_unit_id__in=user_processing_units
-                    ).order_by('-created_at')
+                    qs = base_qs.filter(processing_unit_id__in=user_processing_units)
                     print(f"[DEBUG] QuerySet Count (via membership): {qs.count()}")
                     return qs
                 elif profile.processing_unit:
-                    qs = Product.objects.filter(
-                        processing_unit=profile.processing_unit
-                    ).order_by('-created_at')
+                    qs = base_qs.filter(processing_unit=profile.processing_unit)
                     print(f"[DEBUG] QuerySet Count (via profile): {qs.count()}")
                     return qs
                 print("[DEBUG] No units found.")
@@ -3209,9 +3476,9 @@ class ProductViewSet(viewsets.ModelViewSet):
                 
                 if user_shop_ids:
                     # Return products transferred to or received by any of the user's shops
-                    queryset = Product.objects.filter(
+                    queryset = base_qs.filter(
                         Q(transferred_to__id__in=user_shop_ids) | Q(received_by_shop__id__in=user_shop_ids)
-                    ).order_by('-created_at')
+                    )
                     
                     # If pending_receipt parameter is provided, filter further
                     pending_receipt = self.request.query_params.get('pending_receipt')
@@ -3221,8 +3488,8 @@ class ProductViewSet(viewsets.ModelViewSet):
                             transferred_to__id__in=user_shop_ids,
                             rejection_status__isnull=True  # Not fully rejected
                         ).exclude(
-                            Q(quantity_received__gte=models.F('quantity')) |  # Not fully received
-                            Q(quantity_rejected__gte=models.F('quantity'))   # Not fully rejected
+                            Q(weight_received__gte=models.F('weight')) |  # Not fully received
+                            Q(weight_rejected__gte=models.F('weight'))   # Not fully rejected
                         )
                     
                     return queryset
@@ -3230,10 +3497,9 @@ class ProductViewSet(viewsets.ModelViewSet):
                 # Fallback to profile.shop if no ShopUser memberships exist
                 if profile.shop:
                     # Show products transferred to this shop OR already received by this shop
-                    # Filter by pending_receipt query param if provided
-                    queryset = Product.objects.filter(
+                    queryset = base_qs.filter(
                         Q(transferred_to=profile.shop) | Q(received_by_shop=profile.shop)
-                    ).order_by('-created_at')
+                    )
                     
                     # If pending_receipt parameter is provided, filter further
                     pending_receipt = self.request.query_params.get('pending_receipt')
@@ -3243,8 +3509,8 @@ class ProductViewSet(viewsets.ModelViewSet):
                             transferred_to=profile.shop,
                             rejection_status__isnull=True  # Not fully rejected
                         ).exclude(
-                            Q(quantity_received__gte=models.F('quantity')) |  # Not fully received
-                            Q(quantity_rejected__gte=models.F('quantity'))   # Not fully rejected
+                            Q(weight_received__gte=models.F('weight')) |  # Not fully received
+                            Q(weight_rejected__gte=models.F('weight'))   # Not fully rejected
                         )
                     
                     return queryset
@@ -3253,17 +3519,17 @@ class ProductViewSet(viewsets.ModelViewSet):
             
             # Abbatoir can see products from their animals
             elif role == ROLE_ABBATOIR:
-                return Product.objects.filter(animal__abbatoir=user).order_by('-created_at')
+                return base_qs.filter(animal__abbatoir=user)
             
-            return Product.objects.all().order_by('-created_at')
+            return Product.objects.none()
             
         except UserProfile.DoesNotExist:
-            return Product.objects.all().order_by('-created_at')
+            return Product.objects.none()
 
     @action(detail=False, methods=['post'], url_path='receive_products')
     def receive_products(self, request):
         """
-        Selectively receive products at shop with partial quantity support and rejection handling.
+        Selectively receive products at shop with weight-first support and rejection handling.
         
         Expected payload:
         {
@@ -3329,10 +3595,10 @@ class ProductViewSet(viewsets.ModelViewSet):
                 # Process receives
                 for receive in receives:
                     product_id = receive.get('product_id')
-                    quantity_received = Decimal(str(receive.get('quantity_received', 0)))
+                    weight_received = Decimal(str(receive.get('weight_received', receive.get('quantity_received', 0))))
                     
-                    if quantity_received <= 0:
-                        errors.append(f"Product {product_id}: quantity_received must be greater than 0")
+                    if weight_received <= 0:
+                        errors.append(f"Product {product_id}: weight_received must be greater than 0")
                         continue
                     
                     try:
@@ -3342,24 +3608,25 @@ class ProductViewSet(viewsets.ModelViewSet):
                             rejection_status__isnull=True  # Not rejected
                         )
                         
-                        # Validate quantity
-                        total_accounted = product.quantity_received + product.quantity_rejected
-                        remaining = product.quantity - total_accounted
+                        # Validate weight
+                        total_accounted = product.weight_received + product.weight_rejected
+                        remaining = product.weight - total_accounted
                         
-                        if quantity_received > remaining:
+                        if weight_received > remaining:
                             errors.append(
-                                f"Product {product_id}: Cannot receive {quantity_received}. "
-                                f"Only {remaining} remaining (Total: {product.quantity}, "
-                                f"Already received: {product.quantity_received}, "
-                                f"Already rejected: {product.quantity_rejected})"
+                                f"Product {product_id}: Cannot receive {weight_received} {product.weight_unit}. "
+                                f"Only {remaining} {product.weight_unit} remaining (Total: {product.weight}, "
+                                f"Already received: {product.weight_received}, "
+                                f"Already rejected: {product.weight_rejected})"
                             )
                             continue
                         
                         # Update product
-                        product.quantity_received += quantity_received
+                        product.weight_received += weight_received
+                        product.quantity_received = product.weight_received
                         
                         # If fully received, mark as received
-                        if product.quantity_received + product.quantity_rejected >= product.quantity:
+                        if product.weight_received + product.weight_rejected >= product.weight:
                             product.received_by_shop = user_shop
                             product.received_at = timezone.now()
                         
@@ -3369,18 +3636,20 @@ class ProductViewSet(viewsets.ModelViewSet):
                         inventory, created = Inventory.objects.get_or_create(
                             shop=user_shop,
                             product=product,
-                            defaults={'quantity': Decimal('0')}
+                            defaults={'quantity': Decimal('0'), 'weight': Decimal('0'), 'weight_unit': product.weight_unit}
                         )
-                        inventory.quantity += quantity_received
+                        inventory.weight += weight_received
+                        inventory.weight_unit = product.weight_unit
                         inventory.last_updated = timezone.now()
                         inventory.save()
                         
                         received_products.append({
                             'product_id': product.id,
                             'product_name': product.name,
-                            'quantity_received': float(quantity_received),
-                            'total_received': float(product.quantity_received),
-                            'total_quantity': float(product.quantity)
+                            'weight_received': float(weight_received),
+                            'total_received_weight': float(product.weight_received),
+                            'total_weight': float(product.weight),
+                            'weight_unit': product.weight_unit,
                         })
                         
                     except Product.DoesNotExist:
@@ -3390,11 +3659,11 @@ class ProductViewSet(viewsets.ModelViewSet):
                 # Process rejections
                 for rejection in rejections:
                     product_id = rejection.get('product_id')
-                    quantity_rejected = Decimal(str(rejection.get('quantity_rejected', 0)))
+                    weight_rejected = Decimal(str(rejection.get('weight_rejected', rejection.get('quantity_rejected', 0))))
                     rejection_reason = rejection.get('rejection_reason', 'Not specified')
                     
-                    if quantity_rejected <= 0:
-                        errors.append(f"Product {product_id}: quantity_rejected must be greater than 0")
+                    if weight_rejected <= 0:
+                        errors.append(f"Product {product_id}: weight_rejected must be greater than 0")
                         continue
                     
                     try:
@@ -3403,27 +3672,28 @@ class ProductViewSet(viewsets.ModelViewSet):
                             transferred_to=user_shop
                         )
                         
-                        # Validate quantity
-                        total_accounted = product.quantity_received + product.quantity_rejected
-                        remaining = product.quantity - total_accounted
+                        # Validate weight
+                        total_accounted = product.weight_received + product.weight_rejected
+                        remaining = product.weight - total_accounted
                         
-                        if quantity_rejected > remaining:
+                        if weight_rejected > remaining:
                             errors.append(
-                                f"Product {product_id}: Cannot reject {quantity_rejected}. "
-                                f"Only {remaining} remaining (Total: {product.quantity}, "
-                                f"Already received: {product.quantity_received}, "
-                                f"Already rejected: {product.quantity_rejected})"
+                                f"Product {product_id}: Cannot reject {weight_rejected} {product.weight_unit}. "
+                                f"Only {remaining} {product.weight_unit} remaining (Total: {product.weight}, "
+                                f"Already received: {product.weight_received}, "
+                                f"Already rejected: {product.weight_rejected})"
                             )
                             continue
                         
                         # Update product
-                        product.quantity_rejected += quantity_rejected
+                        product.weight_rejected += weight_rejected
+                        product.quantity_rejected = product.weight_rejected
                         product.rejection_reason = rejection_reason
                         product.rejected_by = request.user
                         product.rejected_at = timezone.now()
                         
                         # If entire product is rejected, mark status as rejected
-                        if product.quantity_rejected >= product.quantity:
+                        if product.weight_rejected >= product.weight:
                             product.rejection_status = 'rejected'
                         
                         product.save()
@@ -3431,8 +3701,9 @@ class ProductViewSet(viewsets.ModelViewSet):
                         rejected_products.append({
                             'product_id': product.id,
                             'product_name': product.name,
-                            'quantity_rejected': float(quantity_rejected),
-                            'total_rejected': float(product.quantity_rejected),
+                            'weight_rejected': float(weight_rejected),
+                            'total_rejected_weight': float(product.weight_rejected),
+                            'weight_unit': product.weight_unit,
                             'rejection_reason': rejection_reason,
                             'rejection_status': product.rejection_status
                         })
@@ -3476,7 +3747,7 @@ class ProductViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], url_path='transfer')
     def transfer_products(self, request):
         """
-        Transfer products to a shop with optional quantity adjustment.
+        Transfer products to a shop with optional weight adjustment.
         
         Expected payload:
         {
@@ -3491,19 +3762,29 @@ class ProductViewSet(viewsets.ModelViewSet):
         """
         user = request.user
         
-        # Verify user is a processor
+        # Verify user is a processor and get their processing units
         try:
             profile = user.profile
-            if profile.role != 'Processor':
+            if normalize_role(profile.role) != ROLE_PROCESSOR:
                 return Response(
                     {'error': 'Only processors can transfer products'},
                     status=status_module.HTTP_403_FORBIDDEN
                 )
             
-            processing_unit = profile.processing_unit
-            if not processing_unit:
+            # Get all processing units the user belongs to
+            from .models import ProcessingUnitUser
+            user_processing_units = list(ProcessingUnitUser.objects.filter(
+                user=user,
+                is_active=True,
+                is_suspended=False
+            ).values_list('processing_unit_id', flat=True))
+            
+            if profile.processing_unit_id and profile.processing_unit_id not in user_processing_units:
+                user_processing_units.append(profile.processing_unit_id)
+                
+            if not user_processing_units:
                 return Response(
-                    {'error': 'User not associated with a processing unit'},
+                    {'error': 'User not associated with any processing unit'},
                     status=status_module.HTTP_400_BAD_REQUEST
                 )
         except UserProfile.DoesNotExist:
@@ -3511,6 +3792,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                 {'error': 'User profile not found'},
                 status=status_module.HTTP_404_NOT_FOUND
             )
+
         
         shop_id = request.data.get('shop_id')
         transfers = request.data.get('transfers', [])
@@ -3548,12 +3830,12 @@ class ProductViewSet(viewsets.ModelViewSet):
             with transaction.atomic():
                 for transfer in transfers:
                     product_id = transfer.get('product_id')
-                    quantity_to_transfer = transfer.get('quantity')
+                    weight_to_transfer = transfer.get('weight', transfer.get('quantity'))
                     
                     try:
                         product = Product.objects.get(
                             id=product_id,
-                            processing_unit=processing_unit
+                            processing_unit_id__in=user_processing_units
                         )
                     except Product.DoesNotExist:
                         errors.append(f'Product {product_id} not found or not owned by your processing unit')
@@ -3563,26 +3845,26 @@ class ProductViewSet(viewsets.ModelViewSet):
                         errors.append(f'Product {product.name} has already been transferred')
                         continue
                     
-                    # If quantity specified, validate it
-                    if quantity_to_transfer is not None:
-                        quantity_to_transfer = Decimal(str(quantity_to_transfer))
+                    # If weight specified, validate it
+                    if weight_to_transfer is not None:
+                        weight_to_transfer = Decimal(str(weight_to_transfer))
                         
-                        if quantity_to_transfer <= 0:
-                            errors.append(f'Product {product.name}: quantity must be greater than 0')
+                        if weight_to_transfer <= 0:
+                            errors.append(f'Product {product.name}: weight must be greater than 0')
                             continue
                         
-                        if quantity_to_transfer > product.quantity:
+                        if weight_to_transfer > product.weight:
                             errors.append(
-                                f'Product {product.name}: cannot transfer {quantity_to_transfer}. '
-                                f'Only {product.quantity} available'
+                                f'Product {product.name}: cannot transfer {weight_to_transfer} {product.weight_unit}. '
+                                f'Only {product.weight} {product.weight_unit} available'
                             )
                             continue
                         
-                        # If transferring partial quantity, create a new product for the transfer
-                        if quantity_to_transfer < product.quantity:
-                            # Reduce original product quantity
-                            original_quantity = product.quantity
-                            product.quantity -= quantity_to_transfer
+                        # If transferring partial weight, create a new product for the transfer
+                        if weight_to_transfer < product.weight:
+                            # Reduce original product weight
+                            original_weight = product.weight
+                            product.weight -= weight_to_transfer
                             product.save()
                             
                             # Create new product for transfer
@@ -3590,12 +3872,12 @@ class ProductViewSet(viewsets.ModelViewSet):
                                 name=product.name,
                                 batch_number=f"{product.batch_number}-T",
                                 product_type=product.product_type,
-                                quantity=quantity_to_transfer,
-                                weight=product.weight * (quantity_to_transfer / original_quantity) if product.weight else None,
+                                quantity=weight_to_transfer,
+                                weight=weight_to_transfer,
                                 weight_unit=product.weight_unit,
                                 price=product.price,
                                 description=product.description,
-                                processing_unit=processing_unit,
+                                processing_unit=product.processing_unit,
                                 animal=product.animal,
                                 slaughter_part=product.slaughter_part,
                                 category=product.category,
@@ -3608,7 +3890,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                                 user=user,
                                 activity_type='transfer',
                                 title=f'Product {product.name} split and transferred',
-                                description=f'Split {product.name}: kept {product.quantity}, transferred {quantity_to_transfer} to {shop.name}',
+                                description=f'Split {product.name}: kept {product.weight} {product.weight_unit}, transferred {weight_to_transfer} {product.weight_unit} to {shop.name}',
                                 entity_id=str(transferred_product.id),
                                 entity_type='product',
                                 metadata={
@@ -3616,8 +3898,9 @@ class ProductViewSet(viewsets.ModelViewSet):
                                     'transferred_product_id': transferred_product.id,
                                     'original_batch': product.batch_number,
                                     'transferred_batch': transferred_product.batch_number,
-                                    'quantity_kept': float(product.quantity),
-                                    'quantity_transferred': float(quantity_to_transfer),
+                                    'weight_kept': float(product.weight),
+                                    'weight_transferred': float(weight_to_transfer),
+                                    'weight_unit': product.weight_unit,
                                     'shop_name': shop.name
                                 }
                             )
@@ -3639,7 +3922,8 @@ class ProductViewSet(viewsets.ModelViewSet):
                                     'product_id': product.id,
                                     'batch_number': product.batch_number,
                                     'shop_name': shop.name,
-                                    'quantity': float(product.quantity)
+                                    'weight': float(product.weight),
+                                    'weight_unit': product.weight_unit
                                 }
                             )
                     else:
@@ -3728,11 +4012,16 @@ class SaleViewSet(viewsets.ModelViewSet):
         """Filter sales based on user permissions"""
         user = self.request.user
         
+        # Base queryset with essential optimizations
+        base_qs = Sale.objects.all().select_related(
+            'shop', 'sold_by', 'invoice'
+        ).prefetch_related('items', 'items__product').order_by('-created_at')
+        
         # First check ShopUser memberships (new system)
         shop_membership = user.shop_memberships.filter(is_active=True).first()
         if shop_membership:
             # ShopUser can see sales from their shop
-            return Sale.objects.filter(shop=shop_membership.shop).order_by('-created_at')
+            return base_qs.filter(shop=shop_membership.shop)
         
         # Fall back to UserProfile (old system)
         try:
@@ -3740,20 +4029,20 @@ class SaleViewSet(viewsets.ModelViewSet):
             
             # Admin can see all sales
             if profile.role == 'Admin':
-                return Sale.objects.all().order_by('-created_at')
+                return base_qs
             
             # Shop owners can see sales from their shop
             elif profile.role == 'ShopOwner':
                 if profile.shop:
-                    return Sale.objects.filter(shop=profile.shop).order_by('-created_at')
+                    return base_qs.filter(shop=profile.shop)
                 return Sale.objects.none()
             
             # Processor can see sales of products from their processing unit
             elif profile.role == 'Processor':
                 if profile.processing_unit:
-                    return Sale.objects.filter(
+                    return base_qs.filter(
                         items__product__processing_unit=profile.processing_unit
-                    ).distinct().order_by('-created_at')
+                    ).distinct()
                 return Sale.objects.none()
             
             return Sale.objects.none()
@@ -3826,7 +4115,7 @@ class ShopSettingsViewSet(viewsets.ModelViewSet):
                 return Response(serializer.data)
         except UserProfile.DoesNotExist:
             pass
-        return Response({"error": "No shop associated with user"}, status=status_module.status.HTTP_404_NOT_FOUND)
+        return Response({"error": "No shop associated with user"}, status=status_module.HTTP_404_NOT_FOUND)
 
 
 # Invoice ViewSets
@@ -3842,12 +4131,16 @@ class InvoiceViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         user = self.request.user
+        
+        # Base queryset with optimizations
+        base_qs = Invoice.objects.all().select_related(
+            'shop', 'created_by'
+        ).prefetch_related('items', 'payments', 'sales').order_by('-created_at')
+        
         try:
             profile = user.profile
             if profile.shop:
-                return Invoice.objects.filter(shop=profile.shop).select_related(
-                    'shop', 'created_by'
-                ).prefetch_related('items', 'payments', 'sales')
+                return base_qs.filter(shop=profile.shop)
         except UserProfile.DoesNotExist:
             pass
         return Invoice.objects.none()
@@ -3863,7 +4156,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             pass
         
         if shop:
-            serializer.save(shop=shop, created_by=user)
+            serializer.save(shop=shop, created_by=user, status='pending')
         else:
             raise ValidationError("User is not associated with any shop")
     
@@ -3877,18 +4170,18 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         notes = request.data.get('notes', '')
         
         if not amount:
-            return Response({"error": "Amount is required"}, status=status_module.status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Amount is required"}, status=status_module.HTTP_400_BAD_REQUEST)
         
         try:
             amount = Decimal(amount)
             if amount <= 0:
-                return Response({"error": "Amount must be greater than 0"}, status=status_module.status.HTTP_400_BAD_REQUEST)
+                return Response({"error": "Amount must be greater than 0"}, status=status_module.HTTP_400_BAD_REQUEST)
             
             # Check if payment exceeds balance
             if amount > invoice.balance_due:
                 return Response(
                     {"error": f"Payment amount ({amount}) exceeds balance due ({invoice.balance_due})"}, 
-                    status=status_module.status.HTTP_400_BAD_REQUEST
+                    status=status_module.HTTP_400_BAD_REQUEST
                 )
             
             # Create payment
@@ -3902,10 +4195,10 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             )
             
             serializer = InvoicePaymentSerializer(payment)
-            return Response(serializer.data, status=status_module.status.HTTP_201_CREATED)
+            return Response(serializer.data, status=status_module.HTTP_201_CREATED)
         
         except (ValueError, Decimal.InvalidOperation):
-            return Response({"error": "Invalid amount"}, status=status_module.status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Invalid amount"}, status=status_module.HTTP_400_BAD_REQUEST)
     
     @action(detail=True, methods=['post'])
     def convert_to_sale(self, request, pk=None):
@@ -3913,7 +4206,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         invoice = self.get_object()
         
         if invoice.status == 'cancelled':
-            return Response({"error": "Cannot convert cancelled invoice"}, status=status_module.status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Cannot convert cancelled invoice"}, status=status_module.HTTP_400_BAD_REQUEST)
         
         payment_method = request.data.get('payment_method', 'cash')
         
@@ -3921,8 +4214,9 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             # Create sale from invoice
             sale = Sale.objects.create(
                 shop=invoice.shop,
-                customer=invoice.customer,
-                total_price=invoice.total_amount,
+                customer_name=invoice.customer_name,
+                customer_phone=invoice.customer_phone,
+                total_amount=invoice.total_amount,
                 payment_method=payment_method,
                 sold_by=request.user,
                 invoice=invoice
@@ -3930,10 +4224,13 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             
             # Create sale items from invoice items
             for invoice_item in invoice.items.all():
+                item_weight = invoice_item.weight if invoice_item.weight else invoice_item.quantity
                 SaleItem.objects.create(
                     sale=sale,
                     product=invoice_item.product,
-                    quantity=invoice_item.quantity,
+                    quantity=item_weight,
+                    weight=item_weight,
+                    weight_unit=invoice_item.weight_unit or 'kg',
                     unit_price=invoice_item.unit_price
                 )
             
@@ -3942,7 +4239,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             invoice.save()
             
             serializer = SaleSerializer(sale)
-            return Response(serializer.data, status=status_module.status.HTTP_201_CREATED)
+            return Response(serializer.data, status=status_module.HTTP_201_CREATED)
     
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
@@ -3950,7 +4247,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         invoice = self.get_object()
         
         if invoice.status == 'completed':
-            return Response({"error": "Cannot cancel completed invoice"}, status=status_module.status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Cannot cancel completed invoice"}, status=status_module.HTTP_400_BAD_REQUEST)
         
         invoice.status = 'cancelled'
         invoice.save()
@@ -3970,19 +4267,21 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 
                 stats = {
                     'total_invoices': invoices.count(),
+                    'draft': invoices.filter(status='draft').count(),
                     'pending': invoices.filter(status='pending').count(),
+                    'sent': invoices.filter(status='sent').count(),
+                    'partially_paid': invoices.filter(status='partially_paid').count(),
                     'paid': invoices.filter(status='paid').count(),
-                    'partial': invoices.filter(status='partial').count(),
                     'completed': invoices.filter(status='completed').count(),
                     'cancelled': invoices.filter(status='cancelled').count(),
                     'overdue': invoices.filter(status='overdue').count(),
-                    'total_value': invoices.aggregate(Sum('total_amount'))['total_amount__sum'] or 0,
-                    'total_paid': invoices.aggregate(Sum('amount_paid'))['amount_paid__sum'] or 0,
+                    'total_value': invoices.aggregate(Sum('total_amount'))['total_amount__sum'] or Decimal('0'),
+                    'total_paid': invoices.aggregate(Sum('amount_paid'))['amount_paid__sum'] or Decimal('0'),
                 }
                 return Response(stats)
         except UserProfile.DoesNotExist:
             pass
-        return Response({"error": "No shop associated with user"}, status=status_module.status.HTTP_404_NOT_FOUND)
+        return Response({"error": "No shop associated with user"}, status=status_module.HTTP_404_NOT_FOUND)
 
 
 class InvoiceItemViewSet(viewsets.ModelViewSet):
@@ -4059,24 +4358,5 @@ class ReceiptViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(receipts, many=True)
         return Response(serializer.data)
 
-
-# Shop Settings ViewSet
-class ShopSettingsViewSet(viewsets.ModelViewSet):
-    """ViewSet for managing shop settings"""
-    serializer_class = ShopSettingsSerializer
-    permission_classes = [IsAuthenticated]
-    
-    def get_queryset(self):
-        user = self.request.user
-        if hasattr(user, 'profile') and user.profile.shop:
-            return ShopSettings.objects.filter(shop=user.profile.shop)
-        return ShopSettings.objects.none()
-    
-    def perform_create(self, serializer):
-        user = self.request.user
-        if hasattr(user, 'profile') and user.profile.shop:
-            serializer.save(shop=user.profile.shop)
-        else:
-            raise ValidationError("User is not associated with any shop")
 
 

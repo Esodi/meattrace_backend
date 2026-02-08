@@ -265,9 +265,9 @@ class MetricsService:
             inventory_queryset = Inventory.objects.using('read_replica') if cls._has_read_replica() else Inventory.objects
 
             total_products = product_queryset.count()
-            products_in_inventory = inventory_queryset.filter(quantity__gt=0).count()
+            products_in_inventory = inventory_queryset.filter(weight__gt=0).count()
             products_sold_today = cls._get_products_sold_today()
-            low_stock_alerts = inventory_queryset.filter(quantity__lte=models.F('min_stock_level')).count()
+            low_stock_alerts = inventory_queryset.filter(weight__lte=models.F('min_stock_level')).count()
 
             return {
                 'total_products': total_products,

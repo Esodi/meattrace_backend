@@ -650,7 +650,7 @@ class AdminDashboardViewSet(viewsets.ViewSet):
     """
     ViewSet for admin dashboard overview and statistics
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminUser]
 
     @action(detail=False, methods=['get'])
     def stats(self, request):
@@ -892,7 +892,7 @@ class AdminUserViewSet(viewsets.ModelViewSet):
     """
     ViewSet for admin user management
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminUser]
     queryset = None  # Will be set in get_queryset
     serializer_class = None  # Will be set in get_serializer_class
     filterset_fields = ['is_active', 'is_staff', 'is_superuser']
@@ -974,7 +974,7 @@ class AdminProcessingUnitViewSet(viewsets.ModelViewSet):
     """
     ViewSet for admin processing unit management
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminUser]
     queryset = None  # Will be set in get_queryset
     serializer_class = None  # Will be set in get_serializer_class
     filterset_fields = ['is_active']
@@ -1013,7 +1013,7 @@ class AdminShopViewSet(viewsets.ModelViewSet):
     """
     ViewSet for admin shop management
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminUser]
     queryset = None  # Will be set in get_queryset
     serializer_class = None  # Will be set in get_serializer_class
     filterset_fields = ['is_active']
@@ -1053,7 +1053,7 @@ class AdminAnimalViewSet(viewsets.ModelViewSet):
     ViewSet for admin animal management with full CRUD.
     Allows admins to add animals at any point in the traceability chain.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminUser]
     queryset = None  # Will be set in get_queryset
     serializer_class = None  # Will be set in get_serializer_class
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -1096,7 +1096,7 @@ class AdminProductViewSet(viewsets.ModelViewSet):
     ViewSet for admin product management with full CRUD.
     Allows admins to add products at processing units or directly to shops.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminUser]
     queryset = None  # Will be set in get_queryset
     serializer_class = None  # Will be set in get_serializer_class
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -1123,7 +1123,7 @@ class AdminSlaughterPartViewSet(viewsets.ModelViewSet):
     ViewSet for admin slaughter part management with full CRUD.
     Allows admins to add slaughter parts from slaughtered animals.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminUser]
     queryset = None  # Will be set in get_queryset
     serializer_class = None  # Will be set in get_serializer_class
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -1155,7 +1155,7 @@ class AdminAbbatoirViewSet(viewsets.ReadOnlyModelViewSet):
     ViewSet for listing abbatoirs for admin selection dropdowns.
     Read-only - abbatoirs are managed through the user management interface.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminUser]
     queryset = None  # Will be set in get_queryset
     serializer_class = None  # Will be set in get_serializer_class
     search_fields = ['username', 'email', 'first_name', 'last_name']
@@ -1180,7 +1180,7 @@ class AdminAnalyticsViewSet(viewsets.ViewSet):
     ViewSet for admin analytics and reporting.
     Analytics are cached for 5 minutes to improve performance.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminUser]
 
     @action(detail=False, methods=['get'])
     def overview(self, request):

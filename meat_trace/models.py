@@ -785,6 +785,16 @@ class Product(models.Model):
         part_info = f" from {self.slaughter_part.get_part_type_display()}" if self.slaughter_part else ""
         return f"{self.name} ({self.product_type}){part_info} - Batch {self.batch_number}"
 
+    def save(self, *args, **kwargs):
+        """Keep legacy quantity fields synchronized with weight-first inventory logic."""
+        if self.weight is not None:
+            self.quantity = self.weight
+        if self.weight_received is not None:
+            self.quantity_received = self.weight_received
+        if self.weight_rejected is not None:
+            self.quantity_rejected = self.weight_rejected
+        super().save(*args, **kwargs)
+
 class Inventory(models.Model):
     shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name='inventory')
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='inventory')
@@ -798,11 +808,17 @@ class Inventory(models.Model):
         unique_together = ['shop', 'product']
 
     def __str__(self):
-        return f"{self.shop.name} - {self.product.name} - {self.quantity}"
+        return f"{self.shop.name} - {self.product.name} - {self.weight} {self.weight_unit}"
 
     @property
     def is_low_stock(self):
-        return self.quantity <= self.min_stock_level
+        return self.weight <= self.min_stock_level
+
+    def save(self, *args, **kwargs):
+        # Quantity remains for compatibility, but stock logic is weight-first.
+        if self.weight is not None:
+            self.quantity = self.weight
+        super().save(*args, **kwargs)
 
 class Receipt(models.Model):
     """Product receipt when shop receives stock"""
@@ -821,6 +837,10 @@ class Receipt(models.Model):
         return f"Receipt {self.receipt_number or self.id} - {self.shop.name} - {self.product.product_type}"
     
     def save(self, *args, **kwargs):
+        # Weight-first compatibility: mirror quantity from weight.
+        if self.received_weight is not None:
+            self.received_quantity = self.received_weight
+
         # Auto-generate receipt number if not exists
         if not self.receipt_number:
             shop_settings = ShopSettings.objects.filter(shop=self.shop).first()
@@ -829,41 +849,27 @@ class Receipt(models.Model):
                 shop_settings.next_receipt_number += 1
                 shop_settings.save(update_fields=['next_receipt_number'])
             else:
-                # Fallback if no settings exist
                 last_receipt = Receipt.objects.filter(shop=self.shop).order_by('-id').first()
                 next_number = (last_receipt.id + 1) if last_receipt else 1
-            
             self.receipt_number = f"SHP{self.shop.id:03d}-RCP-{next_number:04d}"
-        
+
+        is_create = self.pk is None
         super().save(*args, **kwargs)
-        # Update inventory when receipt is created
-        inventory, created = Inventory.objects.get_or_create(
-            shop=self.shop,
-            product=self.product,
-            defaults={'quantity': 0, 'weight': 0, 'weight_unit': self.weight_unit}
-        )
-        inventory.quantity += self.received_quantity
-        inventory.weight += self.received_weight
-        inventory.weight_unit = self.weight_unit
-        inventory.last_updated = timezone.now()
-        inventory.save()
-    
+
+        # Update inventory only on initial receipt creation.
+        if is_create:
+            inventory, _ = Inventory.objects.get_or_create(
+                shop=self.shop,
+                product=self.product,
+                defaults={'quantity': 0, 'weight': 0, 'weight_unit': self.weight_unit}
+            )
+            inventory.weight += self.received_weight
+            inventory.weight_unit = self.weight_unit
+            inventory.last_updated = timezone.now()
+            inventory.save()
+
     class Meta:
         ordering = ['-created_at']
-
-    def save(self, *args, **kwargs):
-        super().save(*args, **kwargs)
-        # Update inventory when receipt is created
-        inventory, created = Inventory.objects.get_or_create(
-            shop=self.shop,
-            product=self.product,
-            defaults={'quantity': 0, 'weight': 0, 'weight_unit': self.weight_unit}
-        )
-        inventory.quantity += self.received_quantity
-        inventory.weight += self.received_weight
-        inventory.weight_unit = self.weight_unit
-        inventory.last_updated = timezone.now()
-        inventory.save()
 
 class Order(models.Model):
     STATUS_CHOICES = [
@@ -907,6 +913,15 @@ class OrderItem(models.Model):
 
     def __str__(self):
         return f"{self.product.name} x {self.quantity}"
+
+    def save(self, *args, **kwargs):
+        # Weight-first order valuation with quantity compatibility.
+        if self.weight is not None:
+            self.quantity = self.weight
+            self.subtotal = self.weight * self.unit_price
+        else:
+            self.subtotal = self.quantity * self.unit_price
+        super().save(*args, **kwargs)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1110,7 +1125,8 @@ def generate_order_qr_code(sender, instance, created, **kwargs):
                     'product_id': item.product.id,
                     'name': item.product.name,
                     'batch_number': item.product.batch_number,
-                    'quantity': float(item.quantity),
+                    'weight': float(item.weight if item.weight is not None else item.quantity),
+                    'quantity': float(item.weight if item.weight is not None else item.quantity),
                     'unit_price': float(item.unit_price),
                     'subtotal': float(item.subtotal),
                     'animal_id': item.product.animal.animal_id if item.product.animal else None,
@@ -2162,7 +2178,7 @@ class ProductInfo(models.Model):
         self.batch_number = product.batch_number
         self.weight = product.weight
         self.weight_unit = product.weight_unit
-        self.quantity = product.quantity
+        self.quantity = product.weight
         self.price = product.price
         self.description = product.description
         self.manufacturer = product.manufacturer
@@ -2258,7 +2274,6 @@ class ProductInfo(models.Model):
                 'Product Name': self.product_name,
                 'Batch Number': self.batch_number,
                 'Product Type': self.product_type,
-                'Quantity': f"{self.quantity} {self.weight_unit}" if self.quantity else 'Not recorded',
                 'Weight': f"{self.weight} {self.weight_unit}" if self.weight else 'Not recorded'
             }
         })
@@ -2276,7 +2291,7 @@ class ProductInfo(models.Model):
                     'From': self.processing_unit_name or 'Processing Unit',
                     'To': product.transferred_to.name,
                     'Batch': self.batch_number,
-                    'Quantity': f"{self.quantity} {self.weight_unit}"
+                    'Weight': f"{self.weight} {self.weight_unit}"
                 }
             })
         
@@ -2291,7 +2306,7 @@ class ProductInfo(models.Model):
                 'icon': 'fa-store',
                 'details': {
                     'Shop': product.received_by_shop.name,
-                    'Quantity Received': f"{product.quantity_received} {self.weight_unit}",
+                    'Weight Received': f"{product.weight_received} {self.weight_unit}",
                     'Status': 'Accepted'
                 }
             })
@@ -2497,8 +2512,12 @@ class SaleItem(models.Model):
         return f"{self.product.name} x {self.quantity}"
 
     def save(self, *args, **kwargs):
-        # Auto-calculate subtotal
-        self.subtotal = self.quantity * self.unit_price
+        # Weight-first sale valuation with quantity compatibility.
+        if self.weight is not None:
+            self.quantity = self.weight
+            self.subtotal = self.weight * self.unit_price
+        else:
+            self.subtotal = self.quantity * self.unit_price
         super().save(*args, **kwargs)
 
 
@@ -2581,9 +2600,11 @@ class Invoice(models.Model):
     
     STATUS_CHOICES = [
         ('draft', 'Draft'),
+        ('pending', 'Pending'),
         ('sent', 'Sent'),
         ('partially_paid', 'Partially Paid'),
         ('paid', 'Paid'),
+        ('completed', 'Completed'),
         ('overdue', 'Overdue'),
         ('cancelled', 'Cancelled'),
     ]
@@ -2653,17 +2674,25 @@ class Invoice(models.Model):
         self.tax_amount = (self.subtotal - self.discount_amount) * (self.tax_rate / 100)
         self.total_amount = self.subtotal - self.discount_amount + self.tax_amount
     
-    def get_balance_due(self):
+    @property
+    def balance_due(self):
         """Get remaining balance to be paid"""
         return self.total_amount - self.amount_paid
     
+    def get_balance_due(self):
+        """Old method for backward compatibility"""
+        return self.balance_due
+    
     def update_status(self):
         """Update invoice status based on payment and due date"""
+        if self.status in ['completed', 'cancelled']:
+            return
+            
         if self.amount_paid >= self.total_amount:
             self.status = 'paid'
         elif self.amount_paid > 0:
             self.status = 'partially_paid'
-        elif timezone.now().date() > self.due_date and self.status not in ['paid', 'cancelled']:
+        elif timezone.now().date() > self.due_date:
             self.status = 'overdue'
 
 
@@ -2690,8 +2719,12 @@ class InvoiceItem(models.Model):
         return f"{self.description} x {self.quantity}"
     
     def save(self, *args, **kwargs):
-        # Auto-calculate subtotal
-        self.subtotal = self.quantity * self.unit_price
+        # Weight-first invoice valuation with quantity compatibility.
+        if self.weight is not None:
+            self.quantity = self.weight
+            self.subtotal = self.weight * self.unit_price
+        else:
+            self.subtotal = self.quantity * self.unit_price
         super().save(*args, **kwargs)
 
 
@@ -2711,7 +2744,7 @@ class InvoicePayment(models.Model):
     amount = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(0)])
     payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES)
     payment_date = models.DateTimeField(default=timezone.now)
-    reference_number = models.CharField(max_length=100, blank=True, help_text="Transaction/Reference number")
+    transaction_reference = models.CharField(max_length=100, blank=True, help_text="Transaction/Reference number")
     notes = models.TextField(blank=True)
     recorded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -2724,8 +2757,10 @@ class InvoicePayment(models.Model):
     
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
-        # Update invoice amounts and status
-        self.invoice.amount_paid = sum(p.amount for p in self.invoice.payments.all())
+        # Update invoice amounts and status using aggregate for reliability
+        from django.db.models import Sum
+        total_paid = self.invoice.payments.aggregate(Sum('amount'))['amount__sum'] or Decimal('0.00')
+        self.invoice.amount_paid = total_paid
         self.invoice.update_status()
         self.invoice.save()
 
