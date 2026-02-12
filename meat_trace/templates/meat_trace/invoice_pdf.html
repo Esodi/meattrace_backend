@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>Tax Invoice</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 1cm;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            font-size: 10pt;
+            color: #333;
+            line-height: 1.4;
+        }
+
+        .header {
+            width: 100%;
+            margin-bottom: 20px;
+        }
+
+        .header table {
+            width: 100%;
+        }
+
+        .logo {
+            width: 80px;
+            height: auto;
+        }
+
+        .company-name {
+            font-size: 24pt;
+            font-weight: bold;
+            color: #333;
+            text-align: center;
+        }
+
+        .company-info {
+            text-align: right;
+            font-size: 8pt;
+            color: #2e7d32;
+            /* Greenish as in the image */
+        }
+
+        .company-info p {
+            margin: 2px 0;
+        }
+
+        .tin-section {
+            text-align: center;
+            border-bottom: 1px solid #333;
+            padding-bottom: 5px;
+            margin-bottom: 10px;
+            font-size: 10pt;
+        }
+
+        .invoice-title-section {
+            width: 100%;
+            margin-bottom: 20px;
+        }
+
+        .billing-to {
+            float: left;
+            width: 50%;
+        }
+
+        .invoice-details {
+            float: right;
+            width: 40%;
+            text-align: right;
+        }
+
+        .invoice-details h1 {
+            font-size: 18pt;
+            margin: 0;
+            padding: 0;
+        }
+
+        .details-table {
+            width: 100%;
+            margin-top: 5px;
+        }
+
+        .details-table td {
+            padding: 2px 0;
+        }
+
+        .details-label {
+            font-weight: bold;
+            width: 50%;
+        }
+
+        .items-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+
+        .items-table th {
+            background-color: #f5f5f5;
+            border: 1px solid #333;
+            padding: 8px;
+            text-align: center;
+            font-weight: normal;
+        }
+
+        .items-table td {
+            border: 1px solid #333;
+            padding: 8px;
+        }
+
+        .text-center {
+            text-align: center;
+        }
+
+        .text-right {
+            text-align: right;
+        }
+
+        .summary-section {
+            width: 100%;
+            margin-top: 20px;
+        }
+
+        .footer-note {
+            float: left;
+            width: 50%;
+            margin-top: 40px;
+        }
+
+        .footer-note p {
+            background-color: #e8f5e9;
+            padding: 10px;
+            text-align: center;
+            border-radius: 4px;
+        }
+
+        .totals-table {
+            float: right;
+            width: 45%;
+        }
+
+        .totals-table table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .totals-table td {
+            padding: 5px 0;
+        }
+
+        .total-amount {
+            font-weight: bold;
+            border-top: 1px solid #333;
+            border-bottom: 1px solid #333;
+        }
+
+        .amount-paid {
+            color: #d32f2f;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <table>
+            <tr>
+                <td width="20%">
+                    {% if settings.company_logo_url %}
+                    <img class="logo" src="{{ settings.company_logo_url }}" alt="Logo">
+                    {% elif settings.company_logo %}
+                    <img class="logo" src="{{ settings.company_logo.path }}" alt="Logo">
+                    {% endif %}
+                </td>
+                <td class="company-name">
+                    {{ settings.company_name|default:shop.name|upper }}
+                    <div style="font-size: 10pt; font-weight: normal; margin-top: 5px;">
+                        TIN: {{ settings.tax_id|default:settings.shop.tax_id|default:"N/A" }}
+                    </div>
+                </td>
+                <td class="company-info" width="30%">
+                    <p>{{ settings.business_address|linebreaksbr }}</p>
+                    <p>Tel: {{ settings.business_phone }}</p>
+                    <p>Email: {{ settings.business_email }}</p>
+                    <p>WWW: {{ settings.website }}</p>
+                </td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="tin-section" style="border-bottom: none; height: 10px;">
+        <!-- Empty or small spacer since TIN moved to header -->
+    </div>
+
+    <div class="invoice-title-section">
+        <div class="billing-to">
+            <p>Customer Ref: {{ invoice.customer_ref|default:"________________" }}</p>
+            <p><strong>To:</strong></p>
+            <p>{{ invoice.customer_name }}</p>
+            {% if invoice.customer_address %}<p>{{ invoice.customer_address|linebreaksbr }}</p>{% endif %}
+            {% if invoice.customer_phone %}<p>Tel: {{ invoice.customer_phone }}</p>{% endif %}
+            {% if invoice.customer_email %}<p>Email: {{ invoice.customer_email }}</p>{% endif %}
+        </div>
+        <div class="invoice-details">
+            <h1>TAX INVOICE</h1>
+            <table class="details-table">
+                <tr>
+                    <td class="details-label">Invoice</td>
+                    <td>{{ invoice.invoice_number }}</td>
+                </tr>
+                <tr>
+                    <td class="details-label">Invoice Date:</td>
+                    <td>{{ invoice.invoice_date|date:"d/m/Y" }}</td>
+                </tr>
+                <tr>
+                    <td class="details-label">Number of</td>
+                    <td>Page 1 of 1</td>
+                </tr>
+            </table>
+        </div>
+        <div style="clear: both;"></div>
+    </div>
+
+    <table class="items-table">
+        <thead>
+            <tr>
+                <th width="10%">Quantity</th>
+                <th width="40%">Item Description</th>
+                <th width="15%">Price ({{ settings.currency|default:"TZS" }})</th>
+                <th width="10%">Unit</th>
+                <th width="10%">Disc</th>
+                <th width="15%">Total ({{ settings.currency|default:"TZS" }})</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in items %}
+            <tr>
+                <td class="text-center">{{ item.quantity }}</td>
+                <td>{{ item.product_name|default:item.description }}</td>
+                <td class="text-right">{{ item.unit_price|floatformat:2 }}</td>
+                <td class="text-center">{{ item.weight_unit|default:"pcs" }}</td>
+                <td class="text-center">0%</td>
+                <td class="text-right">{{ item.subtotal|floatformat:2 }}</td>
+            </tr>
+            {% endfor %}
+            <!-- Fill empty lines to match image style -->
+            {% for i in empty_rows %}
+            <tr>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="summary-section">
+        <div class="footer-note">
+            <p>{{ settings.company_footer|default:"Asante sana kwa kufanya biashara na sisi" }}</p>
+        </div>
+        <div class="totals-table">
+            <table>
+                <tr>
+                    <td class="text-right">Invoice Amount Excluding Tax</td>
+                    <td class="text-right">{{ settings.currency|default:"TZS" }}{{ invoice.subtotal|floatformat:2 }}
+                    </td>
+                </tr>
+                <tr>
+                    <td class="text-right">Freight Charges</td>
+                    <td class="text-right">{{ settings.currency|default:"TZS" }}0.00</td>
+                </tr>
+                <tr>
+                    <td class="text-right">{{ settings.tax_label|default:"VAT" }}</td>
+                    <td class="text-right">{{ settings.currency|default:"TZS" }}{{ invoice.tax_amount|floatformat:2 }}
+                    </td>
+                </tr>
+                <tr class="total-amount">
+                    <td class="text-right"><strong>Total Amount Including Tax</strong></td>
+                    <td class="text-right"><strong>{{ settings.currency|default:"TZS" }}{{
+                            invoice.total_amount|floatformat:2 }}</strong></td>
+                </tr>
+                <tr class="amount-paid">
+                    <td class="text-right">Amount Paid Todate</td>
+                    <td class="text-right">{{ settings.currency|default:"TZS" }}{{ invoice.amount_paid|floatformat:2 }}
+                    </td>
+                </tr>
+            </table>
+        </div>
+        <div style="clear: both;"></div>
+    </div>
+</body>
+
+</html>

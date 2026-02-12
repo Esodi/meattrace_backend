@@ -25,6 +25,7 @@ from .abbatoir_dashboard_serializer import AbbatoirDashboardSerializer
 from .serializers import AnimalSerializer, ProductSerializer, OrderSerializer, ShopSerializer, SlaughterPartSerializer, ActivitySerializer, ProcessingUnitSerializer, JoinRequestSerializer, ProductCategorySerializer, CarcassMeasurementSerializer, SaleSerializer, SaleItemSerializer, NotificationSerializer, UserProfileSerializer, ShopSettingsSerializer, InvoiceSerializer, InvoiceCreateSerializer, InvoiceItemSerializer, InvoicePaymentSerializer, ReceiptSerializer
 from .utils.rejection_service import RejectionService
 from .role_utils import normalize_role, ROLE_ABBATOIR, ROLE_PROCESSOR, ROLE_SHOPOWNER, ROLE_ADMIN
+from .utils.pdf_utils import download_pdf_response
 
 
 class AnimalViewSet(viewsets.ModelViewSet):
@@ -4282,6 +4283,38 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         except UserProfile.DoesNotExist:
             pass
         return Response({"error": "No shop associated with user"}, status=status_module.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['get'])
+    def download_pdf(self, request, pk=None):
+        """Generate and download PDF version of the invoice"""
+        invoice = self.get_object()
+        shop = invoice.shop
+        
+        # Get shop settings for branding
+        try:
+            settings = shop.settings
+        except:
+            # Fallback if ShopSettings doesn't exist or is not one-to-one as expected
+            settings = None
+            
+        items = invoice.items.all()
+        # Calculate empty rows to fill the table (total 10 rows minimum for aesthetic)
+        empty_rows = range(max(0, 10 - items.count()))
+        
+        context = {
+            'invoice': invoice,
+            'shop': shop,
+            'settings': settings,
+            'items': items,
+            'empty_rows': empty_rows,
+        }
+        
+        filename = f"Invoice_{invoice.invoice_number}.pdf"
+        response = download_pdf_response('meat_trace/invoice_pdf.html', context, filename)
+        
+        if response:
+            return response
+        return Response({"error": "Failed to generate PDF"}, status=status_module.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class InvoiceItemViewSet(viewsets.ModelViewSet):

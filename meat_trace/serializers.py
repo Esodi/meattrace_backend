@@ -1350,9 +1350,13 @@ class ShopSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = ShopSettings
         fields = [
-            'id', 'shop', 'tax_rate', 'currency', 'logo', 'header_text', 
-            'footer_text', 'payment_info', 'next_invoice_number', 
-            'next_receipt_number', 'created_at', 'updated_at'
+            'id', 'shop', 'tax_enabled', 'tax_rate', 'tax_label', 'currency',
+            'company_name', 'company_logo', 'company_logo_url', 'company_header',
+            'company_footer', 'invoice_prefix', 'next_invoice_number',
+            'receipt_prefix', 'next_receipt_number', 'business_email',
+            'business_phone', 'business_address', 'website', 'tax_id', 'bank_name',
+            'bank_account_name', 'bank_account_number', 'mobile_money_number',
+            'mobile_money_provider', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
@@ -1415,10 +1419,11 @@ class InvoiceSerializer(serializers.ModelSerializer):
         model = Invoice
         fields = [
             'id', 'invoice_number', 'shop', 'customer_name', 
-            'customer_contact', 'status', 'issue_date', 'due_date', 
-            'payment_terms', 'notes', 'subtotal', 'tax_amount', 'total_amount', 
-            'amount_paid', 'balance_due', 'created_by', 'created_by_name', 
-            'created_at', 'updated_at', 'items', 'payments'
+            'customer_contact', 'customer_phone', 'customer_email',
+            'customer_address', 'customer_tin', 'customer_ref', 'status', 'issue_date', 
+            'due_date', 'payment_terms', 'notes', 'subtotal', 'tax_amount', 
+            'total_amount', 'amount_paid', 'balance_due', 'created_by', 
+            'created_by_name', 'created_at', 'updated_at', 'items', 'payments'
         ]
         read_only_fields = [
             'id', 'invoice_number', 'subtotal', 'tax_amount', 'total_amount', 
@@ -1462,26 +1467,33 @@ class InvoiceCreateSerializer(serializers.ModelSerializer):
         child=serializers.DictField(), 
         write_only=True
     )
-    customer_contact = serializers.CharField(write_only=True)
+    customer_name = serializers.CharField(write_only=True)
+    customer_phone = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    customer_email = serializers.EmailField(required=False, allow_blank=True, write_only=True)
+    customer_address = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    customer_tin = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    customer_ref = serializers.CharField(required=False, allow_blank=True, write_only=True)
     
     class Meta:
         model = Invoice
         fields = [
-            'shop', 'customer_contact', 'due_date', 
+            'shop', 'customer_name', 'customer_phone', 'customer_email',
+            'customer_address', 'customer_tin', 'customer_ref', 'due_date', 
             'payment_terms', 'notes', 'items'
         ]
     
     def create(self, validated_data):
         items_data = validated_data.pop('items')
-        customer_contact = validated_data.pop('customer_contact')
         
-        # Map customer_contact to model fields
-        validated_data['customer_name'] = customer_contact
-        
-        if '@' in customer_contact:
-            validated_data['customer_email'] = customer_contact
-        else:
-            validated_data['customer_phone'] = customer_contact
+        # Customer fields are already in validated_data if passed separately
+        # (Handling legacy 'customer_contact' if somehow still used by old frontends)
+        if 'customer_contact' in validated_data:
+            customer_contact = validated_data.pop('customer_contact')
+            validated_data['customer_name'] = customer_contact
+            if '@' in customer_contact:
+                validated_data['customer_email'] = customer_contact
+            else:
+                validated_data['customer_phone'] = customer_contact
             
         # Generate invoice number
         import time

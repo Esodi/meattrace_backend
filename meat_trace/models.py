@@ -2518,7 +2518,38 @@ class SaleItem(models.Model):
             self.subtotal = self.weight * self.unit_price
         else:
             self.subtotal = self.quantity * self.unit_price
+        
+        is_create = self.pk is None
         super().save(*args, **kwargs)
+
+        # Decrement product weight and inventory when a new sale item is created
+        if is_create:
+            import logging
+            logger = logging.getLogger(__name__)
+            decrement_weight = self.weight if self.weight is not None else Decimal('0')
+
+            # 1. Decrement the Product weight (this is what the frontend displays)
+            try:
+                product = self.product
+                product.weight = max(Decimal('0'), product.weight - decrement_weight)
+                if product.remaining_weight is not None:
+                    product.remaining_weight = max(Decimal('0'), product.remaining_weight - decrement_weight)
+                product.save(update_fields=['weight', 'remaining_weight'])
+                logger.info(f"[SALE] Decremented product {product.name} weight by {decrement_weight}. New weight: {product.weight}")
+            except Exception as e:
+                logger.error(f"[SALE] Failed to decrement product weight: {str(e)}")
+
+            # 2. Also decrement the Inventory record (keeps shop-level stock in sync)
+            try:
+                inventory = Inventory.objects.get(shop=self.sale.shop, product=self.product)
+                inventory.weight = max(Decimal('0'), inventory.weight - decrement_weight)
+                inventory.quantity = inventory.weight
+                inventory.save()
+                logger.info(f"[SALE] Decremented inventory for shop {self.sale.shop.name} product {self.product.name} by {decrement_weight}. New inventory weight: {inventory.weight}")
+            except Inventory.DoesNotExist:
+                logger.warning(f"[SALE] No inventory record found for shop {self.sale.shop.id} and product {self.product.id}")
+            except Exception as e:
+                logger.error(f"[SALE] Failed to decrement inventory: {str(e)}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2533,6 +2564,7 @@ class ShopSettings(models.Model):
     tax_enabled = models.BooleanField(default=True)
     tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=18.00, help_text="Tax rate in percentage (e.g., 18.00 for 18%)")
     tax_label = models.CharField(max_length=50, default="VAT", help_text="Tax label (e.g., VAT, GST, Sales Tax)")
+    currency = models.CharField(max_length=10, default="TZS", help_text="Default currency (e.g., TZS, USD, KES)")
     
     # Company Branding
     company_name = models.CharField(max_length=200, blank=True, help_text="Company name for invoices/receipts")
@@ -2554,6 +2586,7 @@ class ShopSettings(models.Model):
     business_phone = models.CharField(max_length=20, blank=True)
     business_address = models.TextField(blank=True)
     website = models.URLField(blank=True)
+    tax_id = models.CharField(max_length=50, blank=True, null=True, help_text="Shop's TIN/Tax ID")
     
     # Payment Information
     bank_name = models.CharField(max_length=200, blank=True)
@@ -2627,6 +2660,8 @@ class Invoice(models.Model):
     customer_phone = models.CharField(max_length=20, blank=True)
     customer_email = models.EmailField(blank=True)
     customer_address = models.TextField(blank=True)
+    customer_tin = models.CharField(max_length=20, blank=True, null=True)
+    customer_ref = models.CharField(max_length=100, blank=True, null=True, help_text="Customer reference number/ID")
     
     # Status and Payment Terms
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft', db_index=True)
