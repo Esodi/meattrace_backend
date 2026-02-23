@@ -11,54 +11,41 @@
         }
 
         body {
-            font-family: Arial, sans-serif;
-            font-size: 10pt;
+            font-family: 'Helvetica', 'Arial', sans-serif;
             color: #333;
             line-height: 1.4;
+            margin: 0;
+            padding: 0;
+            font-size: 10pt;
         }
 
         .header {
-            width: 100%;
-            margin-bottom: 20px;
+            margin-bottom: 10px;
         }
 
         .header table {
             width: 100%;
+            border-collapse: collapse;
         }
 
         .logo {
-            width: 80px;
-            height: auto;
+            max-width: 150px;
+            max-height: 80px;
         }
 
         .company-name {
-            font-size: 24pt;
+            font-size: 18pt;
             font-weight: bold;
-            color: #333;
+            color: #1b5e20;
             text-align: center;
         }
 
         .company-info {
             text-align: right;
-            font-size: 8pt;
-            color: #2e7d32;
-            /* Greenish as in the image */
-        }
-
-        .company-info p {
-            margin: 2px 0;
-        }
-
-        .tin-section {
-            text-align: center;
-            border-bottom: 1px solid #333;
-            padding-bottom: 5px;
-            margin-bottom: 10px;
-            font-size: 10pt;
+            font-size: 9pt;
         }
 
         .invoice-title-section {
-            width: 100%;
             margin-bottom: 20px;
         }
 
@@ -73,30 +60,21 @@
             text-align: right;
         }
 
-        .invoice-details h1 {
-            font-size: 18pt;
-            margin: 0;
-            padding: 0;
-        }
-
         .details-table {
             width: 100%;
-            margin-top: 5px;
-        }
-
-        .details-table td {
-            padding: 2px 0;
+            border-collapse: collapse;
         }
 
         .details-label {
             font-weight: bold;
-            width: 50%;
+            text-align: left;
         }
 
         .items-table {
             width: 100%;
             border-collapse: collapse;
-            margin-bottom: 20px;
+            margin-bottom: 15px;
+            table-layout: fixed;
         }
 
         .items-table th {
@@ -104,31 +82,31 @@
             border: 1px solid #333;
             padding: 8px;
             text-align: center;
-            font-weight: normal;
+            font-weight: bold;
         }
 
         .items-table td {
-            border: 1px solid #333;
-            padding: 8px;
+            border-left: 1px solid #333;
+            border-right: 1px solid #333;
+            padding: 5px 8px;
+            height: 20px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
-        .text-center {
-            text-align: center;
-        }
-
-        .text-right {
-            text-align: right;
+        .items-table tbody tr:last-child td {
+            border-bottom: 1px solid #333;
         }
 
         .summary-section {
-            width: 100%;
-            margin-top: 20px;
+            margin-top: 10px;
         }
 
         .footer-note {
             float: left;
             width: 50%;
-            margin-top: 40px;
+            margin-top: 10px;
         }
 
         .footer-note p {
@@ -192,25 +170,23 @@
         </table>
     </div>
 
-    <div class="tin-section" style="border-bottom: none; height: 10px;">
-        <!-- Empty or small spacer since TIN moved to header -->
-    </div>
+    <div style="border-top: 2px solid #000; margin-bottom: 10px;"></div>
 
     <div class="invoice-title-section">
         <div class="billing-to">
             <p>Customer Ref: {{ invoice.customer_ref|default:"________________" }}</p>
             <p><strong>To:</strong></p>
-            <p>{{ invoice.customer_name }}</p>
+            <p><strong>{{ invoice.customer_name }}</strong></p>
             {% if invoice.customer_address %}<p>{{ invoice.customer_address|linebreaksbr }}</p>{% endif %}
             {% if invoice.customer_phone %}<p>Tel: {{ invoice.customer_phone }}</p>{% endif %}
             {% if invoice.customer_email %}<p>Email: {{ invoice.customer_email }}</p>{% endif %}
         </div>
         <div class="invoice-details">
-            <h1>TAX INVOICE</h1>
+            <h1 style="font-size: 18pt; margin-bottom: 10px;">TAX INVOICE</h1>
             <table class="details-table">
                 <tr>
                     <td class="details-label">Invoice</td>
-                    <td>{{ invoice.invoice_number }}</td>
+                    <td><strong>{{ invoice.invoice_number }}</strong></td>
                 </tr>
                 <tr>
                     <td class="details-label">Invoice Date:</td>
@@ -239,15 +215,14 @@
         <tbody>
             {% for item in items %}
             <tr>
-                <td class="text-center">{{ item.quantity }}</td>
-                <td>{{ item.product_name|default:item.description }}</td>
-                <td class="text-right">{{ item.unit_price|floatformat:2 }}</td>
+                <td class="text-center">{{ item.quantity|floatformat:0 }}</td>
+                <td>{{ item.description|upper }}</td>
+                <td class="text-right">{{ item.unit_price|floatformat:2|intcomma }}</td>
                 <td class="text-center">{{ item.weight_unit|default:"pcs" }}</td>
                 <td class="text-center">0%</td>
-                <td class="text-right">{{ item.subtotal|floatformat:2 }}</td>
+                <td class="text-right">{{ item.subtotal|floatformat:2|intcomma }}</td>
             </tr>
             {% endfor %}
-            <!-- Fill empty lines to match image style -->
             {% for i in empty_rows %}
             <tr>
                 <td>&nbsp;</td>
@@ -263,37 +238,69 @@
 
     <div class="summary-section">
         <div class="footer-note">
-            <p>{{ settings.company_footer|default:"Asante sana kwa kufanya biashara na sisi" }}</p>
+            <p style="background-color: #e8f5e9; padding: 10px; border-radius: 4px; text-align: center;">
+                {{ settings.company_footer|default:"Asante sana kwa kufanya biashara na sisi" }}
+            </p>
         </div>
         <div class="totals-table">
             <table>
                 <tr>
                     <td class="text-right">Invoice Amount Excluding Tax</td>
-                    <td class="text-right">{{ settings.currency|default:"TZS" }}{{ invoice.subtotal|floatformat:2 }}
-                    </td>
+                    <td class="text-right">{{ invoice.subtotal|floatformat:2|intcomma }}</td>
                 </tr>
                 <tr>
                     <td class="text-right">Freight Charges</td>
-                    <td class="text-right">{{ settings.currency|default:"TZS" }}0.00</td>
+                    <td class="text-right">0.00</td>
                 </tr>
                 <tr>
                     <td class="text-right">{{ settings.tax_label|default:"VAT" }}</td>
-                    <td class="text-right">{{ settings.currency|default:"TZS" }}{{ invoice.tax_amount|floatformat:2 }}
-                    </td>
+                    <td class="text-right">{{ invoice.tax_amount|floatformat:2|intcomma }}</td>
                 </tr>
                 <tr class="total-amount">
                     <td class="text-right"><strong>Total Amount Including Tax</strong></td>
-                    <td class="text-right"><strong>{{ settings.currency|default:"TZS" }}{{
-                            invoice.total_amount|floatformat:2 }}</strong></td>
+                    <td class="text-right"><strong>{{ invoice.total_amount|floatformat:2|intcomma }}</strong></td>
                 </tr>
                 <tr class="amount-paid">
                     <td class="text-right">Amount Paid Todate</td>
-                    <td class="text-right">{{ settings.currency|default:"TZS" }}{{ invoice.amount_paid|floatformat:2 }}
-                    </td>
+                    <td class="text-right">{{ invoice.amount_paid|floatformat:2|intcomma }}</td>
+                </tr>
+                <tr style="border-top: 1px solid #333;">
+                    <td class="text-right"><strong>Outstanding Balance ( {{ settings.currency|default:"TZS" }}
+                            )</strong></td>
+                    <td class="text-right"><strong>{{ invoice.balance_due|floatformat:2|intcomma }}</strong></td>
                 </tr>
             </table>
         </div>
         <div style="clear: both;"></div>
+    </div>
+
+    <div style="margin-top: 20px; border: 1px solid #333;">
+        <div
+            style="background-color: #f5f5f5; padding: 5px; border-bottom: 1px solid #333; text-align: center; font-weight: bold;">
+            BANK DETAILS
+        </div>
+        <div style="padding: 10px;">
+            <p><strong>Malipo yote yafanyike kwa</strong></p>
+            <table width="100%" style="font-size: 9pt;">
+                <tr>
+                    <td width="30%">CRDB Account:</td>
+                    <td>: {{ settings.bank_account_number|default:"________________" }}</td>
+                </tr>
+                <tr>
+                    <td>Account Name:</td>
+                    <td>: {{ settings.bank_account_name|default:settings.company_name|upper|default:"________________"
+                        }}</td>
+                </tr>
+                <tr>
+                    <td>BRANCH:</td>
+                    <td>: {{ settings.bank_branch|default:"________________" }}</td>
+                </tr>
+                <tr>
+                    <td>Swift Code:</td>
+                    <td>: {{ settings.swift_code|default:"________________" }}</td>
+                </tr>
+            </table>
+        </div>
     </div>
 </body>
 

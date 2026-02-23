@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     'django_filters',
     'drf_yasg',
     'drf_spectacular',  # Added for OpenAPI documentation
+    'django.contrib.humanize',
     'meat_trace',
 ]
 

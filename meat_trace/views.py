@@ -4298,8 +4298,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             settings = None
             
         items = invoice.items.all()
-        # Calculate empty rows to fill the table (total 10 rows minimum for aesthetic)
-        empty_rows = range(max(0, 10 - items.count()))
+        # Calculate empty rows to fill the table (total 5 rows minimum for aesthetic)
+        empty_rows = range(max(0, 5 - items.count()))
         
         context = {
             'invoice': invoice,

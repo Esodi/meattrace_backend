@@ -2592,6 +2592,8 @@ class ShopSettings(models.Model):
     bank_name = models.CharField(max_length=200, blank=True)
     bank_account_name = models.CharField(max_length=200, blank=True)
     bank_account_number = models.CharField(max_length=50, blank=True)
+    bank_branch = models.CharField(max_length=200, blank=True)
+    swift_code = models.CharField(max_length=50, blank=True)
     mobile_money_number = models.CharField(max_length=20, blank=True)
     mobile_money_provider = models.CharField(max_length=50, blank=True)
     

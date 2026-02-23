@@ -1355,8 +1355,8 @@ class ShopSettingsSerializer(serializers.ModelSerializer):
             'company_footer', 'invoice_prefix', 'next_invoice_number',
             'receipt_prefix', 'next_receipt_number', 'business_email',
             'business_phone', 'business_address', 'website', 'tax_id', 'bank_name',
-            'bank_account_name', 'bank_account_number', 'mobile_money_number',
-            'mobile_money_provider', 'created_at', 'updated_at'
+            'bank_account_name', 'bank_account_number', 'bank_branch', 'swift_code',
+            'mobile_money_number', 'mobile_money_provider', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
