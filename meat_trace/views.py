@@ -2538,9 +2538,15 @@ class ProcessingUnitViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
 
     def list(self, request):
-        """List all processing units"""
+        """List all processing units.
+
+        Query parameters:
+        - all=true: Return all active processing units (used by abbatoir
+          users when selecting a destination for animal transfers).
+        """
         try:
             user = request.user
+            show_all = request.query_params.get('all', '').lower() == 'true'
 
             if user.is_superuser or user.is_staff:
                 queryset = ProcessingUnit.objects.all()
@@ -2553,6 +2559,11 @@ class ProcessingUnitViewSet(viewsets.ViewSet):
 
                 if role == ROLE_ADMIN:
                     queryset = ProcessingUnit.objects.all()
+                elif show_all or role == ROLE_ABBATOIR:
+                    # Abbatoir users (and any role requesting ?all=true)
+                    # need to see all active processing units so they can
+                    # pick a destination when transferring animals.
+                    queryset = ProcessingUnit.objects.filter(is_active=True)
                 else:
                     unit_ids = _get_user_processing_unit_ids(user)
                     queryset = ProcessingUnit.objects.filter(id__in=unit_ids) if unit_ids else ProcessingUnit.objects.none()
