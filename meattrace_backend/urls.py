@@ -39,7 +39,9 @@ schema_view = get_schema_view(
 )
 
 urlpatterns = [
-   # Include main app URLs
+    # Root URL redirect to API documentation
+    path('', RedirectView.as_view(url='/api/docs/', permanent=False)),
+    # Include main app URLs
     path('', include('meat_trace.urls')),
     path('api-token-auth/', authtoken_views.obtain_auth_token),
     # Legacy drf-yasg documentation (keeping for backward compatibility)

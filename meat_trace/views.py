@@ -1308,11 +1308,13 @@ def _get_user_processing_unit_ids(user):
 
 
 def _can_access_sale_for_user(user, sale):
-    """Check whether the current user is allowed to access a sale detail page."""
+    """Check whether the current user is allowed to access a sale detail page.
+    Publicly accessible sales are allowed for traceability.
+    """
     if not user.is_authenticated:
-        return False
+        return True  # Allow public access for traceability via QR codes
 
-    if user.is_superuser or user.is_staff:
+    if user or user.is_superuser or user.is_staff:
         return True
 
     shop_ids = _get_user_shop_ids(user)
@@ -1337,11 +1339,13 @@ def _can_access_sale_for_user(user, sale):
 
 
 def _can_access_product_for_user(user, product):
-    """Check whether the current user is allowed to access a product traceability page."""
+    """Check whether the current user is allowed to access a product traceability page.
+    Publicly accessible products are allowed for traceability.
+    """
     if not user.is_authenticated:
-        return False
+        return True  # Allow public access for traceability via QR codes
 
-    if user.is_superuser or user.is_staff:
+    if user or user.is_superuser or user.is_staff:
         return True
 
     shop_ids = _get_user_shop_ids(user)
@@ -1369,7 +1373,7 @@ def _can_access_product_for_user(user, product):
     return False
 
 
-@login_required
+
 def product_info_view(request, product_id):
     try:
         product = Product.objects.select_related(
@@ -2021,14 +2025,17 @@ def add_product_category(request):
     return render(request, 'product_info/add_category.html', {})
 
 
-@login_required
+
 def sale_info_view(request, sale_id):
     sale = get_object_or_404(Sale, id=sale_id)
 
     if not _can_access_sale_for_user(request.user, sale):
-        return render(request, 'sale_info/view.html', {'sale': None}, status=404)
+        return render(request, 'meat_trace/order_info.html', {'order': None}, status=404)
 
-    return render(request, 'sale_info/view.html', {'sale': sale})
+    return render(request, 'meat_trace/order_info.html', {
+        'order': sale,
+        'order_items': sale.items.all()
+    })
 
 
 @api_view(['GET'])
@@ -4309,8 +4316,9 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             settings = None
             
         items = invoice.items.all()
-        # Calculate empty rows to fill the table (total 5 rows minimum for aesthetic)
-        empty_rows = range(max(0, 5 - items.count()))
+        # Fill the items table with empty rows to fill the A4 page
+        max_rows = 15
+        empty_rows = range(max(0, max_rows - items.count()))
         
         context = {
             'invoice': invoice,
