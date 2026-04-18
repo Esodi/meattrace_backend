@@ -26,6 +26,7 @@ from .serializers import AnimalSerializer, ProductSerializer, OrderSerializer, S
 from .utils.rejection_service import RejectionService
 from .role_utils import normalize_role, ROLE_ABBATOIR, ROLE_PROCESSOR, ROLE_SHOPOWNER, ROLE_ADMIN
 from .utils.pdf_utils import download_pdf_response
+from .utils.traceability import get_product_timeline
 
 
 class AnimalViewSet(viewsets.ModelViewSet):
@@ -208,6 +209,19 @@ class AnimalViewSet(viewsets.ModelViewSet):
                         abbatoir=request.user,
                         transferred_to__isnull=True  # Not already transferred
                     )
+
+                    # Enforce: slaughter must happen before transfer so the
+                    # weight that travels is the post-slaughter (carcass)
+                    # weight, not the live weight.
+                    not_slaughtered = [a.animal_id for a in animals if not a.slaughtered]
+                    if not_slaughtered:
+                        return Response(
+                            {
+                                'error': 'Slaughter must be completed before transfer.',
+                                'animals_not_slaughtered': not_slaughtered,
+                            },
+                            status=status_module.HTTP_400_BAD_REQUEST,
+                        )
 
                     for animal in animals:
                         animal.transferred_to = processing_unit
@@ -1389,286 +1403,12 @@ def product_info_view(request, product_id):
         if not _can_access_product_for_user(request.user, product):
             return render(request, 'meat_trace/product_info.html', {'error': 'Not found'}, status=404)
         
-        # Build comprehensive timeline
-        timeline = []
-        
-        # 1. Animal Registration (Farmer Stage)
-        if product.animal:
-            animal = product.animal
+            timeline = get_product_timeline(product)
             
-            # Get abbatoir contact info
-            farmer_details = {
-                'Animal ID': animal.animal_id,
-                'Animal Name': animal.animal_name or 'Not named',
-                'Species': animal.get_species_display(),
-                'Gender': animal.get_gender_display() if hasattr(animal, 'gender') else 'Unknown',
-                'Age': f'{animal.age} months' if animal.age else 'Not recorded',
-                'Live Weight': f'{animal.live_weight} kg' if animal.live_weight else 'Not recorded',
-                'Health Status': animal.health_status or 'Not recorded',
-                'Breed': animal.breed or 'Not specified',
-                'Abbatoir Name': animal.abbatoir.get_full_name() if animal.abbatoir.first_name else animal.abbatoir.username,
-                'Abbatoir Email': animal.abbatoir.email or 'Not provided',
-                'Notes': animal.notes or 'None'
-            }
-            
-            # Add abbatoir phone if available
-            if hasattr(animal.abbatoir, 'profile') and hasattr(animal.abbatoir.profile, 'phone'):
-                farmer_details['Abbatoir Phone'] = animal.abbatoir.profile.phone or 'Not provided'
-            elif hasattr(animal.abbatoir, 'phone_number'):
-                farmer_details['Abbatoir Phone'] = animal.abbatoir.phone_number or 'Not provided'
-            
-            timeline.append({
-                'stage': 'Animal Registration',
-                'category': 'abbatoir',
-                'timestamp': animal.created_at,
-                'location': f'Abbatoir - {animal.abbatoir.username}',
-                'actor': animal.abbatoir.get_full_name() if animal.abbatoir.first_name else animal.abbatoir.username,
-                'action': f'Animal {animal.animal_id} registered at farm',
-                'icon': 'fa-clipboard-list',
-                'details': farmer_details
-            })
-            
-            # 2. Animal Transfer to Processing Unit
-            if animal.transferred_at and animal.transferred_to:
-                transfer_details = {
-                    'From': f'Abbatoir - {animal.abbatoir.get_full_name() if animal.abbatoir.first_name else animal.abbatoir.username}',
-                    'To': animal.transferred_to.name,
-                    'Transfer Date': animal.transferred_at.strftime('%Y-%m-%d %H:%M:%S'),
-                    'Transfer Mode': 'Live Animal Transport',
-                    'Animal ID': animal.animal_id,
-                    'Animal Species': animal.get_species_display(),
-                    'Live Weight': f'{animal.live_weight} kg' if animal.live_weight else 'Not recorded',
-                    'Health Status': animal.health_status or 'Not recorded',
-                    'Processing Unit': animal.transferred_to.name,
-                    'Processing Unit Location': animal.transferred_to.location if hasattr(animal.transferred_to, 'location') else 'Not specified'
-                }
-                
-                timeline.append({
-                    'stage': 'Animal Transfer to Processing',
-                    'category': 'logistics',
-                    'timestamp': animal.transferred_at,
-                    'location': animal.transferred_to.name,
-                    'actor': animal.abbatoir.get_full_name() if animal.abbatoir.first_name else animal.abbatoir.username,
-                    'action': f'Live animal transported to {animal.transferred_to.name}',
-                    'icon': 'fa-truck',
-                    'details': transfer_details
-                })
-            
-            # 3. Animal Reception at Processing Unit
-            if animal.received_at and animal.received_by:
-                reception_details = {
-                    'Received By': animal.received_by.get_full_name() if animal.received_by.first_name else animal.received_by.username,
-                    'Reception Date': animal.received_at.strftime('%Y-%m-%d %H:%M:%S'),
-                    'Processing Unit': animal.transferred_to.name if animal.transferred_to else 'Unknown',
-                    'Animal ID': animal.animal_id,
-                    'Species': animal.get_species_display(),
-                    'Reception Status': 'Accepted for processing',
-                    'Health Inspection': animal.health_status or 'Passed',
-                }
-                
-                if hasattr(animal.received_by, 'email'):
-                    reception_details['Inspector Email'] = animal.received_by.email or 'Not provided'
-                
-                timeline.append({
-                    'stage': 'Animal Reception & Inspection',
-                    'category': 'processing',
-                    'timestamp': animal.received_at,
-                    'location': animal.transferred_to.name if animal.transferred_to else 'Processing Unit',
-                    'actor': animal.received_by.get_full_name() if animal.received_by.first_name else animal.received_by.username,
-                    'action': f'Animal received, inspected and approved for processing',
-                    'icon': 'fa-check-circle',
-                    'details': reception_details
-                })
-            
-            # 4. Slaughter Event
-            if animal.slaughtered and animal.slaughtered_at:
-                slaughter_details = {
-                    'Animal ID': animal.animal_id,
-                    'Species': animal.get_species_display(),
-                    'Slaughter Date': animal.slaughtered_at.strftime('%Y-%m-%d %H:%M:%S'),
-                    'Processing Unit': animal.transferred_to.name if animal.transferred_to else 'Unknown',
-                    'Abbatoir': animal.abbatoir_name or 'Not specified',
-                    'Pre-Slaughter Weight': f'{animal.live_weight} kg' if animal.live_weight else 'Not recorded',
-                }
-                
-                # Add carcass measurement if available
-                if hasattr(animal, 'carcass_measurement'):
-                    cm = animal.carcass_measurement
-                    if cm:
-                        slaughter_details['Carcass Weight'] = f'{cm.carcass_weight} kg' if hasattr(cm, 'carcass_weight') and cm.carcass_weight else 'Not recorded'
-                        slaughter_details['Dressing Percentage'] = f'{(cm.carcass_weight / animal.live_weight * 100):.1f}%' if animal.live_weight and hasattr(cm, 'carcass_weight') and cm.carcass_weight else 'Not calculated'
-                
-                timeline.append({
-                    'stage': 'Slaughter',
-                    'category': 'processing',
-                    'timestamp': animal.slaughtered_at,
-                    'location': animal.transferred_to.name if animal.transferred_to else 'Processing Unit',
-                    'actor': 'Processing Unit Slaughter Team',
-                    'action': f'Animal {animal.animal_id} ({animal.get_species_display()}) slaughtered',
-                    'icon': 'fa-cut',
-                    'details': slaughter_details
-                })
-                
-                # 5. Carcass Breakdown - Detailed Part Tracking
-                if animal.slaughter_parts.exists():
-                    parts = animal.slaughter_parts.all()
-                    total_parts_weight = sum([p.weight for p in parts if p.weight])
-                    
-                    # Create detailed parts breakdown
-                    parts_breakdown = {
-                        'Total Parts Created': parts.count(),
-                        'Total Parts Weight': f'{total_parts_weight} kg',
-                        'Breakdown Date': animal.slaughtered_at.strftime('%Y-%m-%d %H:%M:%S'),
-                    }
-                    
-                    # List all individual parts with their destinations
-                    for idx, part in enumerate(parts, 1):
-                        part_key = f'Part {idx}'
-                        part_value = f'{part.get_part_type_display()} - {part.weight} kg'
-                        
-                        # Add destination if part was transferred
-                        if hasattr(part, 'transferred_to') and part.transferred_to:
-                            part_value += f' ΓåÆ {part.transferred_to.name}'
-                        elif hasattr(part, 'processing_unit') and part.processing_unit:
-                            part_value += f' (at {part.processing_unit.name})'
-                        
-                        parts_breakdown[part_key] = part_value
-                    
-                    timeline.append({
-                        'stage': 'Carcass Breakdown & Part Distribution',
-                        'category': 'processing',
-                        'timestamp': animal.slaughtered_at,
-                        'location': animal.transferred_to.name if animal.transferred_to else 'Processing Unit',
-                        'actor': 'Butchery Team',
-                        'action': f'Carcass divided into {parts.count()} parts for processing',
-                        'icon': 'fa-th-large',
-                        'details': parts_breakdown
-                    })
-                    
-                    # 5b. Individual Part Transfers (if split carcass scenario)
-                    for part in parts:
-                        if hasattr(part, 'transferred_at') and part.transferred_at and hasattr(part, 'transferred_to') and part.transferred_to:
-                            part_transfer_details = {
-                                'Part Type': part.get_part_type_display(),
-                                'Part Weight': f'{part.weight} kg',
-                                'From': animal.transferred_to.name if animal.transferred_to else 'Origin Processing Unit',
-                                'To': part.transferred_to.name,
-                                'Transfer Date': part.transferred_at.strftime('%Y-%m-%d %H:%M:%S'),
-                                'Part ID': f'Part-{part.id}',
-                                'Original Animal': animal.animal_id,
-                            }
-                            
-                            timeline.append({
-                                'stage': 'Carcass Part Transfer',
-                                'category': 'logistics',
-                                'timestamp': part.transferred_at,
-                                'location': part.transferred_to.name,
-                                'actor': 'Logistics Team',
-                                'action': f'{part.get_part_type_display()} part transferred to different processing unit',
-                                'icon': 'fa-exchange-alt',
-                                'details': part_transfer_details
-                            })
-        
-        # 6. Product Creation - Enhanced Details
-        creation_details = {
-            'Product Name': product.name,
-            'Batch Number': product.batch_number,
-            'Product Type': product.get_product_type_display(),
-            'Weight': f'{product.weight} {product.weight_unit}' if product.weight else 'Not recorded',
-            'Category': product.category.name if product.category else 'Not categorized',
-            'Processing Unit': product.processing_unit.name if product.processing_unit else 'Unknown',
-            'Creation Date': product.created_at.strftime('%Y-%m-%d %H:%M:%S'),
-        }
-        
-        # Add source information
-        if product.animal:
-            creation_details['Source Animal'] = product.animal.animal_id
-            creation_details['Animal Species'] = product.animal.get_species_display()
-        
-        # Add slaughter part info if this product came from a specific part
-        if product.slaughter_part:
-            creation_details['From Carcass Part'] = product.slaughter_part.get_part_type_display()
-            creation_details['Part Weight'] = f'{product.slaughter_part.weight} kg'
-        
-        # Add ingredients if this is a composite product
-        if product.ingredients.exists():
-            ingredients_list = []
-            for ing in product.ingredients.all():
-                if ing.slaughter_part:
-                    ingredients_list.append(f'{ing.slaughter_part.get_part_type_display()} ({ing.quantity_used} {ing.quantity_unit})')
-            if ingredients_list:
-                creation_details['Ingredients'] = ', '.join(ingredients_list)
-        
-        timeline.append({
-            'stage': 'Product Creation',
-            'category': 'processing',
-            'timestamp': product.created_at,
-            'location': product.processing_unit.name if product.processing_unit else 'Processing Unit',
-            'actor': 'Production Team',
-            'action': f'Product "{product.name}" manufactured',
-            'icon': 'fa-box',
-            'details': creation_details
-        })
-        
-        # 7. Product Transfer to Shop - Enhanced
-        if product.transferred_at and product.transferred_to:
-            transfer_details = {
-                'From': product.processing_unit.name if product.processing_unit else 'Processing Unit',
-                'To': product.transferred_to.name,
-                'Transfer Date': product.transferred_at.strftime('%Y-%m-%d %H:%M:%S'),
-                'Product': product.name,
-                'Batch Number': product.batch_number,
-                'Weight Transferred': f'{product.weight} {product.weight_unit}',
-                'Product Type': product.get_product_type_display(),
-            }
-            
-            # Add shop location if available
-            if hasattr(product.transferred_to, 'location'):
-                transfer_details['Shop Location'] = product.transferred_to.location
-            if hasattr(product.transferred_to, 'owner'):
-                transfer_details['Shop Owner'] = product.transferred_to.owner.get_full_name() if product.transferred_to.owner.first_name else product.transferred_to.owner.username
-            
-            timeline.append({
-                'stage': 'Product Transfer to Retail',
-                'category': 'logistics',
-                'timestamp': product.transferred_at,
-                'location': product.transferred_to.name,
-                'actor': product.processing_unit.name if product.processing_unit else 'Processing Unit',
-                'action': f'Product dispatched to {product.transferred_to.name}',
-                'icon': 'fa-truck-loading',
-                'details': transfer_details
-            })
-        
-        # 8. Product Reception at Shop - Enhanced
-        if product.received_at and product.received_by_shop:
-            reception_details = {
-                'Shop Name': product.received_by_shop.name,
-                'Reception Date': product.received_at.strftime('%Y-%m-%d %H:%M:%S'),
-                'Weight Ordered': f'{product.weight} {product.weight_unit}',
-                'Weight Received': f'{product.weight_received} {product.weight_unit}' if hasattr(product, 'weight_received') and product.weight_received else 'Same as ordered',
-                'Batch Number': product.batch_number,
-                'Reception Status': 'Accepted and Added to Inventory',
-            }
-            
-            # Add shop details
-            if hasattr(product.received_by_shop, 'location'):
-                reception_details['Shop Location'] = product.received_by_shop.location
-            if hasattr(product.received_by_shop, 'owner'):
-                owner = product.received_by_shop.owner
-                reception_details['Received By'] = owner.get_full_name() if owner.first_name else owner.username
-                if hasattr(owner, 'email') and owner.email:
-                    reception_details['Contact Email'] = owner.email
-            
-            timeline.append({
-                'stage': 'Product Reception at Shop',
-                'category': 'shop',
-                'timestamp': product.received_at,
-                'location': product.received_by_shop.name,
-                'actor': product.received_by_shop.name,
-                'action': f'Product received and stocked',
-                'icon': 'fa-store',
-                'details': reception_details
-            })
+            # 10. Sales Events 
+            sales = []
+
+
         
         # 9. Quality Issues / Rejection - Enhanced
         if hasattr(product, 'rejected_at') and product.rejected_at and hasattr(product, 'rejection_status') and product.rejection_status:
@@ -2377,21 +2117,68 @@ def traceability_report_view(request):
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def public_sale_receipt_api(request, receipt_uuid):
-    """Public endpoint to view sale receipt by UUID."""
-    from .models import Sale
+    """Public endpoint to view sale receipt by UUID. Returns JSON."""
     try:
         sale = Sale.objects.get(receipt_uuid=receipt_uuid)
+        items_data = []
+        for item in sale.items.all():
+            items_data.append({
+                'product_name': item.product.name if item.product else 'Unknown',
+                'quantity': str(item.quantity),
+                'unit_price': str(item.unit_price),
+                'subtotal': str(item.subtotal),
+            })
+            
         return Response({
             'sale_id': sale.id,
             'receipt_uuid': str(sale.receipt_uuid),
-            'total': str(sale.total_amount) if hasattr(sale, 'total_amount') else '0',
-            'created_at': sale.created_at.isoformat() if sale.created_at else None,
-            'items': []
+            'shop_name': sale.shop.name if sale.shop else 'Unknown',
+            'total': str(sale.total_amount),
+            'created_at': sale.created_at.isoformat(),
+            'payment_method': sale.payment_method,
+            'items': items_data
         })
     except Sale.DoesNotExist:
         return Response({'error': 'Receipt not found'}, status=404)
     except Exception as e:
         return Response({'error': str(e)}, status=500)
+
+
+@permission_classes([AllowAny])
+def public_sale_receipt_view(request, receipt_uuid):
+    """Public web view for digital receipt with traceability integration."""
+    try:
+        sale = Sale.objects.select_related('shop').get(receipt_uuid=receipt_uuid)
+        sale_items = sale.items.all().select_related('product', 'product__processing_unit', 'product__category')
+        
+        # Build item list with individual timelines
+        items_with_timelines = []
+        for item in sale_items:
+            timeline = []
+            if item.product:
+                timeline = get_product_timeline(item.product)
+                
+            items_with_timelines.append({
+                'item': item,
+                'product': item.product,
+                'timeline': timeline
+            })
+            
+        context = {
+            'sale': sale,
+            'shop': sale.shop,
+            'items': items_with_timelines,
+            'total_items': len(items_with_timelines),
+            'timestamp': timezone.now()
+        }
+        
+        return render(request, 'meat_trace/public_receipt.html', context)
+    except Sale.DoesNotExist:
+        return render(request, 'meat_trace/public_receipt.html', {'error': 'Receipt not found'}, status=404)
+    except Exception as e:
+        logger.error(f"Error viewing public receipt: {str(e)}")
+        return render(request, 'meat_trace/public_receipt.html', {'error': f'An unexpected error occurred: {str(e)}'}, status=500)
+
 
 
 @api_view(['GET'])
@@ -4411,4 +4198,103 @@ class ReceiptViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
 
+class WasteViewSet(viewsets.ModelViewSet):
+    """ViewSet for listing/recording Waste records across the meat trace pipeline.
 
+    Scoping:
+      - Abbatoir users see waste tied to their animals (stage=abbatoir or animal.abbatoir=user)
+      - Processing unit users see waste where processing_unit is one of their units
+      - Admins see everything
+    Destroy is disabled to preserve the audit trail.
+    """
+    serializer_class = None  # set below to avoid circular import at module load
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'post', 'patch', 'head', 'options']
+
+    def get_serializer_class(self):
+        from .serializers import WasteSerializer
+        return WasteSerializer
+
+    def get_queryset(self):
+        from .models import Waste, ProcessingUnitUser
+        user = self.request.user
+        qs = Waste.objects.all().select_related(
+            'animal', 'slaughter_part', 'product', 'recorded_by',
+            'abbatoir', 'processing_unit',
+        )
+
+        if not hasattr(user, 'profile'):
+            return qs.none()
+
+        role = normalize_role(user.profile.role)
+        if role == ROLE_ADMIN:
+            pass
+        elif role == ROLE_ABBATOIR:
+            qs = qs.filter(Q(abbatoir=user) | Q(animal__abbatoir=user))
+        elif role == ROLE_PROCESSOR:
+            unit_ids = ProcessingUnitUser.objects.filter(
+                user=user, is_active=True, is_suspended=False
+            ).values_list('processing_unit_id', flat=True)
+            qs = qs.filter(processing_unit_id__in=list(unit_ids))
+        else:
+            qs = qs.none()
+
+        waste_type = self.request.query_params.get('waste_type')
+        if waste_type:
+            qs = qs.filter(waste_type=waste_type)
+
+        stage = self.request.query_params.get('stage')
+        if stage:
+            qs = qs.filter(stage=stage)
+
+        animal_id = self.request.query_params.get('animal')
+        if animal_id:
+            qs = qs.filter(animal_id=animal_id)
+
+        start = self.request.query_params.get('start_date')
+        if start:
+            qs = qs.filter(recorded_at__date__gte=start)
+        end = self.request.query_params.get('end_date')
+        if end:
+            qs = qs.filter(recorded_at__date__lte=end)
+
+        return qs.order_by('-recorded_at')
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        role = normalize_role(user.profile.role) if hasattr(user, 'profile') else None
+        extra = {'recorded_by': user, 'auto_generated': False}
+
+        if role == ROLE_ABBATOIR and not serializer.validated_data.get('abbatoir'):
+            extra['abbatoir'] = user
+        elif role == ROLE_PROCESSOR and not serializer.validated_data.get('processing_unit'):
+            from .models import ProcessingUnitUser
+            first_unit = ProcessingUnitUser.objects.filter(
+                user=user, is_active=True, is_suspended=False
+            ).values_list('processing_unit_id', flat=True).first()
+            if first_unit:
+                extra['processing_unit_id'] = first_unit
+
+        serializer.save(**extra)
+
+    @action(detail=False, methods=['get'])
+    def summary(self, request):
+        """Aggregate waste totals grouped by type and stage for the caller's scope."""
+        qs = self.get_queryset()
+        by_type = qs.values('waste_type').annotate(
+            total_weight=models.Sum('weight_kg'),
+            count=models.Count('id'),
+        ).order_by('waste_type')
+        by_stage = qs.values('stage').annotate(
+            total_weight=models.Sum('weight_kg'),
+            count=models.Count('id'),
+        ).order_by('stage')
+        totals = qs.aggregate(
+            total_weight=models.Sum('weight_kg'),
+            total_count=models.Count('id'),
+        )
+        return Response({
+            'totals': totals,
+            'by_type': list(by_type),
+            'by_stage': list(by_stage),
+        })

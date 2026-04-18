@@ -128,6 +128,12 @@ except Exception as e:
     logger.warning(f"[URL_REGISTRATION] Failed to register SlaughterPartViewSet: {e}")
 
 try:
+    from .views import WasteViewSet
+    router.register(r'waste', WasteViewSet, basename='waste')
+except Exception as e:
+    logger.warning(f"[URL_REGISTRATION] Failed to register WasteViewSet: {e}")
+
+try:
     from .viewsets import SystemConfigurationViewSet
     router.register(r'config/system', SystemConfigurationViewSet, basename='system-config')
 except Exception as e:
@@ -278,6 +284,8 @@ urlpatterns = [
     
     # Public sale receipt API endpoint (no auth required - for QR code scanning)
     path('api/v2/public/sale-receipt/<uuid:receipt_uuid>/', views.public_sale_receipt_api, name='public_sale_receipt_api'),
+    # Public digital receipt web page (under product-info family for consistency)
+    path('api/v2/product-info/view/receipt/<uuid:receipt_uuid>/', views.public_sale_receipt_view, name='public_sale_receipt_view'),
 
     # Processing Unit dashboard endpoints
     path('processor/add-product-category/', views.add_product_category, name='add_product_category'),

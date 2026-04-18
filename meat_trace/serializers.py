@@ -3,17 +3,17 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from .models import (
-    User, UserProfile, UserAuditLog, Animal, SlaughterPart, 
-    ProductIngredient, CarcassMeasurement, Product, Inventory, 
+    User, UserProfile, UserAuditLog, Animal, SlaughterPart,
+    ProductIngredient, CarcassMeasurement, Product, Inventory,
     ProcessingUnit, ProcessingUnitUser, Shop, ShopUser, Order, OrderItem,
     ComplianceAudit, Certification, RegistrationApplication, ApprovalWorkflow,
-    JoinRequest, Notification, Activity, SystemAlert, PerformanceMetric, 
+    JoinRequest, Notification, Activity, SystemAlert, PerformanceMetric,
     SystemHealth, SecurityLog, TransferRequest, BackupSchedule, Sale, SaleItem,
     RejectionReason, ComplianceStatus, AuditTrail, ConfigurationHistory,
     FeatureFlag, Backup, DataExport, DataImport, GDPRRequest, DataValidation,
     ProductCategory, NotificationTemplate, NotificationChannel,
-    NotificationDelivery, NotificationSchedule, ShopSettings, Invoice, 
-    InvoiceItem, InvoicePayment, Receipt
+    NotificationDelivery, NotificationSchedule, ShopSettings, Invoice,
+    InvoiceItem, InvoicePayment, Receipt, Waste
 )
 
 User = get_user_model()
@@ -402,6 +402,8 @@ class AnimalSerializer(serializers.ModelSerializer):
     is_slaughtered_status = serializers.ReadOnlyField()
     is_transferred_status = serializers.ReadOnlyField()
     is_semi_transferred_status = serializers.ReadOnlyField()
+    slaughter_weight = serializers.ReadOnlyField()
+    total_waste_weight = serializers.ReadOnlyField()
 
     class Meta:
         model = Animal
@@ -1564,3 +1566,32 @@ class ReceiptSerializer(serializers.ModelSerializer):
         if obj.recorded_by:
             return f"{obj.recorded_by.first_name} {obj.recorded_by.last_name}".strip() or obj.recorded_by.username
         return None
+
+
+class WasteSerializer(serializers.ModelSerializer):
+    animal_id = serializers.CharField(source='animal.animal_id', read_only=True)
+    animal_species = serializers.CharField(source='animal.species', read_only=True)
+    slaughter_part_type = serializers.CharField(source='slaughter_part.part_type', read_only=True)
+    product_name = serializers.CharField(source='product.name', read_only=True)
+    abbatoir_name = serializers.CharField(source='abbatoir.username', read_only=True)
+    processing_unit_name = serializers.CharField(source='processing_unit.name', read_only=True)
+    recorded_by_name = serializers.CharField(source='recorded_by.username', read_only=True)
+    waste_type_display = serializers.CharField(source='get_waste_type_display', read_only=True)
+    stage_display = serializers.CharField(source='get_stage_display', read_only=True)
+
+    class Meta:
+        model = Waste
+        fields = [
+            'id', 'animal', 'animal_id', 'animal_species',
+            'slaughter_part', 'slaughter_part_type',
+            'product', 'product_name',
+            'waste_type', 'waste_type_display',
+            'stage', 'stage_display',
+            'weight_kg', 'expected_weight_kg', 'actual_weight_kg',
+            'auto_generated', 'notes',
+            'recorded_by', 'recorded_by_name',
+            'abbatoir', 'abbatoir_name',
+            'processing_unit', 'processing_unit_name',
+            'recorded_at',
+        ]
+        read_only_fields = ['auto_generated', 'recorded_at']

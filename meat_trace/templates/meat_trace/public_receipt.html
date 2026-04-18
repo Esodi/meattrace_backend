@@ -1,0 +1,473 @@
+{% extends "meat_trace/base.html" %}
+{% load static %}
+
+{% block title %}Digital Receipt - {{ shop.name }}{% endblock %}
+
+{% block extra_head %}
+<style>
+    :root {
+        --primary-color: #2c3e50;
+        --accent-color: #e74c3c;
+        --success-color: #27ae60;
+        --bg-color: #f4f7f6;
+        --card-bg: #ffffff;
+        --text-color: #2d3436;
+        --muted-text: #636e72;
+    }
+
+    body {
+        background-color: var(--bg-color);
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        color: var(--text-color);
+        margin: 0;
+        padding-bottom: 50px;
+    }
+
+    .receipt-container {
+        max-width: 600px;
+        margin: 40px auto;
+        padding: 0 20px;
+    }
+
+    .premium-card {
+        background: var(--card-bg);
+        border-radius: 24px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+        overflow: hidden;
+        margin-bottom: 24px;
+        border: 1px solid rgba(0, 0, 0, 0.05);
+    }
+
+    /* Header Section */
+    .receipt-header {
+        background: linear-gradient(135deg, #2c3e50 0%, #000000 100%);
+        padding: 40px 20px;
+        text-align: center;
+        color: white;
+    }
+
+    .shop-logo {
+        width: 80px;
+        height: 80px;
+        background: white;
+        border-radius: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 20px;
+        font-size: 2rem;
+        color: var(--primary-color);
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    }
+
+    .shop-name {
+        font-size: 1.8rem;
+        font-weight: 800;
+        margin: 0;
+        letter-spacing: -0.5px;
+    }
+
+    .thank-you {
+        font-size: 1rem;
+        opacity: 0.8;
+        margin-top: 5px;
+    }
+
+    /* Receipt Details */
+    .receipt-body {
+        padding: 30px;
+    }
+
+    .meta-row {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 25px;
+        padding-bottom: 20px;
+        border-bottom: 1px dashed #dfe6e9;
+    }
+
+    .meta-item {
+        text-align: left;
+    }
+
+    .meta-label {
+        font-size: 0.75rem;
+        color: var(--muted-text);
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        display: block;
+        margin-bottom: 3px;
+    }
+
+    .meta-value {
+        font-weight: 600;
+        font-size: 0.95rem;
+    }
+
+    /* Items List */
+    .item-list {
+        margin-bottom: 30px;
+    }
+
+    .item-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+    }
+
+    .item-info {
+        flex: 1;
+    }
+
+    .item-name {
+        font-weight: 600;
+        font-size: 1.1rem;
+        display: block;
+    }
+
+    .item-qty {
+        font-size: 0.85rem;
+        color: var(--muted-text);
+    }
+
+    .item-price {
+        font-weight: 700;
+        font-size: 1.1rem;
+    }
+
+    /* Total Section */
+    .total-section {
+        background: #f8f9fa;
+        padding: 20px 30px;
+        border-top: 1px solid #eee;
+    }
+
+    .total-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .total-label {
+        font-size: 1.2rem;
+        font-weight: 800;
+    }
+
+    .total-amount {
+        font-size: 1.6rem;
+        font-weight: 900;
+        color: var(--primary-color);
+    }
+
+    /* Traceability Section */
+    .traceability-section {
+        padding: 20px 0;
+    }
+
+    .section-title {
+        font-size: 1.3rem;
+        font-weight: 800;
+        margin: 0 0 20px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .section-title i {
+        color: var(--success-color);
+    }
+
+    /* Timeline Styles */
+    .timeline {
+        position: relative;
+        padding-left: 30px;
+    }
+
+    .timeline::before {
+        content: '';
+        position: absolute;
+        left: 10px;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        background: #eee;
+    }
+
+    .timeline-event {
+        position: relative;
+        margin-bottom: 25px;
+    }
+
+    .timeline-dot {
+        position: absolute;
+        left: -25px;
+        top: 5px;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: var(--success-color);
+        border: 2px solid white;
+        box-shadow: 0 0 0 3px rgba(39, 174, 96, 0.1);
+        z-index: 1;
+    }
+
+    .event-card {
+        background: #f9f9f9;
+        border-radius: 12px;
+        padding: 15px;
+        border: 1px solid #efefef;
+    }
+
+    .event-header {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 5px;
+    }
+
+    .event-stage {
+        font-weight: 700;
+        font-size: 0.9rem;
+        color: var(--primary-color);
+    }
+
+    .event-time {
+        font-size: 0.75rem;
+        color: var(--muted-text);
+    }
+
+    .event-action {
+        font-size: 0.95rem;
+        margin-bottom: 8px;
+    }
+
+    .event-location {
+        font-size: 0.8rem;
+        color: var(--muted-text);
+        display: flex;
+        align-items: center;
+        gap: 5px;
+    }
+
+    /* Item Selector (Accordion style) */
+    .item-timeline-box {
+        margin-bottom: 15px;
+    }
+
+    .item-selector-btn {
+        width: 100%;
+        padding: 15px 20px;
+        background: white;
+        border: 1px solid #eee;
+        border-radius: 12px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        cursor: pointer;
+        transition: all 0.2s;
+        text-align: left;
+    }
+
+    .item-selector-btn:hover {
+        border-color: var(--success-color);
+        background: #f0fff4;
+    }
+
+    .item-selector-btn.active {
+        border-color: var(--success-color);
+        background: white;
+        border-bottom-left-radius: 0;
+        border-bottom-right-radius: 0;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05);
+    }
+
+    .timeline-content {
+        display: none;
+        padding: 25px 20px;
+        background: white;
+        border: 1px solid #eee;
+        border-top: none;
+        border-bottom-left-radius: 12px;
+        border-bottom-right-radius: 12px;
+    }
+
+    .active+.timeline-content {
+        display: block;
+    }
+
+    .tab-hint {
+        text-align: center;
+        color: var(--muted-text);
+        font-size: 0.85rem;
+        margin-bottom: 15px;
+    }
+
+    /* Floating Print Button */
+    .print-button {
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: var(--primary-color);
+        color: white;
+        width: 56px;
+        height: 56px;
+        border-radius: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        cursor: pointer;
+        z-index: 100;
+        border: none;
+    }
+
+    @media print {
+        .print-button {
+            display: none;
+        }
+
+        body {
+            background: white;
+        }
+
+        .receipt-container {
+            margin: 0;
+            width: 100%;
+            max-width: 100%;
+        }
+
+        .premium-card {
+            box-shadow: none;
+            border: 1px solid #eee;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="receipt-container">
+    {% if error %}
+    <div class="premium-card" style="padding: 40px; text-align: center;">
+        <i class="fas fa-exclamation-circle"
+            style="font-size: 4rem; color: var(--accent-color); margin-bottom: 20px;"></i>
+        <h2>{{ error }}</h2>
+        <p>Please check the QR code link and try again.</p>
+    </div>
+    {% else %}
+    <!-- Receipt Main Card -->
+    <div class="premium-card">
+        <header class="receipt-header">
+            <div class="shop-logo">
+                <i class="fas fa-store"></i>
+            </div>
+            <h1 class="shop-name">{{ shop.name }}</h1>
+            <p class="thank-you">Thank you for your purchase!</p>
+        </header>
+
+        <div class="receipt-body">
+            <div class="meta-row">
+                <div class="meta-item">
+                    <span class="meta-label">Receipt ID</span>
+                    <span class="meta-value">#{{ sale.id }}</span>
+                </div>
+                <div class="meta-item" style="text-align: right;">
+                    <span class="meta-label">Date</span>
+                    <span class="meta-value">{{ sale.created_at|date:"M d, Y H:i" }}</span>
+                </div>
+            </div>
+
+            <div class="item-list">
+                {% for item_data in items %}
+                <div class="item-row">
+                    <div class="item-info">
+                        <span class="item-name">{{ item_data.item.product.name }}</span>
+                        <span class="item-qty">{{ item_data.item.quantity }} {{ item_data.item.product.weight_unit }} @
+                            TZS {{ item_data.item.unit_price }}</span>
+                    </div>
+                    <div class="item-price">TZS {{ item_data.item.subtotal }}</div>
+                </div>
+                {% endfor %}
+            </div>
+
+            <div class="meta-row" style="margin-bottom: 0; padding-bottom: 0; border-bottom: none;">
+                <div class="meta-item">
+                    <span class="meta-label">Payment Method</span>
+                    <span class="meta-value">{{ sale.get_payment_method_display }}</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="total-section">
+            <div class="total-row">
+                <span class="total-label">Total Amount</span>
+                <span class="total-amount">TZS {{ sale.total_amount }}</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Traceability Section -->
+    <div class="traceability-section">
+        <h2 class="section-title"><i class="fas fa-shield-alt"></i> Traceability Journey</h2>
+        <p class="tab-hint">Click an item below to see its journey from farm to fork.</p>
+
+        {% for item_data in items %}
+        <div class="item-timeline-box">
+            <button class="item-selector-btn {% if forloop.first %}active{% endif %}" onclick="toggleTimeline(this)">
+                <div>
+                    <span style="font-weight: 700;">{{ item_data.item.product.name }}</span>
+                    <div style="font-size: 0.75rem; color: var(--muted-text);">Batch: {{
+                        item_data.item.product.batch_number }}</div>
+                </div>
+                <i class="fas fa-chevron-down"></i>
+            </button>
+            <div class="timeline-content">
+                {% if item_data.timeline %}
+                <div class="timeline">
+                    {% for event in item_data.timeline %}
+                    <div class="timeline-event">
+                        <div class="timeline-dot"></div>
+                        <div class="event-card">
+                            <div class="event-header">
+                                <span class="event-stage">{{ event.stage }}</span>
+                                <span class="event-time">{{ event.timestamp|date:"M d, Y" }}</span>
+                            </div>
+                            <div class="event-action">{{ event.action }}</div>
+                            <div class="event-location">
+                                <i class="fas fa-map-marker-alt"></i> {{ event.location }}
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p style="text-align: center; color: var(--muted-text); padding: 20px;">No journey data available for
+                    this item.</p>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Floating Footer / Authored by -->
+    <div style="text-align: center; margin-top: 40px; opacity: 0.5; font-size: 0.8rem;">
+        <p>Powered by MeatTrace Traceability Platform</p>
+    </div>
+
+    <!-- Floating Print Button -->
+    <button class="print-button" onclick="window.print()">
+        <i class="fas fa-print"></i>
+    </button>
+    {% endif %}
+</div>
+
+<script>
+    function toggleTimeline(btn) {
+        // Close others
+        // document.querySelectorAll('.item-selector-btn').forEach(b => {
+        //     if (b !== btn) b.classList.remove('active');
+        // });
+
+        btn.classList.toggle('active');
+    }
+</script>
+{% endblock %}

@@ -297,6 +297,32 @@ class Animal(models.Model):
         """Alias for live_weight to maintain compatibility"""
         return self.live_weight
 
+    @property
+    def slaughter_weight(self):
+        """Actual post-slaughter weight. Prefers the carcass measurement, falls
+        back to the sum of slaughter parts. This is what must travel with the
+        animal during transfer to the processing unit — NOT live_weight."""
+        try:
+            measurement = self.carcass_measurement
+        except CarcassMeasurement.DoesNotExist:
+            measurement = None
+        if measurement is not None:
+            total = measurement.calculated_total_weight
+            if total is not None:
+                return total
+        parts_total = sum(
+            (p.weight or Decimal('0')) for p in self.slaughter_parts.all()
+        )
+        return parts_total if parts_total > 0 else None
+
+    @property
+    def total_waste_weight(self):
+        """Sum of all waste records attributed to this animal (kg)."""
+        total = self.waste_records.aggregate(
+            total=models.Sum('weight_kg')
+        )['total']
+        return total or Decimal('0')
+
     live_weight = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0)], null=True, blank=True, help_text="Live weight in kg before slaughter")
     remaining_weight = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0)], null=True, blank=True, help_text="Remaining weight available for product creation")
     # Gender and notes - added to align with frontend register screen
@@ -2405,7 +2431,7 @@ class Sale(models.Model):
     
     def get_public_receipt_url(self):
         """Get the public URL for viewing this receipt"""
-        return f"/sale-receipt/{self.receipt_uuid}/"
+        return f"/api/v2/product-info/view/receipt/{self.receipt_uuid}/"
 
     class Meta:
         ordering = ['-created_at']
@@ -3816,8 +3842,8 @@ def generate_sale_qr_code(sender, instance, created, **kwargs):
     """Generate QR code for new sales that links to the sale info page"""
     if created and not instance.qr_code:
         try:
-            # Generate the URL for the sale info HTML page
-            url = f"{getattr(settings, 'SITE_URL', 'http://localhost:8000')}/api/v2/sale-info/view/{instance.id}/"
+            # Generate the URL for the digital receipt page (under product-info family)
+            url = f"{getattr(settings, 'SITE_URL', 'http://localhost:8000')}/api/v2/product-info/view/receipt/{instance.receipt_uuid}/"
 
             # Create QR code
             qr = qrcode.QRCode(
@@ -3859,3 +3885,155 @@ def update_inventory_on_sale(sender, instance, created, **kwargs):
     This signal is kept for backward compatibility but does nothing.
     """
     pass
+
+
+class Waste(models.Model):
+    """Records weight lost between stages of the meat traceability flow so
+    the delta can be reported instead of silently discarded.
+
+    The canonical auto-generated source is the evisceration delta:
+    ``animal.live_weight - calculated_carcass_weight``. Additional waste
+    types (trimming, spoilage, rejection) can be recorded manually."""
+
+    WASTE_TYPE_CHOICES = [
+        ('evisceration', 'Evisceration Loss'),   # live weight -> carcass
+        ('processing', 'Processing Loss'),       # part -> products
+        ('rejection', 'Rejection Loss'),         # animal/part rejected
+        ('trimming', 'Trimming Loss'),
+        ('spoilage', 'Spoilage'),
+        ('other', 'Other'),
+    ]
+
+    STAGE_CHOICES = [
+        ('abbatoir', 'Abbatoir'),
+        ('processing_unit', 'Processing Unit'),
+        ('shop', 'Shop'),
+    ]
+
+    animal = models.ForeignKey(
+        Animal,
+        on_delete=models.CASCADE,
+        related_name='waste_records',
+        null=True,
+        blank=True,
+    )
+    slaughter_part = models.ForeignKey(
+        SlaughterPart,
+        on_delete=models.SET_NULL,
+        related_name='waste_records',
+        null=True,
+        blank=True,
+    )
+    product = models.ForeignKey(
+        'Product',
+        on_delete=models.SET_NULL,
+        related_name='waste_records',
+        null=True,
+        blank=True,
+    )
+
+    waste_type = models.CharField(max_length=20, choices=WASTE_TYPE_CHOICES)
+    stage = models.CharField(
+        max_length=20,
+        choices=STAGE_CHOICES,
+        default='abbatoir',
+        help_text="Where in the pipeline the waste was observed",
+    )
+
+    weight_kg = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(0)],
+        help_text="Waste weight in kg",
+    )
+    expected_weight_kg = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Expected weight before this stage (e.g. live_weight)",
+    )
+    actual_weight_kg = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Observed weight after this stage (e.g. carcass total)",
+    )
+
+    auto_generated = models.BooleanField(
+        default=False,
+        help_text="True when created by the system from a measurement delta",
+    )
+
+    notes = models.TextField(blank=True, null=True)
+    recorded_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        related_name='recorded_waste',
+        null=True,
+        blank=True,
+    )
+    abbatoir = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        related_name='abbatoir_waste',
+        null=True,
+        blank=True,
+    )
+    processing_unit = models.ForeignKey(
+        ProcessingUnit,
+        on_delete=models.SET_NULL,
+        related_name='waste_records',
+        null=True,
+        blank=True,
+    )
+    recorded_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ['-recorded_at']
+        indexes = [
+            models.Index(fields=['waste_type']),
+            models.Index(fields=['stage', '-recorded_at']),
+            models.Index(fields=['animal']),
+        ]
+
+    def __str__(self):
+        target = self.animal.animal_id if self.animal else (
+            self.product.name if self.product else 'unspecified'
+        )
+        return f"{self.get_waste_type_display()} - {self.weight_kg} kg ({target})"
+
+
+@receiver(post_save, sender=CarcassMeasurement)
+def record_evisceration_waste(sender, instance, created, **kwargs):
+    """Automatically record the live -> carcass delta as evisceration waste
+    the first time a carcass measurement is saved for an animal. Re-saves
+    update the existing record rather than piling on duplicates."""
+
+    animal = instance.animal
+    live_weight = animal.live_weight
+    carcass_total = instance.calculated_total_weight
+
+    if live_weight is None or carcass_total is None:
+        return
+
+    delta = Decimal(live_weight) - Decimal(carcass_total)
+    if delta <= 0:
+        # Either the measurement is wrong or there's no observable loss;
+        # don't create a negative waste record.
+        return
+
+    Waste.objects.update_or_create(
+        animal=animal,
+        waste_type='evisceration',
+        auto_generated=True,
+        defaults={
+            'stage': 'abbatoir',
+            'weight_kg': delta,
+            'expected_weight_kg': live_weight,
+            'actual_weight_kg': carcass_total,
+            'abbatoir': animal.abbatoir,
+            'notes': 'Auto-recorded: live weight minus calculated carcass total.',
+        },
+    )
