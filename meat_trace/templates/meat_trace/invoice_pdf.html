@@ -1,3 +1,4 @@
+{% load humanize %}
 <!DOCTYPE html>
 <html>
 
@@ -7,57 +8,84 @@
     <style>
         @page {
             size: A4;
-            margin: 1cm;
+            margin: 0.8cm;
         }
 
         body {
             font-family: 'Helvetica', 'Arial', sans-serif;
             color: #333;
-            line-height: 1.4;
+            line-height: 1.3;
             margin: 0;
             padding: 0;
-            font-size: 10pt;
+            font-size: 8pt;
         }
 
-        .header {
-            margin-bottom: 10px;
-        }
-
-        .header table {
+        /* ── HEADER ─────────────────────────────────────────────── */
+        .header-table {
             width: 100%;
             border-collapse: collapse;
+            margin-bottom: 2px;
         }
 
         .logo {
-            max-width: 150px;
-            max-height: 80px;
+            max-width: 120px;
+            max-height: 70px;
         }
 
         .company-name {
-            font-size: 18pt;
+            font-size: 16pt;
             font-weight: bold;
             color: #1b5e20;
             text-align: center;
+            vertical-align: middle;
         }
 
-        .company-info {
-            text-align: right;
+        .company-tin {
             font-size: 9pt;
+            text-align: center;
+            margin-top: 4px;
+            color: #333;
         }
 
-        .invoice-title-section {
-            margin-bottom: 20px;
+        .company-contact {
+            text-align: right;
+            font-size: 7.5pt;
+            color: #1b5e20;
+            vertical-align: top;
+            line-height: 1.5;
         }
 
-        .billing-to {
+        .divider {
+            border-top: 2px solid #1b5e20;
+            margin: 6px 0 8px 0;
+        }
+
+        /* ── BILLING + INVOICE DETAILS ──────────────────────────── */
+        .billing-section {
+            width: 100%;
+            margin-bottom: 8px;
+        }
+
+        .billing-left {
             float: left;
-            width: 50%;
+            width: 55%;
         }
 
-        .invoice-details {
+        .billing-left p {
+            margin: 1px 0;
+        }
+
+        .billing-right {
             float: right;
             width: 40%;
             text-align: right;
+        }
+
+        .invoice-title {
+            font-size: 16pt;
+            font-weight: bold;
+            color: #1b5e20;
+            margin-bottom: 6px;
         }
 
         .details-table {
@@ -65,154 +93,224 @@
             border-collapse: collapse;
         }
 
+        .details-table td {
+            padding: 1px 0;
+            font-size: 8pt;
+        }
+
         .details-label {
+            font-weight: normal;
+            text-align: left;
+            width: 50%;
+        }
+
+        .details-value {
             font-weight: bold;
             text-align: left;
         }
 
-        .items-table {
+        .clearfix {
+            clear: both;
+        }
+
+        /* ── SINGLE UNIFIED TABLE ──────────────────────────────── */
+        .invoice-table {
             width: 100%;
             border-collapse: collapse;
-            margin-bottom: 15px;
             table-layout: fixed;
         }
 
-        .items-table th {
-            background-color: #f5f5f5;
+        /* Header row: all 4 borders */
+        .invoice-table th {
+            background-color: #f0f0f0;
             border: 1px solid #333;
-            padding: 8px;
+            padding: 5px 4px;
             text-align: center;
             font-weight: bold;
+            font-size: 7.5pt;
         }
 
-        .items-table td {
+        /* ALL body cells: only column borders (left + right), no row borders */
+        .invoice-table td {
             border-left: 1px solid #333;
             border-right: 1px solid #333;
-            padding: 5px 8px;
-            height: 20px;
+            border-top: none !important;
+            border-bottom: none !important;
+            padding: 3px 4px;
+            font-size: 7.5pt;
+            height: 16px;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
         }
 
-        .items-table tbody tr:last-child td {
-            border-bottom: 1px solid #333;
+        /* Separator between items and summary */
+        .invoice-table .items-end td {
+            border-bottom: 1px solid #333 !important;
         }
 
-        .summary-section {
-            margin-top: 10px;
+        /* ── Summary rows ── */
+        .invoice-table .summary-row td {
+            height: auto;
+            padding: 2px 4px;
+            font-size: 8pt;
+            white-space: normal;
         }
 
-        .footer-note {
-            float: left;
-            width: 50%;
-            margin-top: 10px;
+        .invoice-table .summary-row .totals-label {
+            text-align: right;
+            padding-right: 4px;
+            border-right: none !important;
         }
 
-        .footer-note p {
-            background-color: #e8f5e9;
-            padding: 10px;
-            text-align: center;
-            border-radius: 4px;
+        .invoice-table .summary-row .totals-value {
+            text-align: right;
+            border-left: none !important;
         }
 
-        .totals-table {
-            float: right;
-            width: 45%;
-        }
-
-        .totals-table table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        .totals-table td {
-            padding: 5px 0;
-        }
-
-        .total-amount {
+        .invoice-table .summary-row.total-bold .totals-label,
+        .invoice-table .summary-row.total-bold .totals-value {
             font-weight: bold;
-            border-top: 1px solid #333;
-            border-bottom: 1px solid #333;
         }
 
-        .amount-paid {
+        .invoice-table .summary-row.amount-paid .totals-label,
+        .invoice-table .summary-row.amount-paid .totals-value {
             color: #d32f2f;
             font-weight: bold;
+        }
+
+        .invoice-table .summary-row.outstanding .totals-label,
+        .invoice-table .summary-row.outstanding .totals-value {
+            font-weight: bold;
+        }
+
+        /* Footer note inside the table */
+        .footer-note-cell {
+            vertical-align: middle;
+            padding: 6px !important;
+        }
+
+        .footer-note-box {
+            background-color: #e8f5e9;
+            padding: 8px 12px;
+            text-align: center;
+            border-radius: 3px;
+            font-size: 8pt;
+            color: #333;
+            white-space: normal;
+        }
+
+        /* ── Bank details rows ─────────────── */
+        .invoice-table .bank-header-row td {
+            background-color: #f0f0f0;
+            text-align: center;
+            font-weight: bold;
+            font-size: 8pt;
+            padding: 4px;
+            height: auto;
+        }
+
+        .invoice-table .bank-row td {
+            padding: 1px 10px;
+            font-size: 7.5pt;
+            height: auto;
+            white-space: normal;
+        }
+
+        .invoice-table .bank-row-last td {
+            border-bottom: 1px solid #333 !important;
+        }
+
+        .bank-intro {
+            color: #1b5e20;
+            font-style: italic;
+            font-weight: bold;
+        }
+
+        .text-center {
+            text-align: center;
+        }
+
+        .text-right {
+            text-align: right;
         }
     </style>
 </head>
 
 <body>
-    <div class="header">
-        <table>
-            <tr>
-                <td width="20%">
-                    {% if settings.company_logo_url %}
-                    <img class="logo" src="{{ settings.company_logo_url }}" alt="Logo">
-                    {% elif settings.company_logo %}
-                    <img class="logo" src="{{ settings.company_logo.path }}" alt="Logo">
-                    {% endif %}
-                </td>
-                <td class="company-name">
-                    {{ settings.company_name|default:shop.name|upper }}
-                    <div style="font-size: 10pt; font-weight: normal; margin-top: 5px;">
-                        TIN: {{ settings.tax_id|default:settings.shop.tax_id|default:"N/A" }}
-                    </div>
-                </td>
-                <td class="company-info" width="30%">
-                    <p>{{ settings.business_address|linebreaksbr }}</p>
-                    <p>Tel: {{ settings.business_phone }}</p>
-                    <p>Email: {{ settings.business_email }}</p>
-                    <p>WWW: {{ settings.website }}</p>
-                </td>
-            </tr>
-        </table>
-    </div>
+    <!-- ══════════ HEADER ══════════ -->
+    <table class="header-table">
+        <tr>
+            <td width="18%" style="vertical-align: middle;">
+                {% if settings.company_logo_url %}
+                <img class="logo" src="{{ settings.company_logo_url }}" alt="Logo">
+                {% elif settings.company_logo %}
+                <img class="logo" src="{{ settings.company_logo.path }}" alt="Logo">
+                {% endif %}
+            </td>
+            <td class="company-name" width="47%">
+                {{ settings.company_name|default:shop.name|upper }}
+                <div class="company-tin">
+                    TIN: {{ settings.tax_id|default:"N/A" }}
+                </div>
+            </td>
+            <td class="company-contact" width="35%">
+                {{ settings.business_address|linebreaksbr }}<br>
+                <br>
+                Tel: {{ settings.business_phone }}<br>
+                Email: {{ settings.business_email }}<br>
+                WWW: {{ settings.website }}
+            </td>
+        </tr>
+    </table>
 
-    <div style="border-top: 2px solid #000; margin-bottom: 10px;"></div>
+    <div class="divider"></div>
 
-    <div class="invoice-title-section">
-        <div class="billing-to">
-            <p>Customer Ref: {{ invoice.customer_ref|default:"________________" }}</p>
+    <!-- ══════════ BILLING + INVOICE DETAILS ══════════ -->
+    <div class="billing-section">
+        <div class="billing-left">
+            <p>Customer Ref: {{ invoice.customer_ref|default:"" }}</p>
             <p><strong>To:</strong></p>
-            <p><strong>{{ invoice.customer_name }}</strong></p>
+            <p>&nbsp;</p>
+            <p><strong>{{ invoice.customer_name|upper }}</strong></p>
             {% if invoice.customer_address %}<p>{{ invoice.customer_address|linebreaksbr }}</p>{% endif %}
             {% if invoice.customer_phone %}<p>Tel: {{ invoice.customer_phone }}</p>{% endif %}
             {% if invoice.customer_email %}<p>Email: {{ invoice.customer_email }}</p>{% endif %}
         </div>
-        <div class="invoice-details">
-            <h1 style="font-size: 18pt; margin-bottom: 10px;">TAX INVOICE</h1>
+        <div class="billing-right">
+            <div class="invoice-title">TAX INVOICE</div>
             <table class="details-table">
                 <tr>
                     <td class="details-label">Invoice</td>
-                    <td><strong>{{ invoice.invoice_number }}</strong></td>
+                    <td class="details-value">{{ invoice.invoice_number }}</td>
                 </tr>
                 <tr>
                     <td class="details-label">Invoice Date:</td>
-                    <td>{{ invoice.invoice_date|date:"d/m/Y" }}</td>
+                    <td class="details-value">{{ invoice.invoice_date|date:"d/m/Y" }}</td>
                 </tr>
                 <tr>
                     <td class="details-label">Number of</td>
-                    <td>Page 1 of 1</td>
+                    <td class="details-value">Page 1 of 1</td>
                 </tr>
             </table>
         </div>
-        <div style="clear: both;"></div>
+        <div class="clearfix"></div>
     </div>
 
-    <table class="items-table">
+    <!-- ══════════ ONE SINGLE TABLE: Items + Totals + Bank Details ══════════ -->
+    <table class="invoice-table">
         <thead>
             <tr>
-                <th width="10%">Quantity</th>
-                <th width="40%">Item Description</th>
-                <th width="15%">Price ({{ settings.currency|default:"TZS" }})</th>
-                <th width="10%">Unit</th>
-                <th width="10%">Disc</th>
+                <th width="8%">Quantity</th>
+                <th width="37%">Item Description</th>
+                <th width="14%">Price ({{ settings.currency|default:"TZS" }})</th>
+                <th width="8%">Unit</th>
+                <th width="8%">Disc</th>
                 <th width="15%">Total ({{ settings.currency|default:"TZS" }})</th>
             </tr>
         </thead>
         <tbody>
+            <!-- ── DATA ROWS ── -->
             {% for item in items %}
             <tr>
                 <td class="text-center">{{ item.quantity|floatformat:0 }}</td>
@@ -223,85 +321,80 @@
                 <td class="text-right">{{ item.subtotal|floatformat:2|intcomma }}</td>
             </tr>
             {% endfor %}
+
+            <!-- ── EMPTY FILLER ROWS ── -->
             {% for i in empty_rows %}
-            <tr>
+            <tr{% if forloop.last %} class="items-end" {% endif %}>
                 <td>&nbsp;</td>
                 <td>&nbsp;</td>
                 <td>&nbsp;</td>
                 <td>&nbsp;</td>
                 <td>&nbsp;</td>
                 <td>&nbsp;</td>
-            </tr>
-            {% endfor %}
+                </tr>
+                {% endfor %}
+
+                <!-- ── TOTALS (left: footer note, right: amounts) ── -->
+                <tr class="summary-row">
+                    <td colspan="2" rowspan="6" class="footer-note-cell">
+                        <div class="footer-note-box">
+                            {{ settings.company_footer|default:"Asante sana kwa kufanya biashara na sisi" }}
+                        </div>
+                    </td>
+                    <td colspan="3" class="totals-label">Invoice Amount Excluding Tax</td>
+                    <td class="totals-value">{{ invoice.subtotal|floatformat:2|intcomma }}</td>
+                </tr>
+                <tr class="summary-row">
+                    <td colspan="3" class="totals-label">Freight Charges</td>
+                    <td class="totals-value">0.00</td>
+                </tr>
+                <tr class="summary-row">
+                    <td colspan="3" class="totals-label">{{ settings.tax_label|default:"VAT" }}</td>
+                    <td class="totals-value">{{ invoice.tax_amount|floatformat:2|intcomma }}</td>
+                </tr>
+                <tr class="summary-row total-bold">
+                    <td colspan="3" class="totals-label">Total Amount Including Tax</td>
+                    <td class="totals-value">{{ invoice.total_amount|floatformat:2|intcomma }}</td>
+                </tr>
+                <tr class="summary-row amount-paid">
+                    <td colspan="3" class="totals-label">Amount Paid Todate</td>
+                    <td class="totals-value">{{ invoice.amount_paid|floatformat:2|intcomma }}</td>
+                </tr>
+                <tr class="summary-row outstanding">
+                    <td colspan="3" class="totals-label">Outstanding Balance ( {{ settings.currency|default:"TZS" }} )
+                    </td>
+                    <td class="totals-value">{{ invoice.balance_due|floatformat:2|intcomma }}</td>
+                </tr>
+
+                <!-- ── BANK DETAILS (still inside the same table) ── -->
+                <tr class="bank-header-row">
+                    <td colspan="6">BANK DETAILS</td>
+                </tr>
+                <tr class="bank-row">
+                    <td colspan="6">
+                        <span class="bank-intro">Malipo yote yafanyike kwa</span>
+                    </td>
+                </tr>
+                <tr class="bank-row">
+                    <td colspan="2">{{ settings.bank_name|default:"CRDB" }} Account:</td>
+                    <td colspan="4">: {{ settings.bank_account_number|default:"________________" }}</td>
+                </tr>
+                <tr class="bank-row">
+                    <td colspan="2">Account Name:</td>
+                    <td colspan="4">: {{
+                        settings.bank_account_name|default:settings.company_name|upper|default:"________________" }}
+                    </td>
+                </tr>
+                <tr class="bank-row">
+                    <td colspan="2">BRANCH:</td>
+                    <td colspan="4">: {{ settings.bank_branch|default:"________________" }}</td>
+                </tr>
+                <tr class="bank-row bank-row-last">
+                    <td colspan="2">Swift Code:</td>
+                    <td colspan="4">: {{ settings.swift_code|default:"________________" }}</td>
+                </tr>
         </tbody>
     </table>
-
-    <div class="summary-section">
-        <div class="footer-note">
-            <p style="background-color: #e8f5e9; padding: 10px; border-radius: 4px; text-align: center;">
-                {{ settings.company_footer|default:"Asante sana kwa kufanya biashara na sisi" }}
-            </p>
-        </div>
-        <div class="totals-table">
-            <table>
-                <tr>
-                    <td class="text-right">Invoice Amount Excluding Tax</td>
-                    <td class="text-right">{{ invoice.subtotal|floatformat:2|intcomma }}</td>
-                </tr>
-                <tr>
-                    <td class="text-right">Freight Charges</td>
-                    <td class="text-right">0.00</td>
-                </tr>
-                <tr>
-                    <td class="text-right">{{ settings.tax_label|default:"VAT" }}</td>
-                    <td class="text-right">{{ invoice.tax_amount|floatformat:2|intcomma }}</td>
-                </tr>
-                <tr class="total-amount">
-                    <td class="text-right"><strong>Total Amount Including Tax</strong></td>
-                    <td class="text-right"><strong>{{ invoice.total_amount|floatformat:2|intcomma }}</strong></td>
-                </tr>
-                <tr class="amount-paid">
-                    <td class="text-right">Amount Paid Todate</td>
-                    <td class="text-right">{{ invoice.amount_paid|floatformat:2|intcomma }}</td>
-                </tr>
-                <tr style="border-top: 1px solid #333;">
-                    <td class="text-right"><strong>Outstanding Balance ( {{ settings.currency|default:"TZS" }}
-                            )</strong></td>
-                    <td class="text-right"><strong>{{ invoice.balance_due|floatformat:2|intcomma }}</strong></td>
-                </tr>
-            </table>
-        </div>
-        <div style="clear: both;"></div>
-    </div>
-
-    <div style="margin-top: 20px; border: 1px solid #333;">
-        <div
-            style="background-color: #f5f5f5; padding: 5px; border-bottom: 1px solid #333; text-align: center; font-weight: bold;">
-            BANK DETAILS
-        </div>
-        <div style="padding: 10px;">
-            <p><strong>Malipo yote yafanyike kwa</strong></p>
-            <table width="100%" style="font-size: 9pt;">
-                <tr>
-                    <td width="30%">CRDB Account:</td>
-                    <td>: {{ settings.bank_account_number|default:"________________" }}</td>
-                </tr>
-                <tr>
-                    <td>Account Name:</td>
-                    <td>: {{ settings.bank_account_name|default:settings.company_name|upper|default:"________________"
-                        }}</td>
-                </tr>
-                <tr>
-                    <td>BRANCH:</td>
-                    <td>: {{ settings.bank_branch|default:"________________" }}</td>
-                </tr>
-                <tr>
-                    <td>Swift Code:</td>
-                    <td>: {{ settings.swift_code|default:"________________" }}</td>
-                </tr>
-            </table>
-        </div>
-    </div>
 </body>
 
 </html>

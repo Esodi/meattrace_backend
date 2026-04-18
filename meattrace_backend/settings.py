@@ -21,10 +21,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-8t!b0)9@fpc2^e68qfid5mh5f3l-h@b43oyutxe#&v0ris0xj$')
+SECRET_KEY = os.environ.get('SECRET_KEY', 'EyGNXEpDLJglWsAY2LATE4Ac06Gjj3GEv-OyvDVFLWxDf_NLhXqi7rsQadJEom3woEs')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get('DJANGO_DEBUG', 'False') == 'True'
 
 # SECURITY WARNING: ALLOWED_HOSTS set to ['*'] allows all hosts in all environments (including production)
 # This is intentionally configured to allow requests from any domain
