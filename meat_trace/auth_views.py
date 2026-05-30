@@ -151,15 +151,37 @@ class CustomTokenObtainPairView(TokenObtainPairView):
             return response
             
         except Exception as e:
-            # Log failed login attempt
+            error_str = str(e).lower()
+
+            # Map simplejwt error codes to user-friendly messages
+            if 'no active account' in error_str or 'no_active_account' in error_str:
+                # Could be wrong password OR account deactivated — check which
+                username_or_email = request.data.get('username', '')
+                lookup = {'email__iexact': username_or_email} if '@' in username_or_email else {'username__iexact': username_or_email}
+                try:
+                    user_obj = User.objects.get(**lookup)
+                    if not user_obj.is_active:
+                        detail = 'Your account has been deactivated. Please contact support.'
+                        reason = 'Account deactivated'
+                    else:
+                        detail = 'Incorrect password. Please try again.'
+                        reason = 'Wrong password'
+                except User.DoesNotExist:
+                    detail = 'No account found with that username or email.'
+                    reason = 'User not found'
+            else:
+                detail = 'Login failed. Please check your credentials and try again.'
+                reason = str(e)
+
             try:
-                log_login_failure(username, request, reason=str(e))
+                log_login_failure(username, request, reason=reason)
             except Exception as log_error:
-                # Don't let logging errors break the error response
                 print(f"Warning: Failed to log login failure: {log_error}")
-            
-            # Re-raise the original exception
-            raise
+
+            return Response(
+                {'detail': detail, 'error': reason},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
 
 class RegisterView(APIView):
     """User registration endpoint"""
