@@ -19,8 +19,18 @@ import uuid
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     """Custom serializer to include user profile data in token response"""
-    
+
     def validate(self, attrs):
+        # Support login with email address: if the username field looks like an
+        # email, resolve it to the actual Django username before authenticating.
+        username_or_email = attrs.get(self.username_field, '')
+        if '@' in username_or_email:
+            try:
+                user_obj = User.objects.get(email__iexact=username_or_email)
+                attrs[self.username_field] = user_obj.username
+            except User.DoesNotExist:
+                pass  # let super().validate() produce the standard 401
+
         try:
             # Get the default token data (contains 'access' and 'refresh')
             data = super().validate(attrs)
