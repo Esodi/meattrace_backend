@@ -49,14 +49,18 @@ def get_product_timeline(product):
         
         # 2. Animal Transfer to Processing Unit
         if animal.transferred_at and animal.transferred_to:
+            # Prefer post-slaughter carcass weight over live weight for transfer record
+            sw = animal.slaughter_weight
+            weight_label = f'{sw} kg' if sw else (f'{animal.live_weight} kg (live)' if animal.live_weight else 'Not recorded')
             transfer_details = {
                 'From': f'Abbatoir - {animal.abbatoir.get_full_name() if animal.abbatoir.first_name else animal.abbatoir.username}',
                 'To': animal.transferred_to.name,
                 'Transfer Date': animal.transferred_at.strftime('%Y-%m-%d %H:%M:%S'),
-                'Transfer Mode': 'Live Animal Transport',
+                'Transfer Mode': 'Carcass / Live Animal Transport',
                 'Animal ID': animal.animal_id,
                 'Animal Species': animal.get_species_display(),
-                'Live Weight': f'{animal.live_weight} kg' if animal.live_weight else 'Not recorded',
+                'Transfer Weight': weight_label,
+                'Live Weight (pre-slaughter)': f'{animal.live_weight} kg' if animal.live_weight else 'Not recorded',
                 'Health Status': animal.health_status or 'Not recorded',
                 'Processing Unit': animal.transferred_to.name,
                 'Processing Unit Location': animal.transferred_to.location if hasattr(animal.transferred_to, 'location') else 'Not specified'

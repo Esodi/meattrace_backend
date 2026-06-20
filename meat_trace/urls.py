@@ -287,6 +287,10 @@ urlpatterns = [
     # Public digital receipt web page (under product-info family for consistency)
     path('api/v2/product-info/view/receipt/<uuid:receipt_uuid>/', views.public_sale_receipt_view, name='public_sale_receipt_view'),
 
+    # Public QR traceability page — no auth required.
+    # Flutter app generates QR codes pointing to: https://dev.shambabora.co.tz/trace/<batch_number>/
+    path('trace/<str:batch_number>/', views.public_trace_view, name='public_trace_view'),
+
     # Processing Unit dashboard endpoints
     path('processor/add-product-category/', views.add_product_category, name='add_product_category'),
 

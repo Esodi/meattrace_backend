@@ -2180,6 +2180,49 @@ def public_sale_receipt_view(request, receipt_uuid):
         return render(request, 'meat_trace/public_receipt.html', {'error': f'An unexpected error occurred: {str(e)}'}, status=500)
 
 
+def public_trace_view(request, batch_number):
+    """
+    Public farm-to-fork traceability page for consumers.
+    Reached by scanning the QR code on a product label.
+    URL: /trace/<batch_number>/
+    No authentication required.
+    """
+    try:
+        product = Product.objects.select_related(
+            'animal', 'animal__abbatoir', 'processing_unit',
+            'category', 'slaughter_part', 'transferred_to',
+            'received_by_shop',
+        ).prefetch_related(
+            'animal__slaughter_parts',
+            'ingredients__slaughter_part',
+        ).get(batch_number=batch_number)
+
+        timeline = get_product_timeline(product)
+
+        context = {
+            'product': product,
+            'batch_number': batch_number,
+            'timeline': timeline,
+            'timestamp': timezone.now(),
+        }
+        return render(request, 'meat_trace/trace.html', context)
+
+    except Product.DoesNotExist:
+        return render(
+            request,
+            'meat_trace/trace.html',
+            {'error': f'No product found for batch number "{batch_number}".'},
+            status=404,
+        )
+    except Exception as e:
+        logger.error(f"[public_trace_view] Error for batch {batch_number}: {e}")
+        return render(
+            request,
+            'meat_trace/trace.html',
+            {'error': 'An unexpected error occurred. Please try again later.'},
+            status=500,
+        )
+
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])

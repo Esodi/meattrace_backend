@@ -1,0 +1,225 @@
+{% extends "meat_trace/base.html" %}
+{% load static %}
+
+{% block title %}
+  {% if product %}Nyama Tamu — {{ product.name }} Traceability{% else %}Nyama Tamu — Traceability{% endif %}
+{% endblock %}
+
+{% block extra_head %}
+<style>
+  :root {
+    --brand:   #8B1A1A;
+    --brand-lt:#b22222;
+    --green:   #2c7a2c;
+    --grey:    #6c757d;
+    --light:   #f8f9fa;
+    --radius:  12px;
+  }
+
+  body { background: #f4f4f4; font-family: 'Segoe UI', sans-serif; }
+
+  /* ── Hero ── */
+  .trace-hero {
+    background: linear-gradient(135deg, var(--brand) 0%, #3a0000 100%);
+    color: #fff;
+    padding: 2rem 1.5rem 2.5rem;
+    text-align: center;
+  }
+  .trace-hero .brand { font-size: 1rem; opacity: .75; letter-spacing: .1em; text-transform: uppercase; }
+  .trace-hero h1 { font-size: 1.6rem; font-weight: 700; margin: .4rem 0 .2rem; }
+  .trace-hero .batch { font-size: .85rem; opacity: .8; }
+
+  /* ── Verified badge ── */
+  .verified-badge {
+    display: inline-flex; align-items: center; gap: .4rem;
+    background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.3);
+    border-radius: 20px; padding: .3rem .9rem; font-size: .8rem; margin-top: .8rem;
+  }
+  .verified-badge i { color: #4caf50; }
+
+  /* ── Summary cards ── */
+  .summary-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: .75rem; padding: 1.25rem;
+  }
+  .summary-card {
+    background: #fff; border-radius: var(--radius); padding: .9rem;
+    text-align: center; box-shadow: 0 2px 6px rgba(0,0,0,.07);
+  }
+  .summary-card i { font-size: 1.4rem; color: var(--brand); margin-bottom: .4rem; }
+  .summary-card .val { font-size: 1rem; font-weight: 700; color: #222; }
+  .summary-card .lbl { font-size: .72rem; color: var(--grey); margin-top: .1rem; }
+
+  /* ── Timeline ── */
+  .timeline-section { padding: 0 1rem 2rem; }
+  .timeline-title { font-size: .9rem; font-weight: 700; color: var(--grey); letter-spacing: .08em; text-transform: uppercase; margin: 1.25rem 0 .75rem; }
+
+  .tl-item { display: flex; gap: .9rem; margin-bottom: 1.25rem; }
+  .tl-icon-col { display: flex; flex-direction: column; align-items: center; }
+  .tl-icon {
+    width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    font-size: .95rem; flex-shrink: 0;
+  }
+  .tl-line { width: 2px; background: #e0e0e0; flex: 1; margin-top: .3rem; }
+  .tl-item:last-child .tl-line { display: none; }
+
+  .tl-card {
+    background: #fff; border-radius: var(--radius); padding: .9rem 1rem;
+    box-shadow: 0 2px 6px rgba(0,0,0,.07); flex: 1; min-width: 0;
+  }
+  .tl-card .stage { font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+  .tl-card .action { font-size: .92rem; color: #222; margin: .2rem 0; }
+  .tl-card .meta { font-size: .75rem; color: var(--grey); }
+
+  .details-toggle { font-size: .75rem; color: var(--brand); cursor: pointer; border: none; background: none; padding: 0; margin-top: .4rem; }
+  .details-body { margin-top: .6rem; border-top: 1px solid #f0f0f0; padding-top: .6rem; display: none; }
+  .details-body.open { display: block; }
+  .detail-row { display: flex; gap: .5rem; font-size: .78rem; padding: .2rem 0; }
+  .detail-row .dk { color: var(--grey); flex: 0 0 auto; max-width: 45%; }
+  .detail-row .dv { color: #222; font-weight: 500; word-break: break-word; }
+  .detail-row.separator { border-top: 1px dashed #e0e0e0; margin-top: .3rem; padding-top: .3rem; }
+
+  /* Stage colours */
+  .cat-abbatoir  { background: #fff3e0; color: #e65100; }
+  .cat-logistics { background: #e3f2fd; color: #0277bd; }
+  .cat-processing{ background: #e8f5e9; color: #2e7d32; }
+  .cat-shop      { background: #f3e5f5; color: #6a1b9a; }
+  .cat-quality   { background: #fce4ec; color: #c62828; }
+
+  /* ── Error state ── */
+  .error-box { padding: 2rem; text-align: center; }
+  .error-box i { font-size: 3rem; color: #ccc; }
+
+  /* ── Footer ── */
+  .trace-footer { text-align: center; padding: 1.5rem; font-size: .75rem; color: var(--grey); }
+  .trace-footer a { color: var(--brand); }
+</style>
+{% endblock %}
+
+{% block content %}
+
+{% if error %}
+<div class="error-box">
+  <i class="fas fa-search"></i>
+  <h4 class="mt-3">Not Found</h4>
+  <p class="text-muted">{{ error }}</p>
+  <p class="mt-3" style="font-size:.8rem">If you believe this is an error, please contact the retailer.</p>
+</div>
+
+{% else %}
+
+<!-- ── Hero ── -->
+<div class="trace-hero">
+  <div class="brand">Nyama Tamu &bull; Farm-to-Fork</div>
+  <h1>{{ product.name }}</h1>
+  <div class="batch">Batch &nbsp;{{ product.batch_number }}</div>
+  <div>
+    <span class="verified-badge"><i class="fas fa-shield-alt"></i> Verified Traceability</span>
+  </div>
+</div>
+
+<!-- ── Summary cards ── -->
+<div class="summary-grid">
+  {% if product.animal %}
+  <div class="summary-card">
+    <i class="fas fa-paw"></i>
+    <div class="val">{{ product.animal.get_species_display }}</div>
+    <div class="lbl">Species</div>
+  </div>
+  {% endif %}
+
+  <div class="summary-card">
+    <i class="fas fa-weight-hanging"></i>
+    <div class="val">{{ product.weight|default:"—" }} {{ product.weight_unit }}</div>
+    <div class="lbl">Product Weight</div>
+  </div>
+
+  <div class="summary-card">
+    <i class="fas fa-tag"></i>
+    <div class="val">{{ product.category.name|default:"—" }}</div>
+    <div class="lbl">Category</div>
+  </div>
+
+  <div class="summary-card">
+    <i class="fas fa-industry"></i>
+    <div class="val">{{ product.processing_unit.name|default:"—" }}</div>
+    <div class="lbl">Processor</div>
+  </div>
+
+  {% if product.animal and product.animal.slaughtered_at %}
+  <div class="summary-card">
+    <i class="fas fa-calendar-check"></i>
+    <div class="val">{{ product.animal.slaughtered_at|date:"d M Y" }}</div>
+    <div class="lbl">Slaughter Date</div>
+  </div>
+  {% endif %}
+
+  <div class="summary-card">
+    <i class="fas fa-clock"></i>
+    <div class="val">{{ product.created_at|date:"d M Y" }}</div>
+    <div class="lbl">Produced</div>
+  </div>
+</div>
+
+<!-- ── Timeline ── -->
+<div class="timeline-section">
+  <div class="timeline-title"><i class="fas fa-stream me-1"></i> Supply Chain Journey</div>
+
+  {% if timeline %}
+    {% for event in timeline %}
+    {% with cat=event.category %}
+    <div class="tl-item">
+      <div class="tl-icon-col">
+        <div class="tl-icon cat-{{ cat }}">
+          <i class="fas {{ event.icon }}"></i>
+        </div>
+        <div class="tl-line"></div>
+      </div>
+      <div class="tl-card">
+        <div class="stage cat-{{ cat }}" style="color:inherit">{{ event.stage }}</div>
+        <div class="action">{{ event.action }}</div>
+        <div class="meta">
+          <i class="fas fa-map-marker-alt me-1"></i>{{ event.location }}
+          &nbsp;&bull;&nbsp;
+          <i class="fas fa-clock me-1"></i>{{ event.timestamp|date:"d M Y, H:i" }}
+        </div>
+
+        {% if event.details %}
+        <button class="details-toggle" onclick="this.nextElementSibling.classList.toggle('open'); this.textContent = this.nextElementSibling.classList.contains('open') ? '▲ Hide details' : '▼ Show details'">
+          ▼ Show details
+        </button>
+        <div class="details-body">
+          {% for key, val in event.details.items %}
+            {% if val == "---" %}
+              <div class="detail-row separator"></div>
+            {% elif key|slice:":3" == "---" %}
+              <div class="detail-row separator">
+                <span class="dk" style="font-weight:700;color:#555">{{ key|slice:"3:"|rstrip:"-" }}</span>
+              </div>
+            {% else %}
+              <div class="detail-row">
+                <span class="dk">{{ key }}</span>
+                <span class="dv">{{ val }}</span>
+              </div>
+            {% endif %}
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endwith %}
+    {% endfor %}
+  {% else %}
+    <p class="text-muted" style="font-size:.9rem">No timeline data available for this product.</p>
+  {% endif %}
+</div>
+
+{% endif %}
+
+<!-- ── Footer ── -->
+<div class="trace-footer">
+  <strong>Nyama Tamu</strong> — Meat Traceability Platform<br>
+  Powered by <a href="https://shambabora.co.tz">Shambabora</a> &bull; Verified {{ timestamp|date:"d M Y" }}
+</div>
+
+{% endblock %}
