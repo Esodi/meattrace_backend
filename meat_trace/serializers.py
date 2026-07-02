@@ -13,7 +13,7 @@ from .models import (
     FeatureFlag, Backup, DataExport, DataImport, GDPRRequest, DataValidation,
     ProductCategory, NotificationTemplate, NotificationChannel,
     NotificationDelivery, NotificationSchedule, ShopSettings, Invoice,
-    InvoiceItem, InvoicePayment, Receipt, Waste
+    InvoiceItem, InvoicePayment, Receipt, Waste, AnimalWeightRecord
 )
 
 User = get_user_model()
@@ -388,6 +388,12 @@ class CarcassMeasurementSerializer(serializers.ModelSerializer):
         return attrs
 
 
+class AnimalWeightRecordSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AnimalWeightRecord
+        fields = ['id', 'weight', 'recorded_at', 'recorded_by', 'note']
+
+
 class AnimalSerializer(serializers.ModelSerializer):
     abbatoir_name = serializers.CharField(source='abbatoir.username', read_only=True)
     processing_unit_name = serializers.CharField(source='transferred_to.name', read_only=True)
@@ -404,6 +410,8 @@ class AnimalSerializer(serializers.ModelSerializer):
     is_semi_transferred_status = serializers.ReadOnlyField()
     slaughter_weight = serializers.ReadOnlyField()
     total_waste_weight = serializers.ReadOnlyField()
+    current_age_months = serializers.ReadOnlyField()
+    weight_history = AnimalWeightRecordSerializer(many=True, read_only=True)
 
     class Meta:
         model = Animal

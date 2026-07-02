@@ -21,7 +21,7 @@ def get_product_timeline(product):
             'Animal Name': animal.animal_name or 'Not named',
             'Species': animal.get_species_display(),
             'Gender': animal.get_gender_display() if hasattr(animal, 'gender') else 'Unknown',
-            'Age': f'{animal.age} months' if animal.age else 'Not recorded',
+            'Age': f'{animal.current_age_months} months' if animal.current_age_months else 'Not recorded',
             'Live Weight': f'{animal.live_weight} kg' if animal.live_weight else 'Not recorded',
             'Health Status': animal.health_status or 'Not recorded',
             'Breed': animal.breed or 'Not specified',

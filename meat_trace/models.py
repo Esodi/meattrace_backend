@@ -280,17 +280,40 @@ class Animal(models.Model):
 
     abbatoir = models.ForeignKey(User, on_delete=models.CASCADE, related_name='animals', db_column='abbatoir_id')
     species = models.CharField(max_length=20, choices=SPECIES_CHOICES, default='cow')
-    age = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0)], help_text="Age in months")
+    age = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0)], help_text="Age in months at registration")
+    birth_date = models.DateField(null=True, blank=True, help_text="Animal date of birth; when set, age is derived from it")
+
+    @property
+    def current_age_months(self):
+        """Age in months, derived from birth_date when available. Falls back to
+        the registration-time age plus elapsed time, so the age keeps advancing
+        even for animals recorded before birth_date existed. For slaughtered
+        animals the age is frozen at the slaughter date."""
+        if self.slaughtered and self.slaughtered_at:
+            as_of = self.slaughtered_at.date()
+        else:
+            as_of = timezone.now().date()
+        if self.birth_date:
+            days = (as_of - self.birth_date).days
+            return round(Decimal(days) / Decimal('30.44'), 2) if days > 0 else Decimal('0')
+        if self.age is None:
+            return None
+        elapsed_days = (as_of - self.created_at.date()).days if self.created_at else 0
+        if elapsed_days < 0:
+            elapsed_days = 0
+        return round(self.age + (Decimal(elapsed_days) / Decimal('30.44')), 2)
 
     @property
     def age_in_years(self):
         """Calculate age in years from months"""
-        return self.age / 12 if self.age else 0
+        months = self.current_age_months
+        return months / 12 if months else 0
 
     @property
     def age_in_days(self):
         """Calculate age in days from months (approximate)"""
-        return self.age * Decimal('30.44') if self.age else 0  # Average days per month
+        months = self.current_age_months
+        return months * Decimal('30.44') if months else 0  # Average days per month
 
     @property
     def weight_kg(self):
@@ -487,6 +510,41 @@ class Animal(models.Model):
     def __str__(self):
         display_name = self.animal_name or self.animal_id
         return f"{display_name} ({self.species}) - {self.abbatoir.username}"
+
+
+class AnimalWeightRecord(models.Model):
+    """History of an animal's live weight measurements. A record is created
+    automatically whenever the animal's live_weight is set or changed, so
+    previous weights are never lost."""
+    animal = models.ForeignKey(Animal, on_delete=models.CASCADE, related_name='weight_history')
+    weight = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0)], help_text="Live weight in kg at the time of recording")
+    recorded_at = models.DateTimeField(default=timezone.now)
+    recorded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='animal_weight_records')
+    note = models.CharField(max_length=255, blank=True, help_text="Optional note, e.g. measurement source")
+
+    class Meta:
+        ordering = ['-recorded_at']
+
+    def __str__(self):
+        return f"{self.animal.animal_id}: {self.weight} kg at {self.recorded_at:%Y-%m-%d %H:%M}"
+
+
+@receiver(post_save, sender=Animal)
+def record_animal_weight_history(sender, instance, created, **kwargs):
+    """Keep a weight history entry whenever the animal's live weight changes."""
+    if instance.live_weight is None:
+        return
+    try:
+        last = instance.weight_history.order_by('-recorded_at').first()
+        if last is None or last.weight != instance.live_weight:
+            AnimalWeightRecord.objects.create(animal=instance, weight=instance.live_weight)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception(
+            "Failed to record weight history for animal %s", instance.pk
+        )
+
+
 class SlaughterPart(models.Model):
     part_id = models.CharField(max_length=50, unique=True, editable=False, default='', help_text="Auto-generated unique part identifier")
     PART_CHOICES = [

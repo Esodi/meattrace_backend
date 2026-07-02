@@ -1402,14 +1402,9 @@ def product_info_view(request, product_id):
 
         if not _can_access_product_for_user(request.user, product):
             return render(request, 'meat_trace/product_info.html', {'error': 'Not found'}, status=404)
-        
-            timeline = get_product_timeline(product)
-            
-            # 10. Sales Events 
-            sales = []
 
+        timeline = get_product_timeline(product)
 
-        
         # 9. Quality Issues / Rejection - Enhanced
         if hasattr(product, 'rejected_at') and product.rejected_at and hasattr(product, 'rejection_status') and product.rejection_status:
             rejection_details = {
@@ -1510,8 +1505,8 @@ def product_info_view(request, product_id):
                 # Sale Details
                 sale_details['---Sale Details---'] = '---'
                 sale_details['Weight Sold This Order'] = f'{item.weight if hasattr(item, "weight") else item.quantity} {product.weight_unit}'
-                sale_details['Unit Price'] = f'${item.unit_price}' if hasattr(item, 'unit_price') and item.unit_price else 'N/A'
-                sale_details['Subtotal for This Item'] = f'${item.subtotal}' if hasattr(item, 'subtotal') and item.subtotal else f'${float(item.weight if hasattr(item, "weight") and item.weight else item.quantity) * float(item.unit_price) if hasattr(item, "unit_price") and item.unit_price else 0:.2f}'
+                sale_details['Unit Price'] = f'TZS {item.unit_price}' if hasattr(item, 'unit_price') and item.unit_price else 'N/A'
+                sale_details['Subtotal for This Item'] = f'TZS {item.subtotal}' if hasattr(item, 'subtotal') and item.subtotal else f'TZS {float(item.weight if hasattr(item, "weight") and item.weight else item.quantity) * float(item.unit_price) if hasattr(item, "unit_price") and item.unit_price else 0:.2f}'
                 sale_details['Order Status'] = order.get_status_display() if hasattr(order, 'get_status_display') else order.status
                 
                 # Inventory Tracking
@@ -1546,7 +1541,7 @@ def product_info_view(request, product_id):
                     if hasattr(order, 'payment_status') and order.payment_status:
                         sale_details['Payment Status'] = order.payment_status
                     if hasattr(order, 'total_amount') and order.total_amount:
-                        sale_details['Full Order Total'] = f'${order.total_amount}'
+                        sale_details['Full Order Total'] = f'TZS {order.total_amount}'
                 
                 # Additional order items if this order has multiple products
                 order_total_items = order.orderitem_set.count() if hasattr(order, 'orderitem_set') else 1
