@@ -2620,31 +2620,32 @@ class CarcassMeasurementViewSet(viewsets.ModelViewSet):
         logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Validated data: {serializer.validated_data}")
         
         try:
-            measurement = serializer.save()
-            logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Measurement saved successfully. ID: {measurement.id}")
-            logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Animal: {measurement.animal.animal_id}")
-            logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Carcass type: {measurement.carcass_type}")
-            logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Measurements: {measurement.measurements}")
-            
-            # Mark the animal as slaughtered
-            animal = measurement.animal
-            if not animal.slaughtered:
-                logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Marking animal {animal.animal_id} as slaughtered")
-                animal.slaughtered = True
-                animal.slaughtered_at = timezone.now()
-                animal.save()
-                logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Animal marked as slaughtered successfully")
-            else:
-                logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Animal {animal.animal_id} was already marked as slaughtered")
-            
-            # Import the utility function to create slaughter parts
-            from .utils.carcass_parts import create_slaughter_parts_from_measurement
-            
-            logger.info("[CARCASS_MEASUREMENT_VIEWSET] Creating slaughter parts...")
-            # Create slaughter parts from the measurement
-            create_slaughter_parts_from_measurement(measurement.animal, measurement)
-            logger.info("[CARCASS_MEASUREMENT_VIEWSET] Slaughter parts created successfully")
-            
+            with transaction.atomic():
+                measurement = serializer.save()
+                logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Measurement saved successfully. ID: {measurement.id}")
+                logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Animal: {measurement.animal.animal_id}")
+                logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Carcass type: {measurement.carcass_type}")
+                logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Measurements: {measurement.measurements}")
+
+                # Mark the animal as slaughtered
+                animal = measurement.animal
+                if not animal.slaughtered:
+                    logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Marking animal {animal.animal_id} as slaughtered")
+                    animal.slaughtered = True
+                    animal.slaughtered_at = timezone.now()
+                    animal.save()
+                    logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Animal marked as slaughtered successfully")
+                else:
+                    logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Animal {animal.animal_id} was already marked as slaughtered")
+
+                # Import the utility function to create slaughter parts
+                from .utils.carcass_parts import create_slaughter_parts_from_measurement
+
+                logger.info("[CARCASS_MEASUREMENT_VIEWSET] Creating slaughter parts...")
+                # Create slaughter parts from the measurement
+                create_slaughter_parts_from_measurement(measurement.animal, measurement)
+                logger.info("[CARCASS_MEASUREMENT_VIEWSET] Slaughter parts created successfully")
+
         except Exception as e:
             logger.error(f"[CARCASS_MEASUREMENT_VIEWSET] Error in perform_create: {e}")
             import traceback
@@ -2660,34 +2661,35 @@ class CarcassMeasurementViewSet(viewsets.ModelViewSet):
         logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Validated data: {serializer.validated_data}")
         
         try:
-            measurement = serializer.save()
-            logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Measurement updated successfully. ID: {measurement.id}")
-            logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Animal: {measurement.animal.animal_id}")
-            logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Carcass type: {measurement.carcass_type}")
-            logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Measurements: {measurement.measurements}")
-            
-            # Mark the animal as slaughtered (in case it wasn't already)
-            animal = measurement.animal
-            if not animal.slaughtered:
-                logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Marking animal {animal.animal_id} as slaughtered")
-                animal.slaughtered = True
-                animal.slaughtered_at = timezone.now()
-                animal.save()
-                logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Animal marked as slaughtered successfully")
-            
-            # Delete existing slaughter parts for this animal
-            logger.info("[CARCASS_MEASUREMENT_VIEWSET] Deleting existing slaughter parts...")
-            deleted_count = SlaughterPart.objects.filter(animal=measurement.animal).delete()[0]
-            logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Deleted {deleted_count} existing slaughter parts")
-            
-            # Import the utility function to create slaughter parts
-            from .utils.carcass_parts import create_slaughter_parts_from_measurement
-            
-            logger.info("[CARCASS_MEASUREMENT_VIEWSET] Creating new slaughter parts...")
-            # Create slaughter parts from the measurement
-            create_slaughter_parts_from_measurement(measurement.animal, measurement)
-            logger.info("[CARCASS_MEASUREMENT_VIEWSET] Slaughter parts created successfully")
-            
+            with transaction.atomic():
+                measurement = serializer.save()
+                logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Measurement updated successfully. ID: {measurement.id}")
+                logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Animal: {measurement.animal.animal_id}")
+                logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Carcass type: {measurement.carcass_type}")
+                logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Measurements: {measurement.measurements}")
+
+                # Mark the animal as slaughtered (in case it wasn't already)
+                animal = measurement.animal
+                if not animal.slaughtered:
+                    logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Marking animal {animal.animal_id} as slaughtered")
+                    animal.slaughtered = True
+                    animal.slaughtered_at = timezone.now()
+                    animal.save()
+                    logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Animal marked as slaughtered successfully")
+
+                # Delete existing slaughter parts for this animal
+                logger.info("[CARCASS_MEASUREMENT_VIEWSET] Deleting existing slaughter parts...")
+                deleted_count = SlaughterPart.objects.filter(animal=measurement.animal).delete()[0]
+                logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Deleted {deleted_count} existing slaughter parts")
+
+                # Import the utility function to create slaughter parts
+                from .utils.carcass_parts import create_slaughter_parts_from_measurement
+
+                logger.info("[CARCASS_MEASUREMENT_VIEWSET] Creating new slaughter parts...")
+                # Create slaughter parts from the measurement
+                create_slaughter_parts_from_measurement(measurement.animal, measurement)
+                logger.info("[CARCASS_MEASUREMENT_VIEWSET] Slaughter parts created successfully")
+
         except Exception as e:
             logger.error(f"[CARCASS_MEASUREMENT_VIEWSET] Error in perform_update: {e}")
             import traceback
