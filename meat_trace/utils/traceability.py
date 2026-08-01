@@ -14,38 +14,61 @@ def get_product_timeline(product):
     # 1. Animal Registration (Farmer Stage)
     if product.animal:
         animal = product.animal
-        
-        # Get abbatoir contact info
-        farmer_details = {
-            'Animal ID': animal.animal_id,
-            'Animal Name': animal.animal_name or 'Not named',
-            'Species': animal.get_species_display(),
-            'Gender': animal.get_gender_display() if hasattr(animal, 'gender') else 'Unknown',
-            'Age': f'{animal.current_age_months} months' if animal.current_age_months else 'Not recorded',
-            'Live Weight': f'{animal.live_weight} kg' if animal.live_weight else 'Not recorded',
-            'Health Status': animal.health_status or 'Not recorded',
-            'Breed': animal.breed or 'Not specified',
-            'Abbatoir Name': animal.abbatoir.get_full_name() if animal.abbatoir.first_name else animal.abbatoir.username,
-            'Abbatoir Email': animal.abbatoir.email or 'Not provided',
-            'Notes': animal.notes or 'None'
-        }
-        
-        # Add abbatoir phone if available
-        if hasattr(animal.abbatoir, 'profile') and hasattr(animal.abbatoir.profile, 'phone'):
-            farmer_details['Abbatoir Phone'] = animal.abbatoir.profile.phone or 'Not provided'
-        elif hasattr(animal.abbatoir, 'phone_number'):
-            farmer_details['Abbatoir Phone'] = animal.abbatoir.phone_number or 'Not provided'
-        
-        timeline.append({
-            'stage': 'Animal Registration',
-            'category': 'abbatoir',
-            'timestamp': animal.created_at,
-            'location': f'Abbatoir - {animal.abbatoir.username}',
-            'actor': animal.abbatoir.get_full_name() if animal.abbatoir.first_name else animal.abbatoir.username,
-            'action': f'Animal {animal.animal_id} registered at farm',
-            'icon': 'fa-clipboard-list',
-            'details': farmer_details
-        })
+
+        # Building this section touches several optional/related fields
+        # (abbatoir profile, computed age, etc). A single bad field used to
+        # raise out of this function uncaught, which the calling view turned
+        # into a generic failure — the whole product page (and every other
+        # timeline stage) would silently disappear instead of just this one
+        # section. Isolate it so one bad field can't hide the entire product.
+        try:
+            farmer_details = {
+                'Animal ID': animal.animal_id,
+                'Animal Name': animal.animal_name or 'Not named',
+                'Species': animal.get_species_display(),
+                'Gender': animal.get_gender_display() if hasattr(animal, 'gender') else 'Unknown',
+                'Age': f'{animal.current_age_months} months' if animal.current_age_months else 'Not recorded',
+                'Live Weight': f'{animal.live_weight} kg' if animal.live_weight else 'Not recorded',
+                'Health Status': animal.health_status or 'Not recorded',
+                'Breed': animal.breed or 'Not specified',
+                'Abbatoir Name': animal.abbatoir.get_full_name() if animal.abbatoir.first_name else animal.abbatoir.username,
+                'Abbatoir Email': animal.abbatoir.email or 'Not provided',
+                'Notes': animal.notes or 'None'
+            }
+
+            # Add abbatoir phone if available
+            if hasattr(animal.abbatoir, 'profile') and hasattr(animal.abbatoir.profile, 'phone'):
+                farmer_details['Abbatoir Phone'] = animal.abbatoir.profile.phone or 'Not provided'
+            elif hasattr(animal.abbatoir, 'phone_number'):
+                farmer_details['Abbatoir Phone'] = animal.abbatoir.phone_number or 'Not provided'
+
+            timeline.append({
+                'stage': 'Animal Registration',
+                'category': 'abbatoir',
+                'timestamp': animal.created_at,
+                'location': f'Abbatoir - {animal.abbatoir.username}',
+                'actor': animal.abbatoir.get_full_name() if animal.abbatoir.first_name else animal.abbatoir.username,
+                'action': f'Animal {animal.animal_id} registered at farm',
+                'icon': 'fa-clipboard-list',
+                'details': farmer_details
+            })
+        except Exception:
+            logger.exception(
+                'Failed to build Animal Registration timeline entry for animal %s on product %s',
+                getattr(animal, 'animal_id', animal.pk), product.pk,
+            )
+            timeline.append({
+                'stage': 'Animal Registration',
+                'category': 'abbatoir',
+                'timestamp': animal.created_at or product.created_at,
+                'location': 'Abbatoir',
+                'actor': 'Unknown',
+                'action': f'Animal {animal.animal_id} registered at farm (some details unavailable)',
+                'icon': 'fa-clipboard-list',
+                'details': {'Animal ID': animal.animal_id, 'Note': 'Full animal details could not be loaded — see server logs.'},
+            })
+    else:
+        logger.info('Product %s has no linked animal (animal_id is NULL) — skipping Animal Registration stage', product.pk)
         
         # 2. Animal Transfer to Processing Unit
         if animal.transferred_at and animal.transferred_to:

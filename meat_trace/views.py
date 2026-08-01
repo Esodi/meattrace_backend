@@ -1650,13 +1650,21 @@ def product_info_view(request, product_id):
             'timeline': []
         }
     except Exception as e:
+        # Previously this was swallowed with no server-side trace, so a
+        # broken product page was indistinguishable from a nonexistent one —
+        # the template rendered the same generic "No Products Found" state
+        # either way. Log it so failures to load a specific product/QR page
+        # are actually diagnosable.
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception('Failed to load product_info_view for product_id=%s', product_id)
         context = {
             'error': f'Error loading product: {str(e)}',
             'product': None,
             'product_infos': [],
             'timeline': []
         }
-    
+
     return render(request, 'meat_trace/product_info.html', context)
 
 

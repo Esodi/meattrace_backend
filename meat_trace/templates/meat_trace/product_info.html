@@ -461,7 +461,16 @@
     <p>Complete journey from abbatoir to fork - Track every step of your meat products</p>
 </div>
 
-{% if product_infos %}
+{% if error %}
+    <div class="timeline-card">
+        <div class="empty-state">
+            <i class="fas fa-exclamation-triangle" style="color: var(--danger-color);"></i>
+            <h3>Couldn't Load This Product</h3>
+            <p>{{ error }}</p>
+            <p>Please try scanning again, or contact support if this keeps happening.</p>
+        </div>
+    </div>
+{% elif product_infos %}
     <!-- Summary Statistics -->
     <div class="stats-grid">
         <div class="stat-card abbatoir">
