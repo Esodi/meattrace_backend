@@ -1,4 +1,4 @@
-﻿from django.shortcuts import render
+from django.shortcuts import render
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -2635,16 +2635,42 @@ class CarcassMeasurementViewSet(viewsets.ModelViewSet):
                 logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Carcass type: {measurement.carcass_type}")
                 logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Measurements: {measurement.measurements}")
 
-                # Mark the animal as slaughtered
+                # Calculate total carcass weight from measurements
+                measurements_map = measurement.measurements or {}
+                carcass_weight = None
+                
+                if measurement.carcass_type == 'whole':
+                    whole_entry = measurements_map.get('whole_carcass_weight')
+                    if whole_entry:
+                        val = whole_entry.get('value') if isinstance(whole_entry, dict) else whole_entry
+                        if val is not None:
+                            carcass_weight = Decimal(str(val))
+                elif measurement.carcass_type == 'split':
+                    total = Decimal('0')
+                    has_parts = False
+                    for key in ['head_weight', 'feet_weight', 'left_carcass_weight', 'right_carcass_weight', 'organs_weight']:
+                        entry = measurements_map.get(key)
+                        if entry:
+                            val = entry.get('value') if isinstance(entry, dict) else entry
+                            if val is not None:
+                                total += Decimal(str(val))
+                                has_parts = True
+                    if has_parts:
+                        carcass_weight = total
+
+                # Mark animal as slaughtered and update slaughter_weight + remaining_weight
                 animal = measurement.animal
-                if not animal.slaughtered:
-                    logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Marking animal {animal.animal_id} as slaughtered")
-                    animal.slaughtered = True
+                animal.slaughtered = True
+                if not animal.slaughtered_at:
                     animal.slaughtered_at = timezone.now()
-                    animal.save()
-                    logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Animal marked as slaughtered successfully")
-                else:
-                    logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Animal {animal.animal_id} was already marked as slaughtered")
+                
+                if carcass_weight is not None and carcass_weight > 0:
+                    logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Updating animal {animal.animal_id} slaughter_weight and remaining_weight to {carcass_weight}")
+                    animal.slaughter_weight = carcass_weight
+                    animal.remaining_weight = carcass_weight
+                
+                animal.save()
+                logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Animal updated successfully")
 
                 # Import the utility function to create slaughter parts
                 from .utils.carcass_parts import create_slaughter_parts_from_measurement
@@ -2676,14 +2702,42 @@ class CarcassMeasurementViewSet(viewsets.ModelViewSet):
                 logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Carcass type: {measurement.carcass_type}")
                 logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Measurements: {measurement.measurements}")
 
-                # Mark the animal as slaughtered (in case it wasn't already)
+                # Calculate total carcass weight from measurements
+                measurements_map = measurement.measurements or {}
+                carcass_weight = None
+                
+                if measurement.carcass_type == 'whole':
+                    whole_entry = measurements_map.get('whole_carcass_weight')
+                    if whole_entry:
+                        val = whole_entry.get('value') if isinstance(whole_entry, dict) else whole_entry
+                        if val is not None:
+                            carcass_weight = Decimal(str(val))
+                elif measurement.carcass_type == 'split':
+                    total = Decimal('0')
+                    has_parts = False
+                    for key in ['head_weight', 'feet_weight', 'left_carcass_weight', 'right_carcass_weight', 'organs_weight']:
+                        entry = measurements_map.get(key)
+                        if entry:
+                            val = entry.get('value') if isinstance(entry, dict) else entry
+                            if val is not None:
+                                total += Decimal(str(val))
+                                has_parts = True
+                    if has_parts:
+                        carcass_weight = total
+
+                # Mark animal as slaughtered and update slaughter_weight + remaining_weight
                 animal = measurement.animal
-                if not animal.slaughtered:
-                    logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Marking animal {animal.animal_id} as slaughtered")
-                    animal.slaughtered = True
+                animal.slaughtered = True
+                if not animal.slaughtered_at:
                     animal.slaughtered_at = timezone.now()
-                    animal.save()
-                    logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Animal marked as slaughtered successfully")
+                
+                if carcass_weight is not None and carcass_weight > 0:
+                    logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Updating animal {animal.animal_id} slaughter_weight and remaining_weight to {carcass_weight}")
+                    animal.slaughter_weight = carcass_weight
+                    animal.remaining_weight = carcass_weight
+                
+                animal.save()
+                logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Animal updated successfully")
 
                 # Delete existing slaughter parts for this animal
                 logger.info("[CARCASS_MEASUREMENT_VIEWSET] Deleting existing slaughter parts...")
@@ -2767,6 +2821,56 @@ class UserProfileViewSet(viewsets.ModelViewSet):
             
         except UserProfile.DoesNotExist:
             return UserProfile.objects.filter(user=user)
+
+    @action(detail=False, methods=['get', 'patch', 'put'], url_path='me')
+    def me(self, request):
+        """Get or update current authenticated user's profile"""
+        profile, created = UserProfile.objects.get_or_create(user=request.user)
+        
+        if request.method == 'GET':
+            serializer = self.get_serializer(profile)
+            data = dict(serializer.data)
+            data['first_name'] = request.user.first_name or ''
+            data['last_name'] = request.user.last_name or ''
+            data['email'] = request.user.email or ''
+            data['phone'] = getattr(profile, 'phone', '') or ''
+            data['organization'] = getattr(profile, 'organization', '') or getattr(profile, 'abbatoir_name', '') or ''
+            data['location'] = getattr(profile, 'location', '') or ''
+            return Response(data)
+            
+        elif request.method in ['PATCH', 'PUT']:
+            user = request.user
+            req_data = request.data
+            
+            if 'first_name' in req_data:
+                user.first_name = req_data['first_name']
+            if 'last_name' in req_data:
+                user.last_name = req_data['last_name']
+            if 'email' in req_data:
+                user.email = req_data['email']
+            user.save()
+            
+            if 'phone' in req_data and hasattr(profile, 'phone'):
+                profile.phone = req_data['phone']
+            if 'organization' in req_data and hasattr(profile, 'organization'):
+                profile.organization = req_data['organization']
+            if 'location' in req_data and hasattr(profile, 'location'):
+                profile.location = req_data['location']
+                
+            serializer = self.get_serializer(profile, data=req_data, partial=True)
+            if serializer.is_valid():
+                serializer.save()
+            else:
+                profile.save()
+                
+            data = dict(serializer.data if serializer.is_valid() else UserProfileSerializer(profile).data)
+            data['first_name'] = user.first_name or ''
+            data['last_name'] = user.last_name or ''
+            data['email'] = user.email or ''
+            data['phone'] = getattr(profile, 'phone', '') or ''
+            data['organization'] = getattr(profile, 'organization', '') or getattr(profile, 'abbatoir_name', '') or ''
+            data['location'] = getattr(profile, 'location', '') or ''
+            return Response(data)
 
 
 class JoinRequestViewSet(viewsets.ModelViewSet):
