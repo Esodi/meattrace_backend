@@ -2683,17 +2683,19 @@ class CarcassMeasurementViewSet(viewsets.ModelViewSet):
                     if has_parts:
                         carcass_weight = total
 
-                # Mark animal as slaughtered and update slaughter_weight + remaining_weight
+                # Mark animal as slaughtered and update remaining_weight.
+                # slaughter_weight is a read-only computed property (derived
+                # from this same measurement via calculated_total_weight) —
+                # it has no setter, so it must not be assigned here.
                 animal = measurement.animal
                 animal.slaughtered = True
                 if not animal.slaughtered_at:
                     animal.slaughtered_at = timezone.now()
-                
+
                 if carcass_weight is not None and carcass_weight > 0:
-                    logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Updating animal {animal.animal_id} slaughter_weight and remaining_weight to {carcass_weight}")
-                    animal.slaughter_weight = carcass_weight
+                    logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Updating animal {animal.animal_id} remaining_weight to {carcass_weight}")
                     animal.remaining_weight = carcass_weight
-                
+
                 animal.save()
                 logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Animal updated successfully")
 
@@ -2750,17 +2752,19 @@ class CarcassMeasurementViewSet(viewsets.ModelViewSet):
                     if has_parts:
                         carcass_weight = total
 
-                # Mark animal as slaughtered and update slaughter_weight + remaining_weight
+                # Mark animal as slaughtered and update remaining_weight.
+                # slaughter_weight is a read-only computed property (derived
+                # from this same measurement via calculated_total_weight) —
+                # it has no setter, so it must not be assigned here.
                 animal = measurement.animal
                 animal.slaughtered = True
                 if not animal.slaughtered_at:
                     animal.slaughtered_at = timezone.now()
-                
+
                 if carcass_weight is not None and carcass_weight > 0:
-                    logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Updating animal {animal.animal_id} slaughter_weight and remaining_weight to {carcass_weight}")
-                    animal.slaughter_weight = carcass_weight
+                    logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Updating animal {animal.animal_id} remaining_weight to {carcass_weight}")
                     animal.remaining_weight = carcass_weight
-                
+
                 animal.save()
                 logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Animal updated successfully")
 
