@@ -676,15 +676,30 @@ class CarcassMeasurement(models.Model):
 
     @property
     def calculated_total_weight(self):
-        """Calculate total weight based on carcass type"""
+        """Calculate total weight based on carcass type.
+
+        Only 'whole_carcass_weight' (whole) and 'left'/'right' carcass weight
+        (split) are required by the client — 'torso_weight' and
+        'organs_weight' are never collected by the app, so requiring them
+        here made this always return None and silently skipped the
+        evisceration-waste auto-recording below. Treat them as optional
+        extras instead of blocking the total when absent.
+        """
         if self.carcass_type == 'whole':
+            if self.whole_carcass_weight is not None:
+                return self.whole_carcass_weight
             if self.head_weight is not None and self.torso_weight is not None:
                 return self.head_weight + self.torso_weight
+            return None
         elif self.carcass_type == 'split':
-            if (self.left_carcass_weight is not None and self.right_carcass_weight is not None and
-                self.feet_weight is not None and self.organs_weight is not None):
-                return (self.left_carcass_weight + self.right_carcass_weight +
-                        self.feet_weight + self.organs_weight)
+            if self.left_carcass_weight is None or self.right_carcass_weight is None:
+                return None
+            total = self.left_carcass_weight + self.right_carcass_weight
+            if self.feet_weight is not None:
+                total += self.feet_weight
+            if self.organs_weight is not None:
+                total += self.organs_weight
+            return total
         return None
 
     def clean(self):

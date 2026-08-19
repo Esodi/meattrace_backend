@@ -1224,9 +1224,22 @@ def health_check(request):
     })
 
 
-@api_view(['GET'])
+@api_view(['GET', 'POST'])
 @permission_classes([IsAuthenticated])
 def activities_view(request):
+    if request.method == 'POST':
+        # This path (api/v2/activities/) is matched before the ActivityViewSet
+        # router route for the same URL, so POST has to be handled here too.
+        # The client sends 'user': null (it can't know the User row), so drop
+        # it and use the authenticated request's user — otherwise the
+        # non-nullable FK fails validation before save() even runs.
+        data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
+        data['user'] = request.user.id
+        serializer = ActivitySerializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(user=request.user)
+        return Response(serializer.data, status=status_module.HTTP_201_CREATED)
+
     try:
         user = request.user
         acts = Activity.objects.select_related('user').order_by('-created_at')
