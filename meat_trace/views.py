@@ -598,7 +598,10 @@ class SlaughterPartViewSet(viewsets.ModelViewSet):
         # Apply filters from query parameters
         animal_id = self.request.query_params.get('animal')
         if animal_id:
-            queryset = queryset.filter(animal_id=animal_id)
+            try:
+                queryset = queryset.filter(animal_id=int(animal_id))
+            except (TypeError, ValueError):
+                queryset = queryset.none()
 
         part_type = self.request.query_params.get('part_type')
         if part_type:
@@ -611,7 +614,10 @@ class SlaughterPartViewSet(viewsets.ModelViewSet):
 
         received_by = self.request.query_params.get('received_by')
         if received_by:
-            queryset = queryset.filter(received_by_id=received_by)
+            try:
+                queryset = queryset.filter(received_by_id=int(received_by))
+            except (TypeError, ValueError):
+                queryset = queryset.none()
 
         search = self.request.query_params.get('search')
         if search:
@@ -622,8 +628,14 @@ class SlaughterPartViewSet(viewsets.ModelViewSet):
             )
 
         ordering = self.request.query_params.get('ordering', '-created_at')
-        if ordering:
+        allowed_ordering_fields = {
+            'created_at', 'weight', 'remaining_weight', 'part_type',
+            'transferred_at', 'received_at', 'part_id',
+        }
+        if ordering and ordering.lstrip('-') in allowed_ordering_fields:
             queryset = queryset.order_by(ordering)
+        else:
+            queryset = queryset.order_by('-created_at')
 
         return queryset
 
