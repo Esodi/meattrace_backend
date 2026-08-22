@@ -2544,30 +2544,7 @@ class CarcassMeasurementViewSet(viewsets.ModelViewSet):
                 logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Carcass type: {measurement.carcass_type}")
                 logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Measurements: {measurement.measurements}")
 
-                # Calculate total carcass weight from measurements
-                measurements_map = measurement.measurements or {}
-                carcass_weight = None
-                
-                if measurement.carcass_type == 'whole':
-                    whole_entry = measurements_map.get('whole_carcass_weight')
-                    if whole_entry:
-                        val = whole_entry.get('value') if isinstance(whole_entry, dict) else whole_entry
-                        if val is not None:
-                            carcass_weight = Decimal(str(val))
-                elif measurement.carcass_type == 'split':
-                    total = Decimal('0')
-                    has_parts = False
-                    for key in ['head_weight', 'feet_weight', 'left_carcass_weight', 'right_carcass_weight', 'organs_weight']:
-                        entry = measurements_map.get(key)
-                        if entry:
-                            val = entry.get('value') if isinstance(entry, dict) else entry
-                            if val is not None:
-                                total += Decimal(str(val))
-                                has_parts = True
-                    if has_parts:
-                        carcass_weight = total
-
-                # Mark animal as slaughtered and update remaining_weight.
+                # Mark animal as slaughtered.
                 # slaughter_weight is a read-only computed property (derived
                 # from this same measurement via calculated_total_weight) —
                 # it has no setter, so it must not be assigned here.
@@ -2575,11 +2552,6 @@ class CarcassMeasurementViewSet(viewsets.ModelViewSet):
                 animal.slaughtered = True
                 if not animal.slaughtered_at:
                     animal.slaughtered_at = timezone.now()
-
-                if carcass_weight is not None and carcass_weight > 0:
-                    logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Updating animal {animal.animal_id} remaining_weight to {carcass_weight}")
-                    animal.remaining_weight = carcass_weight
-
                 animal.save()
                 logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Animal updated successfully")
 
@@ -2587,7 +2559,14 @@ class CarcassMeasurementViewSet(viewsets.ModelViewSet):
                 from .utils.carcass_parts import create_slaughter_parts_from_measurement
 
                 logger.info("[CARCASS_MEASUREMENT_VIEWSET] Creating slaughter parts...")
-                # Create slaughter parts from the measurement
+                # Create slaughter parts from the measurement — every part
+                # actually weighed (head/feet/whole for 'whole', or
+                # head/feet/left/right/organs for 'split') becomes its own
+                # SlaughterPart with its own remaining_weight. This also
+                # zeroes the animal's own remaining_weight (see the utility
+                # function), so the same physical carcass can't be claimed
+                # for a product both via the Animal record and again via its
+                # SlaughterParts.
                 create_slaughter_parts_from_measurement(measurement.animal, measurement)
                 logger.info("[CARCASS_MEASUREMENT_VIEWSET] Slaughter parts created successfully")
 
@@ -2613,30 +2592,7 @@ class CarcassMeasurementViewSet(viewsets.ModelViewSet):
                 logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Carcass type: {measurement.carcass_type}")
                 logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Measurements: {measurement.measurements}")
 
-                # Calculate total carcass weight from measurements
-                measurements_map = measurement.measurements or {}
-                carcass_weight = None
-                
-                if measurement.carcass_type == 'whole':
-                    whole_entry = measurements_map.get('whole_carcass_weight')
-                    if whole_entry:
-                        val = whole_entry.get('value') if isinstance(whole_entry, dict) else whole_entry
-                        if val is not None:
-                            carcass_weight = Decimal(str(val))
-                elif measurement.carcass_type == 'split':
-                    total = Decimal('0')
-                    has_parts = False
-                    for key in ['head_weight', 'feet_weight', 'left_carcass_weight', 'right_carcass_weight', 'organs_weight']:
-                        entry = measurements_map.get(key)
-                        if entry:
-                            val = entry.get('value') if isinstance(entry, dict) else entry
-                            if val is not None:
-                                total += Decimal(str(val))
-                                has_parts = True
-                    if has_parts:
-                        carcass_weight = total
-
-                # Mark animal as slaughtered and update remaining_weight.
+                # Mark animal as slaughtered.
                 # slaughter_weight is a read-only computed property (derived
                 # from this same measurement via calculated_total_weight) —
                 # it has no setter, so it must not be assigned here.
@@ -2644,24 +2600,20 @@ class CarcassMeasurementViewSet(viewsets.ModelViewSet):
                 animal.slaughtered = True
                 if not animal.slaughtered_at:
                     animal.slaughtered_at = timezone.now()
-
-                if carcass_weight is not None and carcass_weight > 0:
-                    logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Updating animal {animal.animal_id} remaining_weight to {carcass_weight}")
-                    animal.remaining_weight = carcass_weight
-
                 animal.save()
                 logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Animal updated successfully")
 
-                # Delete existing slaughter parts for this animal
-                logger.info("[CARCASS_MEASUREMENT_VIEWSET] Deleting existing slaughter parts...")
-                deleted_count = SlaughterPart.objects.filter(animal=measurement.animal).delete()[0]
-                logger.info(f"[CARCASS_MEASUREMENT_VIEWSET] Deleted {deleted_count} existing slaughter parts")
+                # create_slaughter_parts_from_measurement deletes and
+                # recreates this animal's parts itself (see below), so the
+                # separate delete step that used to live here is redundant.
 
                 # Import the utility function to create slaughter parts
                 from .utils.carcass_parts import create_slaughter_parts_from_measurement
 
                 logger.info("[CARCASS_MEASUREMENT_VIEWSET] Creating new slaughter parts...")
-                # Create slaughter parts from the measurement
+                # Create slaughter parts from the measurement — see the
+                # matching comment in perform_create for why this also
+                # zeroes the animal's own remaining_weight.
                 create_slaughter_parts_from_measurement(measurement.animal, measurement)
                 logger.info("[CARCASS_MEASUREMENT_VIEWSET] Slaughter parts created successfully")
 
@@ -3248,52 +3200,82 @@ class ProductViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     
     def perform_create(self, serializer):
-        """Override to handle weight tracking when creating products"""
+        """Override to handle weight tracking when creating products.
+
+        The weight check happens BEFORE the product is saved, and rejects
+        (400) rather than silently clamping. Previously the product was
+        saved first and the source's remaining_weight was updated with
+        max(0, remaining - product_weight) — over-claiming more weight than
+        actually remained wasn't rejected, it just floored the balance at 0
+        with no error, so there was no server-side limit on how much
+        product weight could be fabricated from an already-depleted part or
+        animal.
+        """
         from decimal import Decimal
-        
+
         # Get the product weight and related animal/part from request data
         product_weight = Decimal(str(self.request.data.get('weight', 0)))
         animal_id = self.request.data.get('animal')
         slaughter_part_id = self.request.data.get('slaughter_part')
-        
-        # Save the product first
-        product = serializer.save()
-        
-        # Update weight tracking
+
+        slaughter_part = None
+        animal = None
+
         if slaughter_part_id:
-            # Product made from slaughter part - deduct from part's remaining weight
             try:
                 slaughter_part = SlaughterPart.objects.get(id=slaughter_part_id)
-                if slaughter_part.remaining_weight is None:
-                    slaughter_part.remaining_weight = slaughter_part.weight
-                
-                slaughter_part.remaining_weight = max(Decimal('0'), slaughter_part.remaining_weight - product_weight)
-                
-                # Mark as used if weight is depleted
-                if slaughter_part.remaining_weight <= 0:
-                    slaughter_part.used_in_product = True
-                
-                slaughter_part.save()
-                print(f"Γ£à Updated slaughter part {slaughter_part.id}: remaining_weight = {slaughter_part.remaining_weight}")
             except SlaughterPart.DoesNotExist:
-                print(f"ΓÜá∩╕Å Slaughter part {slaughter_part_id} not found")
+                raise ValidationError({'slaughter_part': f'Slaughter part {slaughter_part_id} not found'})
+
+            available = slaughter_part.remaining_weight
+            if available is None:
+                available = slaughter_part.weight
+            if product_weight > available:
+                raise ValidationError({
+                    'weight': f'Product weight ({product_weight} kg) exceeds the remaining weight '
+                              f'of this slaughter part ({available} kg).'
+                })
         elif animal_id:
-            # Product made from whole animal - deduct from animal's remaining weight
             try:
                 animal = Animal.objects.get(id=animal_id)
-                if animal.remaining_weight is None:
-                    animal.remaining_weight = animal.live_weight or Decimal('0')
-                
-                animal.remaining_weight = max(Decimal('0'), animal.remaining_weight - product_weight)
-                
-                # Mark as processed if weight is depleted
-                if animal.remaining_weight <= 0:
-                    animal.processed = True
-                
-                animal.save()
-                print(f"Γ£à Updated animal {animal.id}: remaining_weight = {animal.remaining_weight}")
             except Animal.DoesNotExist:
-                print(f"ΓÜá∩╕Å Animal {animal_id} not found")
+                raise ValidationError({'animal': f'Animal {animal_id} not found'})
+
+            available = animal.remaining_weight
+            if available is None:
+                available = animal.live_weight or Decimal('0')
+            if product_weight > available:
+                raise ValidationError({
+                    'weight': f'Product weight ({product_weight} kg) exceeds the remaining weight '
+                              f'of this animal ({available} kg).'
+                })
+
+        # Now that the requested weight is known to fit, save the product
+        # and deduct it from whichever source it came from.
+        product = serializer.save()
+
+        if slaughter_part is not None:
+            available = slaughter_part.remaining_weight
+            if available is None:
+                available = slaughter_part.weight
+            slaughter_part.remaining_weight = available - product_weight
+
+            if slaughter_part.remaining_weight <= 0:
+                slaughter_part.used_in_product = True
+
+            slaughter_part.save()
+            print(f"Γ£à Updated slaughter part {slaughter_part.id}: remaining_weight = {slaughter_part.remaining_weight}")
+        elif animal is not None:
+            available = animal.remaining_weight
+            if available is None:
+                available = animal.live_weight or Decimal('0')
+            animal.remaining_weight = available - product_weight
+
+            if animal.remaining_weight <= 0:
+                animal.processed = True
+
+            animal.save()
+            print(f"Γ£à Updated animal {animal.id}: remaining_weight = {animal.remaining_weight}")
     
     def get_queryset(self):
         """Filter products based on user permissions"""

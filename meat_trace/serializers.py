@@ -1,4 +1,5 @@
 
+from decimal import Decimal
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.db import transaction
@@ -384,7 +385,38 @@ class CarcassMeasurementSerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError({
                         field_name: f'{field_name.replace("_", " ").title()} seems unusually large. Please verify the measurement.'
                     })
-        
+
+        # Fraud/error protection: everything actually weighed off the
+        # carcass can never add up to more than the animal it came from.
+        # This mirrors CarcassMeasurement.calculated_total_weight — kept in
+        # sync here (rather than instantiating an unsaved model instance)
+        # because attrs may be a partial update missing fields the model
+        # would need. This was previously unchecked server-side: only a
+        # client-side check existed, and it undercounted 'whole' carcasses
+        # (ignoring head/feet) and 'split' carcasses (ignoring head), so it
+        # could be bypassed by padding those fields.
+        animal = attrs.get('animal') or getattr(self.instance, 'animal', None)
+        if animal is not None and animal.live_weight is not None:
+            zero = Decimal('0')
+            if carcass_type == 'whole':
+                total = (attrs.get('whole_carcass_weight') or zero) + \
+                    (attrs.get('head_weight') or zero) + \
+                    (attrs.get('feet_weight') or zero)
+            else:
+                total = (attrs.get('left_carcass_weight') or zero) + \
+                    (attrs.get('right_carcass_weight') or zero) + \
+                    (attrs.get('head_weight') or zero) + \
+                    (attrs.get('feet_weight') or zero) + \
+                    (attrs.get('organs_weight') or zero)
+
+            if total > animal.live_weight:
+                raise serializers.ValidationError({
+                    'non_field_errors': [
+                        f'Combined weight of all recorded parts ({total} kg) cannot '
+                        f'exceed the animal\'s live weight ({animal.live_weight} kg).'
+                    ]
+                })
+
         return attrs
 
 

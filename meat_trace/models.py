@@ -676,25 +676,35 @@ class CarcassMeasurement(models.Model):
 
     @property
     def calculated_total_weight(self):
-        """Calculate total weight based on carcass type.
+        """Sum of every part actually weighed off the carcass.
 
-        Only 'whole_carcass_weight' (whole) and 'left'/'right' carcass weight
-        (split) are required by the client — 'torso_weight' and
-        'organs_weight' are never collected by the app, so requiring them
-        here made this always return None and silently skipped the
-        evisceration-waste auto-recording below. Treat them as optional
-        extras instead of blocking the total when absent.
+        This must include every field the client collects for the given
+        carcass_type — 'whole' collects head/feet weights alongside the
+        whole-carcass weight, and 'split' collects a head weight alongside
+        left/right/feet/organs. Previously 'whole' counted only
+        whole_carcass_weight and 'split' omitted head_weight, so a fraudulent
+        or mistaken entry could pad the omitted fields without the total
+        (and therefore the live-weight fraud check and evisceration-waste
+        calculation) ever reflecting it.
+
+        'torso_weight' is not collected by the app for either type and is
+        intentionally excluded.
         """
         if self.carcass_type == 'whole':
-            if self.whole_carcass_weight is not None:
-                return self.whole_carcass_weight
-            if self.head_weight is not None and self.torso_weight is not None:
-                return self.head_weight + self.torso_weight
-            return None
+            if self.whole_carcass_weight is None:
+                return None
+            total = self.whole_carcass_weight
+            if self.head_weight is not None:
+                total += self.head_weight
+            if self.feet_weight is not None:
+                total += self.feet_weight
+            return total
         elif self.carcass_type == 'split':
             if self.left_carcass_weight is None or self.right_carcass_weight is None:
                 return None
             total = self.left_carcass_weight + self.right_carcass_weight
+            if self.head_weight is not None:
+                total += self.head_weight
             if self.feet_weight is not None:
                 total += self.feet_weight
             if self.organs_weight is not None:
