@@ -67,9 +67,6 @@ def get_product_timeline(product):
                 'icon': 'fa-clipboard-list',
                 'details': {'Animal ID': animal.animal_id, 'Note': 'Full animal details could not be loaded — see server logs.'},
             })
-    else:
-        logger.info('Product %s has no linked animal (animal_id is NULL) — skipping Animal Registration stage', product.pk)
-        
         # 2. Animal Transfer to Processing Unit
         if animal.transferred_at and animal.transferred_to:
             # Prefer post-slaughter carcass weight over live weight for transfer record
@@ -189,7 +186,9 @@ def get_product_timeline(product):
                     'icon': 'fa-th-large',
                     'details': parts_breakdown
                 })
-    
+    else:
+        logger.info('Product %s has no linked animal (animal_id is NULL) — skipping Animal Registration stage', product.pk)
+
     # 6. Product Creation
     creation_details = {
         'Product Name': product.name,

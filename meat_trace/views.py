@@ -1426,7 +1426,7 @@ def product_info_view(request, product_id):
         ).get(id=product_id)
 
         if not _can_access_product_for_user(request.user, product):
-            return render(request, 'meat_trace/product_info.html', {'error': 'Not found'}, status=404)
+            return render(request, 'meat_trace/trace.html', {'error': 'Not found'}, status=404)
 
         timeline = get_product_timeline(product)
 
@@ -1455,133 +1455,64 @@ def product_info_view(request, product_id):
                 'details': rejection_details
             })
         
-        # 10. Sales Events - COMPREHENSIVE Customer Details with Inventory Tracking
+        # 10. Sales Events - Inventory Tracking (no customer PII: this page is
+        # public and unauthenticated, reachable by anyone who scans the
+        # product's QR code, so past buyers' names/phone/email/address must
+        # never appear here — only facts about the product itself).
         sales = []
-        
+
         # Calculate running inventory after each sale
         total_weight_sold = 0
         remaining_after_sale = 0
         initial_inventory = float(product.weight) if product.weight else 0
-        
-        order_items = product.orderitem_set.select_related('order', 'order__customer', 'order__shop').order_by('order__created_at')
-        
+
+        order_items = product.orderitem_set.select_related('order', 'order__shop').order_by('order__created_at')
+
         for idx, item in enumerate(order_items, 1):
             if item.order:
-                customer = item.order.customer
                 shop = item.order.shop
                 order = item.order
-                
+
                 # Calculate inventory after this sale
                 weight_sold_in_this_order = float(item.weight) if hasattr(item, 'weight') and item.weight else (
                     float(item.quantity) if hasattr(item, 'quantity') and item.quantity else 0
                 )
                 total_weight_sold += weight_sold_in_this_order
                 remaining_after_sale = initial_inventory - total_weight_sold
-                
-                # Build comprehensive sale details
+
+                # Build sale details
                 sale_details = {
                     'Sale Number': f'#{idx} of {order_items.count()}',
-                    'Order ID': f'#{order.id}',
                     'Sale Date & Time': order.created_at.strftime('%Y-%m-%d %H:%M:%S'),
-                    'Day of Week': order.created_at.strftime('%A'),
-                    'Time of Day': order.created_at.strftime('%I:%M %p'),
                 }
-                
-                # Customer Information
-                sale_details['---Customer Information---'] = '---'
-                sale_details['Customer Name'] = customer.get_full_name() if customer and customer.first_name else (customer.username if customer else 'Walk-in Customer')
-                
-                if customer:
-                    sale_details['Customer Username'] = customer.username
-                    
-                    if hasattr(customer, 'email') and customer.email:
-                        sale_details['Customer Email'] = customer.email
-                    
-                    # Try multiple ways to get phone number
-                    phone_found = False
-                    if hasattr(customer, 'profile'):
-                        if hasattr(customer.profile, 'phone') and customer.profile.phone:
-                            sale_details['Customer Phone'] = customer.profile.phone
-                            phone_found = True
-                        elif hasattr(customer.profile, 'phone_number') and customer.profile.phone_number:
-                            sale_details['Customer Phone'] = customer.profile.phone_number
-                            phone_found = True
-                    
-                    if not phone_found and hasattr(customer, 'phone_number') and customer.phone_number:
-                        sale_details['Customer Phone'] = customer.phone_number
-                        phone_found = True
-                    
-                    if not phone_found and hasattr(customer, 'phone') and customer.phone:
-                        sale_details['Customer Phone'] = customer.phone
-                        phone_found = True
-                    
-                    if not phone_found:
-                        sale_details['Customer Phone'] = 'Not provided'
-                    
-                    # Add customer address if available
-                    if hasattr(customer, 'profile'):
-                        if hasattr(customer.profile, 'address') and customer.profile.address:
-                            sale_details['Customer Address'] = customer.profile.address
-                        elif hasattr(customer.profile, 'location') and customer.profile.location:
-                            sale_details['Customer Location'] = customer.profile.location
-                else:
-                    sale_details['Customer Type'] = 'Walk-in (No account)'
-                
+
                 # Sale Details
                 sale_details['---Sale Details---'] = '---'
                 sale_details['Weight Sold This Order'] = f'{item.weight if hasattr(item, "weight") else item.quantity} {product.weight_unit}'
                 sale_details['Unit Price'] = f'TZS {item.unit_price}' if hasattr(item, 'unit_price') and item.unit_price else 'N/A'
                 sale_details['Subtotal for This Item'] = f'TZS {item.subtotal}' if hasattr(item, 'subtotal') and item.subtotal else f'TZS {float(item.weight if hasattr(item, "weight") and item.weight else item.quantity) * float(item.unit_price) if hasattr(item, "unit_price") and item.unit_price else 0:.2f}'
                 sale_details['Order Status'] = order.get_status_display() if hasattr(order, 'get_status_display') else order.status
-                
+
                 # Inventory Tracking
                 sale_details['---Inventory Status---'] = '---'
                 sale_details['Initial Product Weight'] = f'{initial_inventory} {product.weight_unit}'
                 sale_details['Total Sold Up To Now'] = f'{total_weight_sold} {product.weight_unit}'
                 sale_details['Remaining After This Sale'] = f'{remaining_after_sale} {product.weight_unit}'
                 sale_details['Percentage Sold'] = f'{(total_weight_sold / initial_inventory * 100):.1f}%' if initial_inventory > 0 else 'N/A'
-                
+
                 # Shop Information
                 sale_details['---Shop Information---'] = '---'
                 sale_details['Shop Name'] = shop.name if shop else 'Unknown Shop'
                 if shop and hasattr(shop, 'location'):
                     sale_details['Shop Location'] = shop.location
-                if shop and hasattr(shop, 'owner'):
-                    sale_details['Shop Owner'] = shop.owner.get_full_name() if shop.owner.first_name else shop.owner.username
-                
-                # Delivery information if available
-                if hasattr(order, 'delivery_address') and order.delivery_address:
-                    sale_details['---Delivery Information---'] = '---'
-                    sale_details['Delivery Address'] = order.delivery_address
-                    if hasattr(order, 'delivery_date') and order.delivery_date:
-                        sale_details['Delivery Date'] = order.delivery_date.strftime('%Y-%m-%d %H:%M:%S')
-                    if hasattr(order, 'delivery_status') and order.delivery_status:
-                        sale_details['Delivery Status'] = order.delivery_status
-                
-                # Payment information
-                if hasattr(order, 'payment_method') or hasattr(order, 'payment_status') or hasattr(order, 'total_amount'):
-                    sale_details['---Payment Information---'] = '---'
-                    if hasattr(order, 'payment_method') and order.payment_method:
-                        sale_details['Payment Method'] = order.payment_method
-                    if hasattr(order, 'payment_status') and order.payment_status:
-                        sale_details['Payment Status'] = order.payment_status
-                    if hasattr(order, 'total_amount') and order.total_amount:
-                        sale_details['Full Order Total'] = f'TZS {order.total_amount}'
-                
-                # Additional order items if this order has multiple products
-                order_total_items = order.orderitem_set.count() if hasattr(order, 'orderitem_set') else 1
-                if order_total_items > 1:
-                    sale_details['---Order Context---'] = '---'
-                    sale_details['Total Items in Order'] = order_total_items
-                    sale_details['This Product is Item'] = f'{idx} in multi-item order'
-                
+
                 sales.append({
-                    'stage': f'Sale #{idx} to Customer',
+                    'stage': f'Sale #{idx}',
                     'category': 'sale',
                     'timestamp': order.created_at,
                     'location': shop.name if shop else 'Retail Shop',
                     'actor': shop.name if shop else 'Retail Shop',
-                    'action': f'Sold {item.weight if hasattr(item, "weight") and item.weight else item.quantity} {product.weight_unit} to {customer.get_full_name() if customer and customer.first_name else (customer.username if customer else "walk-in customer")}',
+                    'action': f'Sold {item.weight if hasattr(item, "weight") and item.weight else item.quantity} {product.weight_unit} at retail',
                     'icon': 'fa-shopping-cart',
                     'details': sale_details
                 })
@@ -1622,58 +1553,16 @@ def product_info_view(request, product_id):
         
         # Sort timeline chronologically
         timeline.sort(key=lambda x: x['timestamp'])
-        
-        # Get related data
-        inventory_items = product.inventory.select_related('shop').all()
-        receipts = product.receipts.select_related('shop').order_by('-received_at')
-        order_items = product.orderitem_set.select_related('order', 'order__customer', 'order__shop').order_by('-order__created_at')
-        
-        # Carcass measurements
-        carcass_measurement = None
-        if product.animal and hasattr(product.animal, 'carcass_measurement'):
-            cm = product.animal.carcass_measurement
-            if hasattr(cm, 'get_all_measurements'):
-                carcass_measurement = cm.get_all_measurements()
-        
-        # Create product_info object that matches template expectations
-        product_info = {
+
+        context = {
             'product': product,
-            'product_name': product.name,
             'batch_number': product.batch_number,
-            'product_type': product.product_type,
-            'quantity': product.weight,
-            'weight': product.weight,
-            'weight_unit': product.weight_unit,
-            'price': product.price if hasattr(product, 'price') and product.price else '0.00',
-            'timeline_events': timeline,
-            'inventory_count': inventory_items.count(),
-            'orders_count': order_items.count(),
-        }
-        
-        context = {
-            'product_infos': [product_info],  # Wrap in list to match template expectation
-            'product': product,
-            'animal': product.animal,
             'timeline': timeline,
-            'inventory_items': inventory_items,
-            'receipts': receipts,
-            'order_items': order_items,
-            'carcass_measurement': carcass_measurement,
-            'inventory_count': inventory_items.count(),
-            'receipts_count': receipts.count(),
-            'orders_count': order_items.count(),
-            'qr_code_url': product.qr_code,
-            'total_inventory': inventory_items.count(),
-            'total_orders': order_items.count(),
+            'timestamp': timezone.now(),
         }
-        
+
     except Product.DoesNotExist:
-        context = {
-            'error': 'Product not found',
-            'product': None,
-            'product_infos': [],
-            'timeline': []
-        }
+        context = {'error': 'Product not found'}
     except Exception as e:
         # Previously this was swallowed with no server-side trace, so a
         # broken product page was indistinguishable from a nonexistent one —
@@ -1683,14 +1572,9 @@ def product_info_view(request, product_id):
         import logging
         logger = logging.getLogger(__name__)
         logger.exception('Failed to load product_info_view for product_id=%s', product_id)
-        context = {
-            'error': f'Error loading product: {str(e)}',
-            'product': None,
-            'product_infos': [],
-            'timeline': []
-        }
+        context = {'error': f'Error loading product: {str(e)}'}
 
-    return render(request, 'meat_trace/product_info.html', context)
+    return render(request, 'meat_trace/trace.html', context)
 
 
 @login_required

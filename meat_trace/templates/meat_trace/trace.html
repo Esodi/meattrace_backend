@@ -1,8 +1,9 @@
 {% extends "meat_trace/base.html" %}
 {% load static %}
+{% load humanize %}
 
 {% block title %}
-  {% if product %}Nyama Tamu — {{ product.name }} Traceability{% else %}Nyama Tamu — Traceability{% endif %}
+  {% if product %}MeatTrace Pro — {{ product.name }} Traceability{% else %}MeatTrace Pro — Traceability{% endif %}
 {% endblock %}
 
 {% block extra_head %}
@@ -18,16 +19,27 @@
 
   body { background: #f4f4f4; font-family: 'Segoe UI', sans-serif; }
 
+  /* This page is meant to feel like a native app screen on a phone (the
+     overwhelming majority of visits, since it's reached by scanning a QR
+     code) and a polished document on a desktop browser. The shared
+     .container-center from base.css is a padded, non-visual wrapper for
+     admin pages — override it here so the hero can go edge-to-edge on
+     mobile instead of floating in a boxed card. */
+  .container-center { max-width: none; margin: 0; padding: 0; }
+
   /* ── Hero ── */
   .trace-hero {
     background: linear-gradient(135deg, var(--brand) 0%, #3a0000 100%);
     color: #fff;
-    padding: 2rem 1.5rem 2.5rem;
-    text-align: center;
+    padding: 2rem 1.5rem 2.25rem;
   }
+  .trace-hero-inner { display: flex; flex-direction: column; align-items: center; text-align: center; }
   .trace-hero .brand { font-size: 1rem; opacity: .75; letter-spacing: .1em; text-transform: uppercase; }
   .trace-hero h1 { font-size: 1.6rem; font-weight: 700; margin: .4rem 0 .2rem; }
   .trace-hero .batch { font-size: .85rem; opacity: .8; }
+
+  /* Desktop-only QR panel inside the hero; hidden by default (mobile). */
+  .hero-qr { display: none; }
 
   /* ── Verified badge ── */
   .verified-badge {
@@ -39,7 +51,7 @@
 
   /* ── Summary cards ── */
   .summary-grid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: .75rem; padding: 1.25rem;
   }
   .summary-card {
@@ -71,12 +83,16 @@
   .tl-card .action { font-size: .92rem; color: #222; margin: .2rem 0; }
   .tl-card .meta { font-size: .75rem; color: var(--grey); }
 
-  .details-toggle { font-size: .75rem; color: var(--brand); cursor: pointer; border: none; background: none; padding: 0; margin-top: .4rem; }
-  .details-body { margin-top: .6rem; border-top: 1px solid #f0f0f0; padding-top: .6rem; display: none; }
+  .details-toggle {
+    font-size: .8rem; color: var(--brand); font-weight: 600; cursor: pointer;
+    border: none; background: none; padding: .5rem 0; margin-top: .2rem;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .details-body { margin-top: .3rem; border-top: 1px solid #f0f0f0; padding-top: .6rem; display: none; }
   .details-body.open { display: block; }
-  .detail-row { display: flex; gap: .5rem; font-size: .78rem; padding: .2rem 0; }
+  .detail-row { display: flex; gap: .5rem; font-size: .78rem; padding: .3rem 0; }
   .detail-row .dk { color: var(--grey); flex: 0 0 auto; max-width: 45%; }
-  .detail-row .dv { color: #222; font-weight: 500; word-break: break-word; }
+  .detail-row .dv { color: #222; font-weight: 500; word-break: break-word; text-align: right; margin-left: auto; }
   .detail-row.separator { border-top: 1px dashed #e0e0e0; margin-top: .3rem; padding-top: .3rem; }
 
   /* Stage colours */
@@ -85,14 +101,51 @@
   .cat-processing{ background: #e8f5e9; color: #2e7d32; }
   .cat-shop      { background: #f3e5f5; color: #6a1b9a; }
   .cat-quality   { background: #fce4ec; color: #c62828; }
+  .cat-sale      { background: #e0f2f1; color: #00695c; }
 
   /* ── Error state ── */
-  .error-box { padding: 2rem; text-align: center; }
+  .error-box { padding: 3rem 1.5rem; text-align: center; }
   .error-box i { font-size: 3rem; color: #ccc; }
 
   /* ── Footer ── */
   .trace-footer { text-align: center; padding: 1.5rem; font-size: .75rem; color: var(--grey); }
   .trace-footer a { color: var(--brand); }
+
+  /* ══ Desktop ══ */
+  @media (min-width: 860px) {
+    body { padding: 2.5rem 1.5rem; }
+
+    .container-center {
+      max-width: 880px; margin: 0 auto;
+      background: #fff; border-radius: 20px; overflow: hidden;
+      box-shadow: 0 20px 50px rgba(0,0,0,.12);
+    }
+
+    .trace-hero { padding: 2.75rem 3rem; }
+    .trace-hero-inner { flex-direction: row; align-items: center; justify-content: space-between; text-align: left; gap: 2rem; }
+    .trace-hero h1 { font-size: 2.1rem; }
+    .trace-hero .batch { font-size: .9rem; }
+
+    .hero-qr {
+      display: flex; flex-direction: column; align-items: center; gap: .5rem; flex-shrink: 0;
+    }
+    .hero-qr img {
+      width: 96px; height: 96px; background: #fff; padding: 6px; border-radius: 10px;
+    }
+    .hero-qr span { font-size: .7rem; opacity: .75; text-transform: uppercase; letter-spacing: .06em; }
+
+    .summary-grid { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; padding: 1.75rem 2rem 0; }
+    .summary-card { padding: 1.15rem; }
+    .summary-card .val { font-size: 1.1rem; }
+
+    .timeline-section { padding: 0 2rem 2.5rem; max-width: 720px; margin: 0 auto; }
+    .timeline-title { font-size: .95rem; margin: 2rem 0 1rem; }
+    .tl-card { padding: 1.1rem 1.35rem; }
+    .tl-card .action { font-size: .98rem; }
+    .tl-icon { width: 44px; height: 44px; font-size: 1.05rem; }
+
+    .trace-footer { padding: 1.75rem; }
+  }
 </style>
 {% endblock %}
 
@@ -110,11 +163,21 @@
 
 <!-- ── Hero ── -->
 <div class="trace-hero">
-  <div class="brand">Nyama Tamu &bull; Farm-to-Fork</div>
-  <h1>{{ product.name }}</h1>
-  <div class="batch">Batch &nbsp;{{ product.batch_number }}</div>
-  <div>
-    <span class="verified-badge"><i class="fas fa-shield-alt"></i> Verified Traceability</span>
+  <div class="trace-hero-inner">
+    <div>
+      <div class="brand">MeatTrace Pro &bull; Farm-to-Fork</div>
+      <h1>{{ product.name }}</h1>
+      <div class="batch">Batch &nbsp;{{ product.batch_number }}</div>
+      <div>
+        <span class="verified-badge"><i class="fas fa-shield-alt"></i> Verified Traceability</span>
+      </div>
+    </div>
+    {% if product.qr_code %}
+    <div class="hero-qr">
+      <img src="/media/{{ product.qr_code }}" alt="QR code for {{ product.name }}">
+      <span>Scan to verify</span>
+    </div>
+    {% endif %}
   </div>
 </div>
 
@@ -133,6 +196,14 @@
     <div class="val">{{ product.weight|default:"—" }} {{ product.weight_unit }}</div>
     <div class="lbl">Product Weight</div>
   </div>
+
+  {% if product.price %}
+  <div class="summary-card">
+    <i class="fas fa-money-bill-wave"></i>
+    <div class="val">TZS {{ product.price|floatformat:0|intcomma }}</div>
+    <div class="lbl">Price</div>
+  </div>
+  {% endif %}
 
   <div class="summary-card">
     <i class="fas fa-tag"></i>
@@ -190,12 +261,12 @@
         </button>
         <div class="details-body">
           {% for key, val in event.details.items %}
-            {% if val == "---" %}
-              <div class="detail-row separator"></div>
-            {% elif key|slice:":3" == "---" %}
+            {% if key|slice:":3" == "---" %}
               <div class="detail-row separator">
-                <span class="dk" style="font-weight:700;color:#555">{{ key|slice:"3:"|rstrip:"-" }}</span>
+                <span class="dk" style="font-weight:700;color:#555">{{ key|slice:"3:-3" }}</span>
               </div>
+            {% elif val == "---" %}
+              <div class="detail-row separator"></div>
             {% else %}
               <div class="detail-row">
                 <span class="dk">{{ key }}</span>
@@ -218,7 +289,7 @@
 
 <!-- ── Footer ── -->
 <div class="trace-footer">
-  <strong>Nyama Tamu</strong> — Meat Traceability Platform<br>
+  <strong>MeatTrace Pro</strong> — Meat Traceability Platform<br>
   Powered by <a href="https://shambabora.co.tz">Shambabora</a> &bull; Verified {{ timestamp|date:"d M Y" }}
 </div>
 
