@@ -171,7 +171,12 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+# East Africa Time (GMT+3, no daylight saving) — the whole app displays
+# dates and times in this zone regardless of server or viewer location.
+# USE_TZ stays True, so this only affects display/local-time conversion
+# (template |date filters, timezone.localtime(), admin) — everything is
+# still stored in the database as UTC.
+TIME_ZONE = 'Africa/Dar_es_Salaam'
 
 USE_I18N = True
 
