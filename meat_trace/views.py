@@ -14,7 +14,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.views import APIView
 from rest_framework.exceptions import ValidationError
 from django.shortcuts import get_object_or_404
-from django.db.models import Q
+from django.db.models import Q, Prefetch
 from django.utils import timezone
 from django.conf import settings
 from django.db import models
@@ -22,6 +22,7 @@ from django.db import transaction
 
 from .models import Animal, Product, Receipt, UserProfile, ProductCategory, ProcessingStage, ProductTimelineEvent, Inventory, Order, OrderItem, CarcassMeasurement, SlaughterPart, ProcessingUnit, ProcessingUnitUser, Shop, ShopUser, UserAuditLog, JoinRequest, Notification, Activity, SystemAlert, PerformanceMetric, ComplianceAudit, Certification, SystemHealth, SecurityLog, TransferRequest, BackupSchedule, Sale, SaleItem, RejectionReason, ShopSettings, Invoice, InvoiceItem, InvoicePayment
 from .abbatoir_dashboard_serializer import AbbatoirDashboardSerializer
+from .pagination import LargeResultsSetPagination
 from .serializers import AnimalSerializer, ProductSerializer, OrderSerializer, ShopSerializer, SlaughterPartSerializer, ActivitySerializer, ProcessingUnitSerializer, JoinRequestSerializer, ProductCategorySerializer, CarcassMeasurementSerializer, SaleSerializer, SaleItemSerializer, NotificationSerializer, UserProfileSerializer, ShopSettingsSerializer, InvoiceSerializer, InvoiceCreateSerializer, InvoiceItemSerializer, InvoicePaymentSerializer, ReceiptSerializer
 from .utils.rejection_service import RejectionService
 from .role_utils import normalize_role, ROLE_ABBATOIR, ROLE_PROCESSOR, ROLE_SHOPOWNER, ROLE_ADMIN
@@ -33,19 +34,31 @@ class AnimalViewSet(viewsets.ModelViewSet):
     """ViewSet for managing animals with comprehensive CRUD operations and filtering"""
     serializer_class = AnimalSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = LargeResultsSetPagination
 
     def get_queryset(self):
         """
         Return animals for the current user with optional filtering.
         Supports filtering by species, slaughtered status, search, and ordering.
-        
+
         Filtering logic:
         - Farmers: see their own animals
         - Processors: see animals transferred to ANY processing unit they belong to
         - Admins: see all animals
         """
         user = self.request.user
-        queryset = Animal.objects.all().select_related('abbatoir', 'transferred_to', 'received_by')
+        # select_related covers forward FKs and the reverse one-to-one
+        # (carcass_measurement); prefetch_related is required for the
+        # reverse many-to-one relations (slaughter_parts, weight_history)
+        # that AnimalSerializer nests - without these the serializer issues
+        # a handful of extra queries per animal (N+1).
+        queryset = Animal.objects.all().select_related(
+            'abbatoir', 'transferred_to', 'received_by', 'carcass_measurement'
+        ).prefetch_related(
+            Prefetch('slaughter_parts', queryset=SlaughterPart.objects.select_related('animal')),
+            'weight_history',
+            'waste_records',
+        )
 
         # Farmers see their own animals
         if hasattr(user, 'profile') and normalize_role(user.profile.role) == ROLE_ABBATOIR:
@@ -228,6 +241,14 @@ class AnimalViewSet(viewsets.ModelViewSet):
                         animal.transferred_at = timezone.now()
                         animal.save()
                         transferred_animals.append(animal)
+                        # Cascade to any slaughter parts already created for this
+                        # animal (e.g. by a 'whole' carcass measurement - see
+                        # create_slaughter_parts_from_measurement) so they travel
+                        # with the animal instead of being left behind, untransferred
+                        # and invisible to the processing unit.
+                        animal.slaughter_parts.filter(transferred_to__isnull=True).update(
+                            transferred_to=processing_unit, transferred_at=animal.transferred_at
+                        )
 
                 # Transfer parts
                 if part_transfers:
@@ -385,6 +406,12 @@ class AnimalViewSet(viewsets.ModelViewSet):
                         animal.received_at = timezone.now()
                         animal.save()
                         received_animals.append(animal)
+                        # Cascade to any slaughter parts transferred alongside this
+                        # animal but not yet individually received, so they show up
+                        # for the processing unit the same way the animal does.
+                        animal.slaughter_parts.filter(
+                            transferred_to__isnull=False, received_by__isnull=True
+                        ).update(received_by=request.user, received_at=animal.received_at)
 
                 # Receive parts
                 if part_receives:
@@ -552,6 +579,7 @@ class SlaughterPartViewSet(viewsets.ModelViewSet):
     """ViewSet for managing slaughter parts with filtering and CRUD operations"""
     serializer_class = SlaughterPartSerializer
     permission_classes = [IsAuthenticated]
+    pagination_class = LargeResultsSetPagination
 
     def get_queryset(self):
         """
@@ -1966,7 +1994,7 @@ def traceability_report_view(request):
             
         items.append({
             'item_id': animal.animal_id,
-            'name': f"{animal.species} (Whole)",
+            'name': f"{animal.species} - {animal.animal_name}" if animal.animal_name else f"{animal.species} - {animal.animal_id}",
             'species': animal.species or 'Unknown',
             'origin': animal.abbatoir.username if animal.abbatoir else "Unknown Source",
             'initial_weight': float(initial_weight),
@@ -2005,7 +2033,7 @@ def traceability_report_view(request):
 
         items.append({
             'item_id': f"{part.animal.animal_id}-{part.part_type}",
-            'name': f"{part.part_type} (Part)",
+            'name': part.get_part_type_display(),
             'species': part.animal.species if part.animal else 'Unknown',
             'origin': part.animal.abbatoir.username if part.animal and part.animal.abbatoir else "Unknown Source",
             'initial_weight': float(initial_weight),

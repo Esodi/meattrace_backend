@@ -340,11 +340,15 @@ class Animal(models.Model):
 
     @property
     def total_waste_weight(self):
-        """Sum of all waste records attributed to this animal (kg)."""
-        total = self.waste_records.aggregate(
-            total=models.Sum('weight_kg')
-        )['total']
-        return total or Decimal('0')
+        """Sum of all waste records attributed to this animal (kg).
+
+        Summed in Python (not .aggregate()) so that a prefetch_related('waste_records')
+        on the queryset is actually used - .aggregate() always issues its own query and
+        would otherwise turn a prefetched list result into an N+1.
+        """
+        return sum(
+            (w.weight_kg for w in self.waste_records.all()), Decimal('0')
+        )
 
     live_weight = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0)], null=True, blank=True, help_text="Live weight in kg before slaughter")
     remaining_weight = models.DecimalField(max_digits=5, decimal_places=2, validators=[MinValueValidator(0)], null=True, blank=True, help_text="Remaining weight available for product creation")
@@ -357,7 +361,7 @@ class Animal(models.Model):
     gender = models.CharField(max_length=10, choices=GENDER_CHOICES, default='unknown', help_text="Animal gender")
     notes = models.TextField(blank=True, null=True, help_text="Additional notes about the animal")
     created_at = models.DateTimeField(default=timezone.now)
-    slaughtered = models.BooleanField(default=False)
+    slaughtered = models.BooleanField(default=False, db_index=True)
     slaughtered_at = models.DateTimeField(null=True, blank=True)
     # Transfer fields
     transferred_to = models.ForeignKey(ProcessingUnit, on_delete=models.SET_NULL, null=True, blank=True, related_name='transferred_animals')
@@ -382,7 +386,7 @@ class Animal(models.Model):
         ('appealed', 'Appealed'),
         ('resolved', 'Resolved'),
     ]
-    rejection_status = models.CharField(max_length=20, choices=REJECTION_STATUS_CHOICES, blank=True, null=True, help_text="Current rejection status")
+    rejection_status = models.CharField(max_length=20, choices=REJECTION_STATUS_CHOICES, blank=True, null=True, db_index=True, help_text="Current rejection status")
     rejection_reason_category = models.CharField(max_length=20, blank=True, null=True, help_text="Category of rejection reason")
     rejection_reason_specific = models.CharField(max_length=30, blank=True, null=True, help_text="Specific rejection reason")
     rejection_notes = models.TextField(blank=True, null=True, help_text="Additional notes about the rejection")
@@ -589,7 +593,7 @@ class SlaughterPart(models.Model):
         ('appealed', 'Appealed'),
         ('resolved', 'Resolved'),
     ]
-    rejection_status = models.CharField(max_length=20, choices=REJECTION_STATUS_CHOICES, blank=True, null=True, help_text="Current rejection status")
+    rejection_status = models.CharField(max_length=20, choices=REJECTION_STATUS_CHOICES, blank=True, null=True, db_index=True, help_text="Current rejection status")
     rejection_reason_category = models.CharField(max_length=20, blank=True, null=True, help_text="Category of rejection reason")
     rejection_reason_specific = models.CharField(max_length=30, blank=True, null=True, help_text="Specific rejection reason")
     rejection_notes = models.TextField(blank=True, null=True, help_text="Additional notes about the rejection")
