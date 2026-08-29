@@ -289,6 +289,11 @@ class RealTimeMetricsSerializer(serializers.Serializer):
 
 class SlaughterPartSerializer(serializers.ModelSerializer):
     animal_id = serializers.CharField(source='animal.animal_id', read_only=True)
+    # Carrying the parent animal's species/name means a client showing a
+    # part (e.g. a source picker) doesn't need to separately fetch/cache the
+    # full animal list just to label where the part came from.
+    species = serializers.CharField(source='animal.species', read_only=True)
+    animal_name = serializers.CharField(source='animal.animal_name', read_only=True)
 
     class Meta:
         model = SlaughterPart

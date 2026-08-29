@@ -96,6 +96,14 @@ class AnimalViewSet(viewsets.ModelViewSet):
             slaughtered_bool = slaughtered.lower() == 'true'
             queryset = queryset.filter(slaughtered=slaughtered_bool)
 
+        # Lets a caller that only cares about pickable stock (e.g. the
+        # create-product source picker) shrink the result set - and
+        # therefore how many pages it needs to page through - server-side
+        # instead of fetching everything and discarding most of it locally.
+        has_remaining_weight = self.request.query_params.get('has_remaining_weight')
+        if has_remaining_weight is not None and has_remaining_weight.lower() == 'true':
+            queryset = queryset.filter(remaining_weight__gt=0)
+
         search = self.request.query_params.get('search')
         if search:
             queryset = queryset.filter(
@@ -646,6 +654,11 @@ class SlaughterPartViewSet(viewsets.ModelViewSet):
                 queryset = queryset.filter(received_by_id=int(received_by))
             except (TypeError, ValueError):
                 queryset = queryset.none()
+
+        # Same shrink-the-page-server-side rationale as AnimalViewSet.
+        has_remaining_weight = self.request.query_params.get('has_remaining_weight')
+        if has_remaining_weight is not None and has_remaining_weight.lower() == 'true':
+            queryset = queryset.filter(remaining_weight__gt=0)
 
         search = self.request.query_params.get('search')
         if search:
