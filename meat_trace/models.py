@@ -442,8 +442,16 @@ class Animal(models.Model):
     
     @property
     def has_slaughter_parts(self):
-        """Check if this animal has individual slaughter parts defined"""
-        return self.slaughter_parts.exists()
+        """Check if this animal has individual slaughter parts defined.
+
+        Uses .all() rather than .exists() so a prefetch_related('slaughter_parts')
+        on the queryset is actually used - .exists() always issues its own
+        query regardless of prefetching, which turned every list-serialization
+        of an animal (lifecycle_status is computed up to 5x per animal via
+        is_healthy/is_slaughtered_status/is_transferred_status/
+        is_semi_transferred_status) into an N+1.
+        """
+        return len(self.slaughter_parts.all()) > 0
     
     @property
     def lifecycle_status(self):
@@ -461,35 +469,42 @@ class Animal(models.Model):
         3. Check for partial transfers
         4. Check if slaughtered (but not transferred)
         5. Default to healthy
+
+        Cached on the instance: is_healthy/is_slaughtered_status/
+        is_transferred_status/is_semi_transferred_status each read this
+        property, so serializing one animal recomputed it (and the
+        has_slaughter_parts query it can trigger) up to 5 times. Safe to
+        cache per-instance since nothing re-reads it after mutating the
+        same in-memory object within a request.
         """
+        if hasattr(self, '_lifecycle_status_cache'):
+            return self._lifecycle_status_cache
+
         # Priority 1: Check if animal is rejected (highest priority)
         # But if appeal was approved, rejection is overturned
         if self.rejection_status == 'rejected' and self.appeal_status != 'approved':
-            return 'REJECTED'
-        
+            status = 'REJECTED'
         # Priority 2: Check if whole animal is transferred
-        if self.transferred_to is not None:
-            return 'TRANSFERRED'
-        
-        # Priority 3: Check for partial or complete part transfers
-        if self.has_slaughter_parts:
-            parts = self.slaughter_parts.all()
-            transferred_parts = [p for p in parts if p.transferred_to is not None]
-            
-            if transferred_parts:
-                # All parts transferred
-                if len(transferred_parts) == len(parts):
-                    return 'TRANSFERRED'
-                # Some parts transferred but not all
-                else:
-                    return 'SEMI-TRANSFERRED'
-        
-        # Priority 4: Check if slaughtered (but not transferred)
-        if self.slaughtered:
-            return 'SLAUGHTERED'
-        
-        # Default: Animal is healthy and on the abbatoir
-        return 'HEALTHY'
+        elif self.transferred_to is not None:
+            status = 'TRANSFERRED'
+        else:
+            status = None
+            # Priority 3: Check for partial or complete part transfers
+            if self.has_slaughter_parts:
+                parts = self.slaughter_parts.all()
+                transferred_parts = [p for p in parts if p.transferred_to is not None]
+
+                if transferred_parts:
+                    # All parts transferred, or some but not all
+                    status = 'TRANSFERRED' if len(transferred_parts) == len(parts) else 'SEMI-TRANSFERRED'
+
+            if status is None:
+                # Priority 4: Check if slaughtered (but not transferred)
+                # Priority 5 (default): Animal is healthy and on the abbatoir
+                status = 'SLAUGHTERED' if self.slaughtered else 'HEALTHY'
+
+        self._lifecycle_status_cache = status
+        return status
     
     @property
     def is_healthy(self):
