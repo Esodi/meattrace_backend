@@ -1958,7 +1958,7 @@ def traceability_report_view(request):
     if date_to:
         animals_query &= Q(received_at__lte=date_to)
         
-    received_animals = Animal.objects.filter(animals_query).select_related('abbatoir')
+    received_animals = Animal.objects.filter(animals_query).select_related('abbatoir').prefetch_related('slaughter_parts')
     
     # 2. Fetch SlaughterParts received by this user
     parts_query = Q(received_by=user)
@@ -1987,8 +1987,23 @@ def traceability_report_view(request):
         if initial_weight <= 0:
             initial_weight = 1.0 
             
-        remaining_weight = animal.remaining_weight if animal.remaining_weight is not None else 0.0
-        
+        # Once an animal is broken into slaughter parts, its own
+        # remaining_weight is intentionally zeroed (see
+        # create_slaughter_parts_from_measurement) so the same carcass can't
+        # be claimed both directly and via its parts - the parts become the
+        # sole authoritative pool for what's actually left. Reflect that
+        # here: sum the parts' remaining weight instead of reporting the
+        # animal's own (always-zero) figure, which otherwise made a fully
+        # split animal look like its unprocessed weight had vanished.
+        parts = list(animal.slaughter_parts.all())
+        if parts:
+            remaining_weight = sum(
+                (p.remaining_weight if p.remaining_weight is not None else p.weight) or 0
+                for p in parts
+            )
+        else:
+            remaining_weight = animal.remaining_weight if animal.remaining_weight is not None else 0.0
+
         utilization_rate = 0.0
         if initial_weight > 0:
             utilization_rate = (processed_weight / initial_weight) * 100
