@@ -1,5 +1,6 @@
 from decimal import Decimal
 import uuid
+from rest_framework.exceptions import ValidationError
 from ..models import SlaughterPart, Animal, CarcassMeasurement
 
 # Maps a measurement field name to the SlaughterPart part_type it becomes.
@@ -50,8 +51,41 @@ def create_slaughter_parts_from_measurement(animal: Animal, measurement: Carcass
         logger.warning(f"[CARCASS_PARTS] Unknown carcass_type '{measurement.carcass_type}' for animal {animal.id}. No parts will be created.")
         return
 
-    # Delete existing parts to ensure a clean slate (covers re-recording and
-    # switching carcass type between whole/split).
+    # Re-recording a measurement (or switching carcass type) used to
+    # unconditionally delete and recreate every part with remaining_weight
+    # reset to full — silently discarding whatever had already been
+    # consumed from the *previous* parts. A part that already has weight
+    # consumed (used_in_product, remaining_weight below its original
+    # weight, or an actual Product/ingredient made from it) must not be
+    # replaced this way: recreating it would let the same physical meat be
+    # claimed again, and Product.slaughter_part is SET_NULL on delete, so
+    # existing products would also lose their link back to their source
+    # part.
+    existing_parts = list(SlaughterPart.objects.filter(animal=animal))
+    consumed_parts = [
+        p for p in existing_parts
+        if p.used_in_product
+        or (p.remaining_weight is not None and p.remaining_weight < p.weight)
+        or p.products.exists()
+    ]
+    if consumed_parts:
+        consumed_types = ', '.join(p.get_part_type_display() for p in consumed_parts)
+        logger.warning(
+            f"[CARCASS_PARTS] Refusing to re-record measurement for animal "
+            f"{animal.animal_id}: parts already consumed ({consumed_types})"
+        )
+        raise ValidationError({
+            'measurement': (
+                f"Cannot re-record this carcass measurement: {consumed_types} "
+                f"already {'has' if len(consumed_parts) == 1 else 'have'} product(s) "
+                f"created from it, or weight already used. Re-recording would reset "
+                f"its remaining weight and let the same meat be used twice."
+            )
+        })
+
+    # Delete existing (untouched) parts to ensure a clean slate (covers
+    # re-recording before anything was consumed, and switching carcass type
+    # between whole/split).
     deleted_count = SlaughterPart.objects.filter(animal=animal).delete()[0]
     logger.info(f"[CARCASS_PARTS] Deleted {deleted_count} existing slaughter parts for Animal {animal.id}")
 
