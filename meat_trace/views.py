@@ -247,6 +247,21 @@ class AnimalViewSet(viewsets.ModelViewSet):
                     for animal in animals:
                         animal.transferred_to = processing_unit
                         animal.transferred_at = timezone.now()
+                        # A re-transfer supersedes any prior rejection - clear it so
+                        # the animal isn't permanently hidden from every processor's
+                        # inbound list (which excludes rejection_status='rejected')
+                        # while still showing as freshly transferred to the abbatoir.
+                        if animal.rejection_status == 'rejected':
+                            animal.rejection_status = None
+                            animal.rejection_reason_category = None
+                            animal.rejection_reason_specific = None
+                            animal.rejection_notes = None
+                            animal.rejected_by = None
+                            animal.rejected_at = None
+                            animal.appeal_status = None
+                            animal.appeal_notes = None
+                            animal.appealed_at = None
+                            animal.appeal_resolved_at = None
                         animal.save()
                         transferred_animals.append(animal)
                         # Cascade to any slaughter parts already created for this
@@ -255,7 +270,12 @@ class AnimalViewSet(viewsets.ModelViewSet):
                         # with the animal instead of being left behind, untransferred
                         # and invisible to the processing unit.
                         animal.slaughter_parts.filter(transferred_to__isnull=True).update(
-                            transferred_to=processing_unit, transferred_at=animal.transferred_at
+                            transferred_to=processing_unit, transferred_at=animal.transferred_at,
+                            rejection_status=None, rejection_reason_category=None,
+                            rejection_reason_specific=None, rejection_notes=None,
+                            rejected_by=None, rejected_at=None,
+                            appeal_status=None, appeal_notes=None,
+                            appealed_at=None, appeal_resolved_at=None,
                         )
 
                 # Transfer parts
@@ -273,6 +293,17 @@ class AnimalViewSet(viewsets.ModelViewSet):
                         for part in parts:
                             part.transferred_to = processing_unit
                             part.transferred_at = timezone.now()
+                            if part.rejection_status == 'rejected':
+                                part.rejection_status = None
+                                part.rejection_reason_category = None
+                                part.rejection_reason_specific = None
+                                part.rejection_notes = None
+                                part.rejected_by = None
+                                part.rejected_at = None
+                                part.appeal_status = None
+                                part.appeal_notes = None
+                                part.appealed_at = None
+                                part.appeal_resolved_at = None
                             part.save()
                             transferred_parts.append(part)
                             animals_with_transferred_parts.add(part.animal)
@@ -288,6 +319,17 @@ class AnimalViewSet(viewsets.ModelViewSet):
                             if transferred_parts_count == len(all_parts):
                                 animal.transferred_to = processing_unit
                                 animal.transferred_at = timezone.now()
+                                if animal.rejection_status == 'rejected':
+                                    animal.rejection_status = None
+                                    animal.rejection_reason_category = None
+                                    animal.rejection_reason_specific = None
+                                    animal.rejection_notes = None
+                                    animal.rejected_by = None
+                                    animal.rejected_at = None
+                                    animal.appeal_status = None
+                                    animal.appeal_notes = None
+                                    animal.appealed_at = None
+                                    animal.appeal_resolved_at = None
                                 animal.save()
                                 transferred_animals.append(animal)
                                 
@@ -3600,13 +3642,32 @@ class ProductViewSet(viewsets.ModelViewSet):
                         product.rejection_reason = rejection_reason
                         product.rejected_by = request.user
                         product.rejected_at = timezone.now()
-                        
-                        # If entire product is rejected, mark status as rejected
+
+                        # If entire product is rejected, mark status as rejected and
+                        # return it to the processing unit's stock (clear the
+                        # transfer/receipt fields) so it isn't permanently stuck at
+                        # the rejecting shop - mirrors how animal rejection returns
+                        # the animal to the abbatoir.
                         if product.weight_rejected >= product.weight:
                             product.rejection_status = 'rejected'
-                        
+                            product.transferred_to = None
+                            product.transferred_at = None
+                            product.received_by_shop = None
+                            product.received_at = None
+
                         product.save()
-                        
+
+                        # Notify the processing unit so they know to act on the
+                        # rejection (this previously never fired - notify_product_rejected
+                        # existed but was never called).
+                        from .utils.notification_service import NotificationService
+                        for pu_user in ProcessingUnitUser.objects.filter(
+                            processing_unit=product.processing_unit, is_active=True
+                        ):
+                            NotificationService.notify_product_rejected(
+                                pu_user.user, product, user_shop, weight_rejected, rejection_reason
+                            )
+
                         rejected_products.append({
                             'product_id': product.id,
                             'product_name': product.name,
@@ -3616,7 +3677,7 @@ class ProductViewSet(viewsets.ModelViewSet):
                             'rejection_reason': rejection_reason,
                             'rejection_status': product.rejection_status
                         })
-                        
+
                     except Product.DoesNotExist:
                         errors.append(f"Product {product_id} not found")
                         continue
@@ -3817,8 +3878,24 @@ class ProductViewSet(viewsets.ModelViewSet):
                             # Transfer full product
                             product.transferred_to = shop
                             product.transferred_at = timezone.now()
+                            # A re-transfer supersedes any prior rejection at the old
+                            # shop - reset rejection/receipt accounting so the new
+                            # shop can receive it fresh (weight_rejected staying at
+                            # the full weight would otherwise leave 0 remaining and
+                            # block receipt forever).
+                            if product.rejection_status == 'rejected':
+                                product.rejection_status = None
+                                product.rejection_reason = None
+                                product.rejected_by = None
+                                product.rejected_at = None
+                                product.weight_rejected = Decimal('0')
+                                product.quantity_rejected = Decimal('0')
+                                product.weight_received = Decimal('0')
+                                product.quantity_received = Decimal('0')
+                                product.received_by_shop = None
+                                product.received_at = None
                             product.save()
-                            
+
                             # Create activity for full transfer
                             Activity.objects.create(
                                 user=user,
@@ -3839,8 +3916,19 @@ class ProductViewSet(viewsets.ModelViewSet):
                         # No quantity specified - transfer full product (legacy behavior)
                         product.transferred_to = shop
                         product.transferred_at = timezone.now()
+                        if product.rejection_status == 'rejected':
+                            product.rejection_status = None
+                            product.rejection_reason = None
+                            product.rejected_by = None
+                            product.rejected_at = None
+                            product.weight_rejected = Decimal('0')
+                            product.quantity_rejected = Decimal('0')
+                            product.weight_received = Decimal('0')
+                            product.quantity_received = Decimal('0')
+                            product.received_by_shop = None
+                            product.received_at = None
                         product.save()
-                        
+
                         # Create activity
                         Activity.objects.create(
                             user=user,
