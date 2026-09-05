@@ -1832,20 +1832,30 @@ def production_stats_view(request):
         
         total_animals_received = received_whole_animals + received_slaughter_parts
 
-        # PENDING: Count animals/parts transferred to processing unit but not yet received or rejected
-        pending_whole_animals = Animal.objects.filter(
-            transferred_to_id__in=user_processing_units,
-            received_by__isnull=True,
-            rejection_status__isnull=True  # Not rejected
-        ).count()
-        
-        pending_slaughter_parts = SlaughterPart.objects.filter(
-            transferred_to_id__in=user_processing_units,
-            received_by__isnull=True,
-            rejection_status__isnull=True  # Not rejected
-        ).count()
-        
-        pending_animals_to_process = pending_whole_animals + pending_slaughter_parts
+        # PENDING: Count *animals* still awaiting a receive decision, not the
+        # number of underlying rows. transfer_animals cascades both ways - a
+        # whole-animal transfer also transfers that animal's slaughter parts,
+        # and transferring every part back-fills transferred_to on the parent
+        # animal - so one carcass with three parts is four pending rows.
+        # Counting rows made the dashboard's Receive badge read 4 while
+        # receive_animals_screen, which groups parts under their animal,
+        # showed a single card. Union the animal ids instead so both agree.
+        pending_animal_ids = set(
+            Animal.objects.filter(
+                transferred_to_id__in=user_processing_units,
+                received_by__isnull=True,
+                rejection_status__isnull=True  # Not rejected
+            ).values_list('id', flat=True)
+        )
+        pending_animal_ids.update(
+            SlaughterPart.objects.filter(
+                transferred_to_id__in=user_processing_units,
+                received_by__isnull=True,
+                rejection_status__isnull=True  # Not rejected
+            ).values_list('animal_id', flat=True)
+        )
+
+        pending_animals_to_process = len(pending_animal_ids)
 
         # PRODUCTS: Total products created by this processing unit since creation
         total_products_created = Product.objects.filter(
