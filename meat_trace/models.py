@@ -923,6 +923,25 @@ class Product(models.Model):
             self.quantity_rejected = self.weight_rejected
         super().save(*args, **kwargs)
 
+    @property
+    def trace_url(self):
+        """Canonical public traceability URL encoded into this product's QR code.
+
+        Single source of truth: the app used to build this string in three
+        different places (two different routes, plus a fallback that emitted a
+        bare batch number that was not a URL at all). Anything that needs the
+        URL — QR generation, the API, printable labels — reads it from here.
+
+        Must live under /api/v2/: in production nginx proxies only that prefix to
+        Django, and every other path (including /trace/) is served by the
+        frontend SPA, which answers a traceability link with its own "not
+        found" page. Keyed by primary key because batch_number is not unique,
+        and this is the same route labels printed by the app already encode.
+        """
+        site = (getattr(settings, 'SITE_URL', '') or 'http://localhost:8000').rstrip('/')
+        return f"{site}/api/v2/product-info/view/{self.pk}/"
+
+
 class Inventory(models.Model):
     shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name='inventory')
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='inventory')
@@ -1219,6 +1238,58 @@ class ApprovalWorkflow(models.Model):
     def __str__(self):
         return self.name
 
+
+
+def write_qr_png(content, filename):
+    """Render `content` into media/qr_codes/<filename> and return the relative path."""
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        box_size=10,
+        border=4,
+    )
+    qr.add_data(content)
+    qr.make(fit=True)
+
+    qr_dir = os.path.join(settings.MEDIA_ROOT, 'qr_codes')
+    os.makedirs(qr_dir, exist_ok=True)
+    qr.make_image(fill_color="black", back_color="white").save(os.path.join(qr_dir, filename))
+    return f"qr_codes/{filename}"
+
+
+@receiver(post_save, sender=Product)
+def generate_product_qr_code(sender, instance, created, **kwargs):
+    """Generate the consumer-facing QR code for a product.
+
+    There was no such signal before, so Product.qr_code was null for every
+    product ever created. That left the printable-label templates rendering a
+    "QR Code Not Available" placeholder, and the app's product detail screen
+    falling back to encoding a bare batch number — a string, not a link — so
+    scanning it opened nothing.
+
+    The encoded URL depends only on the primary key, so once the image exists
+    it never goes stale; later saves skip regeneration.
+    """
+    filename = f"product_qr_{instance.pk}.png"
+    expected_path = f"qr_codes/{filename}"
+    on_disk = os.path.join(settings.MEDIA_ROOT, expected_path)
+
+    if not created and instance.qr_code == expected_path and os.path.exists(on_disk):
+        return
+
+    try:
+        path = write_qr_png(instance.trace_url, filename)
+        if instance.qr_code != path:
+            # .update() rather than .save() so this cannot recurse back into
+            # post_save, and so it touches only the one column.
+            Product.objects.filter(pk=instance.pk).update(qr_code=path)
+            instance.qr_code = path
+    except Exception:
+        # A failed label must never block product creation.
+        import logging
+        logging.getLogger(__name__).exception(
+            'Failed to generate QR code for product %s', instance.pk
+        )
 
 
 @receiver(post_save, sender=Order)

@@ -20,18 +20,23 @@ class ProductQRCodeTests(TestCase):
             username='processor1',
             password='testpass123'
         )
-        UserProfile.objects.filter(user=self.processing_unit).update(
-            role='ProcessingUnit',
-            processing_unit=self.processing_unit_obj
-        )
+        # Save through the instance, not .update(). force_authenticate() hands
+        # this very User object to the view, and its `.profile` relation is
+        # already cached — a queryset .update() changes the row but leaves that
+        # cached profile stale, so the view saw the default 'Abbatoir' role.
+        profile = self.processing_unit.profile
+        profile.role = 'ProcessingUnit'
+        profile.processing_unit = self.processing_unit_obj
+        profile.save()
 
         # Create a abbatoir user
         self.abbatoir = User.objects.create_user(
             username='abbatoir1',
-            username='farmer1',
             password='testpass123'
         )
-        UserProfile.objects.filter(user=self.abbatoir).update(role='Abbatoir')
+        profile = self.abbatoir.profile
+        profile.role = 'Abbatoir'
+        profile.save()
 
         # Create an animal
         self.animal = Animal.objects.create(
@@ -98,19 +103,36 @@ class ProductQRCodeTests(TestCase):
         self.assertIn('qr_code_url', response.data)
         self.assertIsNotNone(response.data['qr_code_url'])
 
+        # The returned URL is the scannable traceability link, not a media path.
+        self.assertEqual(response.data['qr_code_url'], self.product.trace_url)
+        self.assertTrue(response.data['qr_code_url'].startswith('http'))
+
         # Refresh product from database
         self.product.refresh_from_db()
 
-        # Check that the QR code was actually updated
-        self.assertNotEqual(self.product.qr_code, old_qr_code)
+        # The filename is derived from the primary key, so the stored path is
+        # stable across regenerations — the image is rewritten in place rather
+        # than accumulating orphaned files under a new name each time.
+        self.assertEqual(self.product.qr_code, f'qr_codes/product_qr_{self.product.pk}.png')
+        if old_qr_code:
+            self.assertEqual(self.product.qr_code, old_qr_code)
 
-        # Verify that the old QR code file was deleted (if it existed)
-        if old_qr_path:
-            self.assertFalse(os.path.exists(old_qr_path))
-
-        # Verify that the new QR code file exists
+        # The image exists and actually encodes the traceability URL.
         new_qr_path = os.path.join(settings.MEDIA_ROOT, self.product.qr_code)
         self.assertTrue(os.path.exists(new_qr_path))
+
+        import io, hashlib, qrcode
+        q = qrcode.QRCode(version=1, error_correction=qrcode.constants.ERROR_CORRECT_L,
+                          box_size=10, border=4)
+        q.add_data(self.product.trace_url)
+        q.make(fit=True)
+        buf = io.BytesIO()
+        q.make_image(fill_color='black', back_color='white').save(buf, format='PNG')
+        self.assertEqual(
+            hashlib.md5(open(new_qr_path, 'rb').read()).hexdigest(),
+            hashlib.md5(buf.getvalue()).hexdigest(),
+            'QR image on disk does not encode the product trace URL',
+        )
 
     def test_regenerate_qr_code_wrong_processor(self):
         # Create another processing unit
@@ -118,11 +140,17 @@ class ProductQRCodeTests(TestCase):
             username='processor2',
             password='testpass123'
         )
-        UserProfile.objects.filter(user=other_processor).update(role='ProcessingUnit')
+        profile = other_processor.profile
+        profile.role = 'ProcessingUnit'
+        profile.save()
 
         # Log in as the other processing unit
         self.api_client.force_authenticate(user=other_processor)
 
         # Try to regenerate QR code for a product that belongs to a different processor
         response = self.api_client.post(f'/api/v2/products/{self.product.id}/regenerate_qr/')
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        # 404, not 403: the product is outside this processor's visible queryset,
+        # and answering 403 would confirm that a product with this id exists in
+        # another tenant. 403 is reserved for products the caller can legitimately
+        # see but does not own (see test_regenerate_qr_code_forbidden).
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)

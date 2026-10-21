@@ -61,9 +61,17 @@
   .summary-card i { font-size: 1.4rem; color: var(--brand); margin-bottom: .4rem; }
   .summary-card .val { font-size: 1rem; font-weight: 700; color: #222; }
   .summary-card .lbl { font-size: .72rem; color: var(--grey); margin-top: .1rem; }
+  /* Distinguish "we have no record of this" from a real value, so a blank
+     never reads as a rendering failure. */
+  .summary-card .val-missing { color: var(--grey); font-weight: 500; font-style: italic; font-size: .9rem; }
 
   /* ── Timeline ── */
   .timeline-section { padding: 0 1rem 2rem; }
+  .batch-notice {
+    background: #fff8e1; border: 1px solid #ffe08a; border-radius: var(--radius);
+    padding: .7rem .9rem; font-size: .78rem; color: #6b5200; margin-top: 1rem;
+  }
+  .batch-notice i { margin-right: .35rem; }
   .timeline-title { font-size: .9rem; font-weight: 700; color: var(--grey); letter-spacing: .08em; text-transform: uppercase; margin: 1.25rem 0 .75rem; }
 
   .tl-item { display: flex; gap: .9rem; margin-bottom: 1.25rem; }
@@ -193,7 +201,11 @@
 
   <div class="summary-card">
     <i class="fas fa-weight-hanging"></i>
-    <div class="val">{{ product.weight|default:"—" }} {{ product.weight_unit }}</div>
+    {% if product.weight %}
+    <div class="val">{{ product.weight }} {{ product.weight_unit }}</div>
+    {% else %}
+    <div class="val val-missing">Not recorded</div>
+    {% endif %}
     <div class="lbl">Product Weight</div>
   </div>
 
@@ -207,15 +219,21 @@
 
   <div class="summary-card">
     <i class="fas fa-tag"></i>
-    <div class="val">{{ product.category.name|default:"—" }}</div>
+    {% if product.category %}
+    <div class="val">{{ product.category.name }}</div>
+    {% else %}
+    <div class="val val-missing">Not categorised</div>
+    {% endif %}
     <div class="lbl">Category</div>
   </div>
 
+  {% if product.processing_unit %}
   <div class="summary-card">
     <i class="fas fa-industry"></i>
-    <div class="val">{{ product.processing_unit.name|default:"—" }}</div>
+    <div class="val">{{ product.processing_unit.name }}</div>
     <div class="lbl">Processor</div>
   </div>
+  {% endif %}
 
   {% if product.animal and product.animal.slaughtered_at %}
   <div class="summary-card">
@@ -234,6 +252,14 @@
 
 <!-- ── Timeline ── -->
 <div class="timeline-section">
+  {% if batch_sibling_count %}
+  <div class="batch-notice">
+    <i class="fas fa-info-circle"></i>
+    This batch covers {{ batch_sibling_count|add:"1" }} products. Showing the most recent one;
+    scan the QR code on the specific pack for its exact record.
+  </div>
+  {% endif %}
+
   <div class="timeline-title"><i class="fas fa-stream me-1"></i> Supply Chain Journey</div>
 
   {% if timeline %}
@@ -256,10 +282,16 @@
         </div>
 
         {% if event.details %}
+        {% comment %}
+          The first stage opens expanded: with every stage collapsed the page
+          showed nothing but summary cards and one-line headings, so the
+          traceability data the QR exists to deliver was invisible until the
+          consumer thought to tap eight separate buttons.
+        {% endcomment %}
         <button class="details-toggle" onclick="this.nextElementSibling.classList.toggle('open'); this.textContent = this.nextElementSibling.classList.contains('open') ? '▲ Hide details' : '▼ Show details'">
-          ▼ Show details
+          {% if forloop.first %}▲ Hide details{% else %}▼ Show details{% endif %}
         </button>
-        <div class="details-body">
+        <div class="details-body{% if forloop.first %} open{% endif %}">
           {% for key, val in event.details.items %}
             {% if key|slice:":3" == "---" %}
               <div class="detail-row separator">

@@ -5,6 +5,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.views import View
 import json
+import os
 from decimal import Decimal
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
@@ -28,6 +29,14 @@ from .utils.rejection_service import RejectionService
 from .role_utils import normalize_role, ROLE_ABBATOIR, ROLE_PROCESSOR, ROLE_SHOPOWNER, ROLE_ADMIN
 from .utils.pdf_utils import download_pdf_response
 from .utils.traceability import get_product_timeline
+
+import logging
+
+# Module-level logger. Several views (notably the public, unauthenticated
+# QR-scan pages) reference `logger` from inside their `except` blocks. Without
+# this, the error handler itself raised NameError and the friendly error page
+# was replaced by a raw Django 500 — the failure hid its own cause.
+logger = logging.getLogger(__name__)
 
 
 class AnimalViewSet(viewsets.ModelViewSet):
@@ -2198,14 +2207,36 @@ def public_trace_view(request, batch_number):
     No authentication required.
     """
     try:
-        product = Product.objects.select_related(
+        # batch_number is NOT unique — a single batch routinely covers many
+        # products (one carcass broken into dozens of cuts all share a batch).
+        # This used to be a .get(), which raised MultipleObjectsReturned for
+        # every product in a shared batch and turned the scanned QR into a 500.
+        # Filter instead, and let the QR disambiguate with ?id=<pk>.
+        candidates = Product.objects.select_related(
             'animal', 'animal__abbatoir', 'processing_unit',
             'category', 'slaughter_part', 'transferred_to',
             'received_by_shop',
         ).prefetch_related(
             'animal__slaughter_parts',
             'ingredients__slaughter_part',
-        ).get(batch_number=batch_number)
+        ).filter(batch_number=batch_number)
+
+        product = None
+        product_id = request.GET.get('id')
+        if product_id:
+            # Scoped to the batch on purpose: ?id= selects within the batch the
+            # label names, it is not a way to read an arbitrary product.
+            product = candidates.filter(pk=product_id).first()
+
+        # No ?id= (a legacy label printed before QRs carried one), or an id that
+        # does not belong to this batch: fall back to the newest product in the
+        # batch so the scan still resolves to something truthful.
+        siblings = 0
+        if product is None:
+            product = candidates.order_by('-created_at', '-id').first()
+            if product is None:
+                raise Product.DoesNotExist
+            siblings = candidates.count() - 1
 
         timeline = get_product_timeline(product)
 
@@ -2214,6 +2245,9 @@ def public_trace_view(request, batch_number):
             'batch_number': batch_number,
             'timeline': timeline,
             'timestamp': timezone.now(),
+            # Lets the template tell the consumer they are looking at one of
+            # several products in this batch rather than silently picking one.
+            'batch_sibling_count': siblings,
         }
         return render(request, 'meat_trace/trace.html', context)
 
@@ -3476,6 +3510,88 @@ class ProductViewSet(viewsets.ModelViewSet):
             
         except UserProfile.DoesNotExist:
             return Product.objects.none()
+
+    @staticmethod
+    def _can_regenerate_qr(user, product):
+        """Only admins and the owning processing unit may reprint a product's QR."""
+        if user.is_superuser or user.is_staff:
+            return True
+        try:
+            profile = user.profile
+        except UserProfile.DoesNotExist:
+            return False
+
+        role = normalize_role(profile.role)
+        if role == ROLE_ADMIN:
+            return True
+        if role != ROLE_PROCESSOR or product.processing_unit_id is None:
+            return False
+
+        unit_ids = set(
+            ProcessingUnitUser.objects.filter(
+                user=user, is_active=True, is_suspended=False
+            ).values_list('processing_unit_id', flat=True)
+        )
+        if profile.processing_unit_id:
+            unit_ids.add(profile.processing_unit_id)
+        return product.processing_unit_id in unit_ids
+
+    @action(detail=True, methods=['post'], url_path='regenerate_qr')
+    def regenerate_qr(self, request, pk=None):
+        """Rebuild this product's QR code image.
+
+        The mobile app has always called this endpoint, but it was never
+        implemented server-side, so every call 404'd. Useful after a batch
+        number changes or when a label needs reprinting from a lost image.
+
+        get_object() runs the ViewSet's queryset scoping, so a user can only
+        regenerate a product they are already allowed to see.
+        """
+        from .models import write_qr_png
+
+        # get_object() applies the ViewSet's queryset scoping, so a product the
+        # caller cannot see 404s here rather than 403s — deliberately, so the
+        # endpoint does not confirm the existence of other tenants' products.
+        product = self.get_object()
+
+        # Being able to *see* a product is not enough to reprint its labels.
+        # An abbatoir can view products made from their animals, but the
+        # processing unit owns the packaging and the printed QR.
+        if not self._can_regenerate_qr(request.user, product):
+            return Response(
+                {'detail': 'Only the processing unit that produced this product may regenerate its QR code.'},
+                status=status_module.HTTP_403_FORBIDDEN,
+            )
+
+        filename = f"product_qr_{product.pk}.png"
+
+        # Drop a prior image stored under a different name so old files don't
+        # pile up in media/qr_codes/.
+        if product.qr_code and product.qr_code != f"qr_codes/{filename}":
+            old_path = os.path.join(settings.MEDIA_ROOT, product.qr_code)
+            if os.path.exists(old_path):
+                try:
+                    os.remove(old_path)
+                except OSError:
+                    logger.warning('Could not remove old QR image %s', old_path)
+
+        try:
+            path = write_qr_png(product.trace_url, filename)
+        except Exception:
+            logger.exception('regenerate_qr failed for product %s', product.pk)
+            return Response(
+                {'detail': 'Failed to generate QR code.'},
+                status=status_module.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        Product.objects.filter(pk=product.pk).update(qr_code=path)
+
+        return Response({
+            # What the app encodes into the QR image it renders.
+            'qr_code_url': product.trace_url,
+            # Where the server-rendered PNG lives, for printable labels.
+            'qr_code_image': path,
+        })
 
     @action(detail=False, methods=['post'], url_path='receive_products')
     def receive_products(self, request):

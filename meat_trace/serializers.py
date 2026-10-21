@@ -463,10 +463,29 @@ class ProductSerializer(serializers.ModelSerializer):
     processing_unit_name = serializers.CharField(source='processing_unit.name', read_only=True)
     transferred_to_name = serializers.CharField(source='transferred_to.name', read_only=True)
     received_by_shop_name = serializers.CharField(source='received_by_shop.name', read_only=True)
+    # The canonical consumer-facing URL to encode into a QR code. Exposed so
+    # clients have one authoritative value instead of assembling the link
+    # themselves.
+    trace_url = serializers.ReadOnlyField()
+    # `qr_code` is stored in the database as a path to the generated PNG
+    # ("qr_codes/product_qr_12.png"), but every API client treats this field as
+    # the *payload to encode into a QR code*, not as an image to display. Handing
+    # back the raw path made clients render a QR that decodes to a filename —
+    # scanning it opened nothing. Serve the URL here and expose the stored image
+    # path separately as `qr_code_image` for anything that wants the PNG.
+    qr_code = serializers.SerializerMethodField()
+    qr_code_image = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
         fields = '__all__'
+
+    def get_qr_code(self, obj):
+        return obj.trace_url if obj.pk else None
+
+    def get_qr_code_image(self, obj):
+        """Relative media path of the generated PNG, e.g. qr_codes/product_qr_12.png."""
+        return obj.qr_code or None
 
 
 class OrderSerializer(serializers.ModelSerializer):
