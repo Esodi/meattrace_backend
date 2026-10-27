@@ -30,6 +30,12 @@ DEBUG = os.environ.get('DJANGO_DEBUG', 'False') == 'True'
 # This is intentionally configured to allow requests from any domain
 ALLOWED_HOSTS = ['*']
 
+# Behind nginx/Cloudflare TLS is terminated before Django. Set TRUST_PROXY_SSL=True
+# on environments whose proxy always sets X-Forwarded-Proto, so absolute URLs the
+# API builds (media, pagination links) use https instead of http.
+if os.environ.get('TRUST_PROXY_SSL', 'False') == 'True':
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
 
 # Application definition
 
@@ -119,7 +125,8 @@ CHANNEL_LAYERS = {
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        # SQLITE_PATH lets a second environment (e.g. staging) keep its own database file.
+        'NAME': os.environ.get('SQLITE_PATH', BASE_DIR / 'db.sqlite3'),
     }
 }
 
@@ -187,14 +194,15 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/4.2/howto/static-files/
 
 STATIC_URL = '/static/'
-STATIC_ROOT = BASE_DIR / 'staticfiles'
+STATIC_ROOT = Path(os.environ.get('STATIC_ROOT', BASE_DIR / 'staticfiles'))
 
 # Media files
 MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+MEDIA_ROOT = Path(os.environ.get('MEDIA_ROOT', BASE_DIR / 'media'))
 
-# Site URL for QR code generation
-SITE_URL = 'https://dev.shambabora.co.tz'
+# Site URL for QR code generation. Defaults to the production domain; other
+# environments (staging) override it via the SITE_URL environment variable.
+SITE_URL = os.environ.get('SITE_URL', 'https://dev.shambabora.co.tz')
 #SITE_URL = 'http://192.168.44.223:8000'
 
 # Default primary key field type
@@ -270,6 +278,8 @@ CORS_ALLOWED_ORIGINS = [
     "http://192.168.44.223:8000",  # Your Bluetooth network IP
     "https://dev.shambabora.co.tz",  # Production domain
     "http://dev.shambabora.co.tz",   # Production domain (http)
+    "https://staging.shambabora.co.tz",  # Staging domain
+    "http://staging.shambabora.co.tz",
 ]
 
 # Allow all origins - enabled for both development AND production
