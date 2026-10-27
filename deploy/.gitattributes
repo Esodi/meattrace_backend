@@ -1,0 +1,2 @@
+# Shell scripts run on the Linux server: never convert their line endings.
+* text eol=lf

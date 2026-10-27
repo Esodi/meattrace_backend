@@ -1,0 +1,42 @@
+#!/bin/bash
+# meattrace-deploy-admin - publish a built admin dashboard (dist/ as a .tgz) to one environment.
+#
+#   meattrace-deploy-admin <staging|dev|demo> <dist.tgz> [--allow-mismatch]
+#
+# Refuses a build whose baked-in API URL belongs to a different environment (so a staging build
+# cannot be published to demo by mistake). The previous version is kept as dist.prev for rollback:
+#   mv dist dist.bad && mv dist.prev dist
+set -uo pipefail
+
+BASE=/usr/apps/nyama_tamu
+die() { echo "ERROR: $*" >&2; exit 1; }
+
+ENV_NAME=${1:-}; TARBALL=${2:-}; OPT=${3:-}
+case "$ENV_NAME" in staging|dev|demo) ;; *) sed -n '2,4p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;; esac
+[ -f "$TARBALL" ] || die "no such file: $TARBALL"
+FE=$BASE/meattrace_frontend_$ENV_NAME
+[ -d "$FE" ] || die "$FE does not exist (is the $ENV_NAME environment set up?)"
+AVAIL=$(df --output=avail -BM / | tail -1 | tr -dc 0-9)
+[ "$AVAIL" -gt 200 ] || die "only ${AVAIL}M free on /"
+
+NEW=$(mktemp -d "$FE/.new.XXXXXX") || die "cannot create temp dir"
+trap 'rm -rf "$NEW"' EXIT
+tar -xzf "$TARBALL" -C "$NEW" || die "could not extract $TARBALL"
+[ -f "$NEW/index.html" ] || die "no index.html in the archive - is this a vite dist/ build?"
+
+# The API host this environment really serves, taken from its own backend .env (SITE_URL).
+ENVFILE=$BASE/meattrace_backend_$ENV_NAME/.env
+EXPECT=$(grep -m1 '^SITE_URL=' "$ENVFILE" 2>/dev/null | cut -d= -f2- | sed -E 's#^https?://##; s#/.*$##')
+[ -n "$EXPECT" ] || die "cannot work out the API host for $ENV_NAME from SITE_URL in $ENVFILE"
+FOUND=$(cat "$NEW"/assets/*.js 2>/dev/null | grep -oE 'https://[a-z0-9.-]+/api/v2' | sort -u | tr '\n' ' ')
+echo "   build talks to: ${FOUND:-<no API url found>}"
+if [ "$OPT" != "--allow-mismatch" ] && ! echo "$FOUND" | grep -q "https://$EXPECT/api/v2"; then
+  die "this build does not point at https://$EXPECT/api/v2 (use --allow-mismatch to override)"
+fi
+
+chmod -R a+rX "$NEW"
+rm -rf "$FE/dist.prev"
+[ ! -d "$FE/dist" ] || mv "$FE/dist" "$FE/dist.prev"
+mv "$NEW" "$FE/dist"
+trap - EXIT
+echo "OK: $ENV_NAME admin dashboard updated ($(ls "$FE/dist/assets" | wc -l) asset files). Previous version kept in $FE/dist.prev"

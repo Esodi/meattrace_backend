@@ -1,0 +1,158 @@
+#!/bin/bash
+# meattrace-deploy - update one MeatTrace environment on the VPS to a git ref.
+#
+#   meattrace-deploy <production|staging|dev|demo> [ref] [--dry-run] [--force]
+#                    [--bundle FILE] [--yes-production]
+#
+# Safe by default: it refuses to run on a dirty working tree or low disk, checks the new code
+# (manage.py check) BEFORE restarting anything, backs the database up first, health-checks after
+# the restart and rolls the code back automatically if the environment does not come back healthy.
+# Only the one environment's own folder and service are touched.
+set -uo pipefail
+
+BASE=/usr/apps/nyama_tamu
+LOG=/var/log/meattrace-deploy.log
+
+usage() {
+  sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//'
+  echo "  ref  = branch, tag or commit (default: main)"
+  exit 2
+}
+die() { echo "ERROR: $*" >&2; exit 1; }
+
+ENV_NAME=${1:-}
+[ -n "$ENV_NAME" ] || usage
+shift
+REF=main; BUNDLE=""; DRY=0; FORCE=0; YESPROD=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --bundle) BUNDLE=${2:-}; [ -n "$BUNDLE" ] || usage; shift 2 ;;
+    --dry-run) DRY=1; shift ;;
+    --force) FORCE=1; shift ;;
+    --yes-production) YESPROD=1; shift ;;
+    -*) usage ;;
+    *) REF=$1; shift ;;
+  esac
+done
+
+case "$ENV_NAME" in
+  production) DIR=$BASE/meattrace_backend;                UNIT=gunicorn_meattrace ;;
+  staging|dev|demo) DIR=$BASE/meattrace_backend_$ENV_NAME; UNIT=gunicorn_meattrace_$ENV_NAME ;;
+  *) usage ;;
+esac
+if [ "$ENV_NAME" = production ] && [ "$YESPROD" != 1 ]; then
+  die "deploying production needs --yes-production"
+fi
+
+exec 9>"/var/lock/meattrace-deploy-$ENV_NAME.lock"
+flock -n 9 || die "another deploy of $ENV_NAME is already running"
+
+[ -d "$DIR/.git" ] || die "$DIR is not a git checkout"
+cd "$DIR" || exit 1
+AVAIL=$(df --output=avail -BM / | tail -1 | tr -dc 0-9)
+[ "$AVAIL" -gt 500 ] || die "only ${AVAIL}M free on / (need > 500M)"
+
+# Uncommitted edits would be overwritten. Compiled .pyc files and staticfiles/ are tracked in this
+# repo but are rewritten by running the app / collectstatic, so they are ignored here.
+DIRTY=$(git status --porcelain --untracked-files=no | grep -vE '\.pyc$| staticfiles/' || true)
+if [ -n "$DIRTY" ]; then
+  echo "$DIRTY"
+  die "$ENV_NAME has uncommitted changes (listed above); commit or stash them first"
+fi
+
+PREV=$(git rev-parse HEAD)
+
+if [ -n "$BUNDLE" ]; then
+  git fetch -q "$BUNDLE" "$REF" || die "could not fetch '$REF' from bundle $BUNDLE"
+  TARGET=$(git rev-parse --verify -q 'FETCH_HEAD^{commit}') || die "bundle has no commit for '$REF'"
+else
+  git fetch -q origin --tags || die "could not fetch from origin"
+  TARGET=$(git rev-parse --verify -q "origin/$REF^{commit}" || git rev-parse --verify -q "$REF^{commit}") \
+    || die "unknown ref '$REF'"
+fi
+
+short() { git log -1 --format='%h %s' "$1" | cut -c1-90; }
+echo "== $ENV_NAME"
+echo "   now:    $(short "$PREV")"
+echo "   target: $(short "$TARGET")"
+if [ "$TARGET" = "$PREV" ] && [ "$FORCE" != 1 ]; then
+  echo "Already at the target commit - nothing to do (use --force to redeploy anyway)."
+  exit 0
+fi
+if git merge-base --is-ancestor "$PREV" "$TARGET"; then
+  git log --oneline --no-decorate "$PREV..$TARGET" | head -20
+else
+  echo "   (target is not a descendant of the current commit: this is a rollback or a branch switch)"
+fi
+git diff --stat "$PREV" "$TARGET" | tail -3
+NEWMIG=$(git diff --name-only --diff-filter=A "$PREV" "$TARGET" | grep -cE '/migrations/[0-9]' || true)
+echo "   new migration files: $NEWMIG"
+[ "$DRY" != 1 ] || { echo "Dry run - nothing changed."; exit 0; }
+
+# Database backup (SQLite). The live DB path comes from the environment's .env, if it has one.
+DBFILE=$( set -a; [ -f "$DIR/.env" ] && . "$DIR/.env"; echo "${SQLITE_PATH:-$DIR/db.sqlite3}" )
+BKDIR=$DIR/backups
+if [ -f "$DBFILE" ]; then
+  mkdir -p "$BKDIR"
+  BK=$BKDIR/pre-deploy-$(date +%F_%H%M%S).sqlite3
+  sqlite3 "$DBFILE" ".backup '$BK'" || die "database backup failed; nothing was changed"
+  ls -1t "$BKDIR"/pre-deploy-*.sqlite3 2>/dev/null | tail -n +6 | xargs -r rm -f
+  echo "   database backed up: $BK"
+fi
+
+PY=$DIR/venv/bin/python
+health() {
+  local code i
+  for i in $(seq 1 25); do
+    code=$(curl -s -o /dev/null -m 5 -w '%{http_code}' --unix-socket "$DIR/gunicorn.sock" http://localhost/api/v2/health/)
+    [ "$code" = 200 ] && return 0
+    sleep 1
+  done
+  return 1
+}
+RESTARTED=0
+rollback() {
+  echo "!! $1 - rolling code back to ${PREV:0:7}" >&2
+  git -c advice.detachedHead=false checkout -q -f --detach "$PREV"
+  # Only restart if the service was already restarted onto the new code; otherwise it is still
+  # running the old code in memory and a restart would be a needless blip.
+  [ "$RESTARTED" = 1 ] && systemctl restart "$UNIT"
+  if health; then
+    echo "!! rolled back; $ENV_NAME is healthy on ${PREV:0:7}. Database backup (migrations are NOT reverted): ${BK:-none}" >&2
+  else
+    echo "!! $ENV_NAME is STILL UNHEALTHY after rollback - investigate: journalctl -u $UNIT -n 50" >&2
+  fi
+  echo "$(date -Is) $ENV_NAME FAILED ${PREV:0:7} -> ${TARGET:0:7}: $1 (rolled back)" >> "$LOG"
+  exit 1
+}
+
+git -c advice.detachedHead=false checkout -q -f --detach "$TARGET" || die "checkout failed"
+
+if git diff --name-only "$PREV" "$TARGET" | grep -qx requirements.txt; then
+  echo "   requirements.txt changed - installing dependencies"
+  nice -n 19 "$DIR/venv/bin/pip" install -q --disable-pip-version-check -r requirements.txt \
+    || rollback "dependency install failed"
+fi
+
+set -a; [ -f "$DIR/.env" ] && . "$DIR/.env"; set +a
+
+# Validate before touching the running service: a broken commit never takes the environment down.
+"$PY" manage.py check >/tmp/meattrace-deploy-check.$$ 2>&1 \
+  || { tail -15 /tmp/meattrace-deploy-check.$$; rm -f /tmp/meattrace-deploy-check.$$; rollback "manage.py check failed (service was not restarted)"; }
+rm -f /tmp/meattrace-deploy-check.$$
+
+if MIGOUT=$("$PY" manage.py migrate --noinput 2>&1); then
+  echo "   migrations applied: $(grep -c '^  Applying' <<<"$MIGOUT")"
+else
+  grep -vE '^\[OK\]|RuntimeWarning|new_class' <<<"$MIGOUT" | tail -12
+  rollback "migrate failed"
+fi
+"$PY" manage.py collectstatic --noinput >/dev/null 2>&1 || rollback "collectstatic failed"
+
+RESTARTED=1
+systemctl restart "$UNIT" || rollback "service restart failed"
+health || rollback "health check failed after restart"
+
+echo "${TARGET} $(date -Is) ref=$REF" > "$DIR/DEPLOYED"
+echo "$(date -Is) $ENV_NAME OK ${PREV:0:7} -> ${TARGET:0:7} (ref $REF)" >> "$LOG"
+echo "OK: $ENV_NAME is now on $(short "$TARGET") and healthy."
