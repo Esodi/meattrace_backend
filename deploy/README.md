@@ -46,19 +46,20 @@ stays in `dist.prev`; to roll back:
 
 ## Mobile app
 
-Android flavors give each environment its own application id, so all of them install side by side:
-
-| Flavor | Application id | Launcher name |
-|---|---|---|
-| production (default) | `tz.co.shambabora.nyamatamu` | MeatTrace Pro |
-| staging | `tz.co.shambabora.nyamatamu.staging` | MeatTrace STG |
-| dev | `tz.co.shambabora.nyamatamu.dev` | MeatTrace DEV |
-| demo | `tz.co.shambabora.nyamatamu.demo` | MeatTrace Demo |
+There is a single app (one application id, one signing key) that can talk to every environment.
+On the login screen, **long-press "Sign In"** to open a list of environments (production, staging,
+dev, demo). Picking one signs you out, remembers the choice, and points the app at that server.
+While the app is not on production a corner ribbon is shown on every screen.
 
 ```
-flutter build apk --release --split-per-abi --flavor staging     # also: dev, demo
-flutter build appbundle --release --flavor production            # Play Store (scripts/release_appbundle.*)
+flutter build apk --release --split-per-abi          # production by default
+flutter build appbundle --release                    # Play Store
 ```
 
-The API host follows the flavor automatically (`lib/utils/constants.dart`);
-`--dart-define=API_HOST=https://...` overrides it for a one-off build.
+Build-time options (`--dart-define=...`):
+
+* `DEFAULT_ENV=staging` - the environment used on first launch (default: `production`).
+* `ENV_SWITCHER=false` - hide the switcher and lock the build to `DEFAULT_ENV`
+  (use this for a build you do not want testers to be able to redirect).
+
+The environments and their hosts are defined in `lib/utils/app_environment.dart` in the app repo.
